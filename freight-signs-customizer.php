@@ -7783,6 +7783,16 @@ Best regards,
 // Include block registration
 require_once APD_PLUGIN_PATH . 'includes/block-registration.php';
 
+// Include health check system
+if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-health-check.php')) {
+    require_once APD_PLUGIN_PATH . 'includes/class-apd-health-check.php';
+}
+
+// Include debug logger
+if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php')) {
+    require_once APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php';
+}
+
 // Initialize the plugin
 function apd_init()
 {

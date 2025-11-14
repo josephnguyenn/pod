@@ -154,14 +154,14 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 
                 <!-- Action Buttons -->
                 <div class="apd-product-actions">
-                    <button class="apd-btn apd-btn-secondary apd-detail-add-cart" 
+                    <button class="apd-btn-secondary apd-detail-add-cart" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
                             data-product-price="<?php echo esc_attr($display_price); ?>">
                         Add to cart
                     </button>
                     
-                    <button class="apd-btn apd-btn-checkout apd-detail-checkout" 
+                    <button class="apd-btn-primary apd-detail-checkout" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
                             data-product-price="<?php echo esc_attr($display_price); ?>">
@@ -170,7 +170,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                     
                     <?php if ($is_customizable == '1'): ?>
                     <a href="<?php echo home_url('/customizer/' . $product_id . '/'); ?>" 
-                       class="apd-btn apd-btn-primary apd-detail-customize">
+                       class="apd-btn-primary apd-detail-customize">
                         Customize this product
                     </a>
                     <?php endif; ?>
@@ -453,7 +453,10 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     margin-top: 10px;
 }
 
-.apd-btn {
+/* Base button styles */
+.apd-detail-add-cart,
+.apd-detail-checkout,
+.apd-detail-customize {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -469,34 +472,38 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     text-align: center;
 }
 
-.apd-btn-primary {
+.apd-btn-primary,
+.apd-detail-customize {
     background: var(--color-primary);
     color: white;
 }
 
-.apd-btn-primary:hover {
+.apd-btn-primary:hover,
+.apd-detail-customize:hover {
     background: var(--color-primary-hover);
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.apd-btn-secondary {
+.apd-btn-secondary,
+.apd-detail-add-cart {
     background: var(--color-secondary);
     color: white;
 }
 
-.apd-btn-secondary:hover {
+.apd-btn-secondary:hover,
+.apd-detail-add-cart:hover {
     background: hsl(215, 20%, 55%);
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.apd-btn-checkout {
+.apd-detail-checkout {
     background: var(--color-success);
     color: white;
 }
 
-.apd-btn-checkout:hover {
+.apd-detail-checkout:hover {
     background: hsl(142, 71%, 35%);
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
