@@ -2714,9 +2714,27 @@ class AdvancedProductDesigner
                 $product_id_from_cart = intval($first['product_id']);
                 $product_logo = get_post_meta($product_id_from_cart, '_fsc_logo_file', true);
                 error_log("APD Order Detail - Looking for SVG: product_id={$product_id_from_cart}, logo_file=" . ($product_logo ?: 'EMPTY'));
+                
+                // Validate that it's actually an SVG file
                 if (!empty($product_logo) && preg_match('/\.svg$/i', $product_logo)) {
-                    $svg_download_url = $product_logo;
-                    error_log("APD Order Detail - SVG found: {$product_logo}");
+                    // Check if it's a URL or file path
+                    if (filter_var($product_logo, FILTER_VALIDATE_URL)) {
+                        $svg_download_url = $product_logo;
+                        error_log("APD Order Detail - SVG URL found: {$product_logo}");
+                    } else {
+                        // It's a file path, convert to URL if needed
+                        $upload_dir = wp_upload_dir();
+                        $base_dir = $upload_dir['basedir'];
+                        $base_url = $upload_dir['baseurl'];
+                        
+                        // If path is relative to uploads dir
+                        if (strpos($product_logo, $base_dir) === 0) {
+                            $svg_download_url = str_replace($base_dir, $base_url, $product_logo);
+                        } else {
+                            $svg_download_url = $product_logo;
+                        }
+                        error_log("APD Order Detail - SVG path converted to URL: {$svg_download_url}");
+                    }
                 }
             }
         }
@@ -2958,14 +2976,38 @@ class AdvancedProductDesigner
                     downloadSvgBtn.style.display = 'none';
                 } else {
                     downloadSvgBtn.addEventListener('click', function(){
-                        // Normalize uncommon mime like data:image+svg to image/svg+xml
-                        const href = svgDataUrl.replace(/^data:image\+svg/i, 'data:image/svg+xml');
-                        const a = document.createElement('a');
-                        a.href = href;
-                        a.download = 'order-' + orderId + '-design.svg';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
+                        // Check if it's a data URL or regular URL
+                        if (svgDataUrl.startsWith('data:')) {
+                            // Normalize uncommon mime like data:image+svg to image/svg+xml
+                            const href = svgDataUrl.replace(/^data:image\+svg/i, 'data:image/svg+xml');
+                            const a = document.createElement('a');
+                            a.href = href;
+                            a.download = 'order-' + orderId + '-design.svg';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                        } else {
+                            // For regular URLs, fetch and download
+                            fetch(svgDataUrl)
+                                .then(response => {
+                                    if (!response.ok) throw new Error('Failed to fetch SVG');
+                                    return response.blob();
+                                })
+                                .then(blob => {
+                                    const url = window.URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = 'order-' + orderId + '-design.svg';
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    window.URL.revokeObjectURL(url);
+                                })
+                                .catch(error => {
+                                    console.error('Download error:', error);
+                                    alert('Error downloading SVG file. The file may be corrupted or missing.');
+                                });
+                        }
                     });
                 }
             }
