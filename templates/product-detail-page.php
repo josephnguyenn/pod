@@ -37,6 +37,10 @@ $features = get_post_meta($product_id, '_fsc_features', true);
 $material = get_post_meta($product_id, '_fsc_material', true);
 $logo_url = get_post_meta($product_id, '_fsc_logo_file', true);
 $thumbnail_id = get_post_meta($product_id, '_fsc_thumbnail_id', true);
+$is_customizable = get_post_meta($product_id, '_fsc_customizable', true);
+if ($is_customizable === '') {
+    $is_customizable = '1'; // Default to customizable for backward compatibility
+}
 
 // Get product image
 $product_image = '';
@@ -164,10 +168,12 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         Check out
                     </button>
                     
+                    <?php if ($is_customizable == '1'): ?>
                     <a href="<?php echo home_url('/customizer/' . $product_id . '/'); ?>" 
                        class="apd-btn apd-btn-primary apd-detail-customize">
                         Customize this product
                     </a>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Trust Badges -->
@@ -583,107 +589,38 @@ jQuery(document).ready(function($) {
 
         $btn.prop('disabled', true).text('Adding...');
 
-        // Generate preview image from template
+        // Get product image for preview
+        var productImage = $('.apd-product-image').attr('src') || '';
+
+        // Add to cart with product image as preview
         $.ajax({
             url: apd_ajax.ajax_url,
             type: 'POST',
             data: {
-                action: 'apd_get_customizer_data',
+                action: 'apd_add_to_cart',
                 nonce: apd_ajax.nonce,
-                product_id: productId
-            },
-            success: function(templateResponse) {
-                var previewImageSvg = '';
-                
-                // Try to generate preview from template
-                if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
-                    var templateData = templateResponse.data.template_data;
-                    var canvasWidth = (templateData.canvas && templateData.canvas.width) || 733;
-                    var canvasHeight = (templateData.canvas && templateData.canvas.height) || 550;
-                    var canvasColor = (templateData.canvas && templateData.canvas.backgroundColor) || '#c2c2c2';
-                    
-                    // Create a temporary canvas to render the template
-                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + canvasWidth + '" height="' + canvasHeight + '" viewBox="0 0 ' + canvasWidth + ' ' + canvasHeight + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + canvasWidth + '" height="' + canvasHeight + '" fill="' + canvasColor + '"/></svg>');
-                    
-                    // Add template elements if available
-                    if (templateData.elements && templateData.elements.length > 0) {
-                        templateData.elements.forEach(function(el) {
-                            var $g = $('<g class="apd-el" transform="translate(' + (el.x || 0) + ', ' + (el.y || 0) + ')"></g>');
-                            if (el.content) {
-                                $g.html(el.content);
-                            }
-                            $tempCanvas.append($g);
-                        });
-                    }
-                    
-                    // Serialize to data URL
-                    var svgString = new XMLSerializer().serializeToString($tempCanvas[0]);
-                    previewImageSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+                product_id: productId,
+                quantity: quantity,
+                customization_data: {
+                    product_name: productName,
+                    product_price: productPrice,
+                    preview_image_url: productImage
                 }
-                
-                // Add to cart with preview
-                $.ajax({
-                    url: apd_ajax.ajax_url,
-                    type: 'POST',
-                    data: {
-                        action: 'apd_add_to_cart',
-                        nonce: apd_ajax.nonce,
-                        product_id: productId,
-                        quantity: quantity,
-                        customization_data: {
-                            product_name: productName,
-                            product_price: productPrice,
-                            preview_image_svg: previewImageSvg
-                        }
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            $btn.text('Added to cart!');
-                            setTimeout(function() {
-                                $btn.prop('disabled', false).text('Add to cart');
-                            }, 2000);
-                        } else {
-                            alert('Error adding to cart: ' + (response.data || 'Unknown error'));
-                            $btn.prop('disabled', false).text('Add to cart');
-                        }
-                    },
-                    error: function() {
-                        alert('Error adding to cart. Please try again.');
+            },
+            success: function(response) {
+                if (response.success) {
+                    $btn.text('Added to cart!');
+                    setTimeout(function() {
                         $btn.prop('disabled', false).text('Add to cart');
-                    }
-                });
+                    }, 2000);
+                } else {
+                    alert('Error adding to cart: ' + (response.data || 'Unknown error'));
+                    $btn.prop('disabled', false).text('Add to cart');
+                }
             },
             error: function() {
-                // If template fetch fails, add to cart without preview
-                $.ajax({
-                    url: apd_ajax.ajax_url,
-                    type: 'POST',
-                    data: {
-                        action: 'apd_add_to_cart',
-                        nonce: apd_ajax.nonce,
-                        product_id: productId,
-                        quantity: quantity,
-                        customization_data: {
-                            product_name: productName,
-                            product_price: productPrice
-                        }
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            $btn.text('Added to cart!');
-                            setTimeout(function() {
-                                $btn.prop('disabled', false).text('Add to cart');
-                            }, 2000);
-                        } else {
-                            alert('Error adding to cart: ' + (response.data || 'Unknown error'));
-                            $btn.prop('disabled', false).text('Add to cart');
-                        }
-                    },
-                    error: function() {
-                        alert('Error adding to cart. Please try again.');
-                        $btn.prop('disabled', false).text('Add to cart');
-                    }
-                });
+                alert('Error adding to cart. Please try again.');
+                $btn.prop('disabled', false).text('Add to cart');
             }
         });
     });
@@ -696,97 +633,33 @@ jQuery(document).ready(function($) {
         var productPrice = $btn.data('product-price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
 
-        // Generate preview image from template
+        // Get product image for preview
+        var productImage = $('.apd-product-image').attr('src') || '';
+
+        // Add to cart first, then redirect to checkout
         $.ajax({
             url: apd_ajax.ajax_url,
             type: 'POST',
             data: {
-                action: 'apd_get_customizer_data',
+                action: 'apd_add_to_cart',
                 nonce: apd_ajax.nonce,
-                product_id: productId
-            },
-            success: function(templateResponse) {
-                var previewImageSvg = '';
-                
-                // Try to generate preview from template
-                if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
-                    var templateData = templateResponse.data.template_data;
-                    var canvasWidth = (templateData.canvas && templateData.canvas.width) || 733;
-                    var canvasHeight = (templateData.canvas && templateData.canvas.height) || 550;
-                    var canvasColor = (templateData.canvas && templateData.canvas.backgroundColor) || '#c2c2c2';
-                    
-                    // Create a temporary canvas to render the template
-                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + canvasWidth + '" height="' + canvasHeight + '" viewBox="0 0 ' + canvasWidth + ' ' + canvasHeight + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + canvasWidth + '" height="' + canvasHeight + '" fill="' + canvasColor + '"/></svg>');
-                    
-                    // Add template elements if available
-                    if (templateData.elements && templateData.elements.length > 0) {
-                        templateData.elements.forEach(function(el) {
-                            var $g = $('<g class="apd-el" transform="translate(' + (el.x || 0) + ', ' + (el.y || 0) + ')"></g>');
-                            if (el.content) {
-                                $g.html(el.content);
-                            }
-                            $tempCanvas.append($g);
-                        });
-                    }
-                    
-                    // Serialize to data URL
-                    var svgString = new XMLSerializer().serializeToString($tempCanvas[0]);
-                    previewImageSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+                product_id: productId,
+                quantity: quantity,
+                customization_data: {
+                    product_name: productName,
+                    product_price: productPrice,
+                    preview_image_url: productImage
                 }
-                
-                // Add to cart first, then redirect to checkout
-                $.ajax({
-                    url: apd_ajax.ajax_url,
-                    type: 'POST',
-                    data: {
-                        action: 'apd_add_to_cart',
-                        nonce: apd_ajax.nonce,
-                        product_id: productId,
-                        quantity: quantity,
-                        customization_data: {
-                            product_name: productName,
-                            product_price: productPrice,
-                            preview_image_svg: previewImageSvg
-                        }
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
-                        } else {
-                            alert('Error: ' + (response.data || 'Could not add to cart'));
-                        }
-                    },
-                    error: function() {
-                        alert('Error processing request. Please try again.');
-                    }
-                });
+            },
+            success: function(response) {
+                if (response.success) {
+                    window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
+                } else {
+                    alert('Error: ' + (response.data || 'Could not add to cart'));
+                }
             },
             error: function() {
-                // If template fetch fails, add to cart without preview
-                $.ajax({
-                    url: apd_ajax.ajax_url,
-                    type: 'POST',
-                    data: {
-                        action: 'apd_add_to_cart',
-                        nonce: apd_ajax.nonce,
-                        product_id: productId,
-                        quantity: quantity,
-                        customization_data: {
-                            product_name: productName,
-                            product_price: productPrice
-                        }
-                    },
-                    success: function(response) {
-                        if (response.success) {
-                            window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
-                        } else {
-                            alert('Error: ' + (response.data || 'Could not add to cart'));
-                        }
-                    },
-                    error: function() {
-                        alert('Error processing request. Please try again.');
-                    }
-                });
+                alert('Error processing request. Please try again.');
             }
         });
     });

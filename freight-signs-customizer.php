@@ -477,6 +477,10 @@ class AdvancedProductDesigner
         $size = get_post_meta($post->ID, '_fsc_size', true);
         $color_options = get_post_meta($post->ID, '_fsc_color_options', true);
         $logo_file = get_post_meta($post->ID, '_fsc_logo_file', true);
+        $is_customizable = get_post_meta($post->ID, '_fsc_customizable', true);
+        if ($is_customizable === '') {
+            $is_customizable = '1'; // Default to customizable
+        }
 
         // Get available templates
         $templates = get_posts(array(
@@ -555,15 +559,26 @@ class AdvancedProductDesigner
                 </td>
             </tr>
             <tr>
+                <th><label for="fsc_customizable">Customizable</label></th>
+                <td>
+                    <label>
+                        <input type="checkbox" id="fsc_customizable" name="fsc_customizable" value="1" <?php checked($is_customizable, '1'); ?>>
+                        Allow customers to customize this product
+                    </label>
+                    <p class="description">If unchecked, customers can only add to cart without customization</p>
+                </td>
+            </tr>
+            <tr>
                 <th><label for="fsc_logo_file">Product Logo (SVG)</label></th>
                 <td>
-                    <input type="file" id="fsc_logo_file" name="fsc_logo_file" accept=".svg" class="regular-text">
                     <?php if ($logo_file): ?>
-                        <p class="description">Current logo: <strong><?php echo esc_html($logo_file); ?></strong></p>
-                        <p class="description">Upload new SVG file to replace current logo</p>
-                    <?php else: ?>
-                        <p class="description">Upload SVG logo file for this product (required)</p>
+                        <div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                            <strong>Current logo:</strong> 
+                            <a href="<?php echo esc_url($logo_file); ?>" target="_blank"><?php echo esc_html(basename($logo_file)); ?></a>
+                        </div>
                     <?php endif; ?>
+                    <input type="file" id="fsc_logo_file" name="fsc_logo_file" accept=".svg" class="regular-text">
+                    <p class="description">Upload SVG logo file for this product<?php echo $logo_file ? ' (upload new file to replace)' : ' (required)'; ?></p>
                 </td>
             </tr>
             <tr style="display: none;">
@@ -665,6 +680,13 @@ class AdvancedProductDesigner
 
         if (isset($_POST['fsc_color_options'])) {
             update_post_meta($post_id, '_fsc_color_options', sanitize_textarea_field($_POST['fsc_color_options']));
+        }
+
+        // Save customizable checkbox
+        if (isset($_POST['fsc_customizable'])) {
+            update_post_meta($post_id, '_fsc_customizable', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_customizable', '0');
         }
 
         // Save features
