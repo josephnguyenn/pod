@@ -157,14 +157,14 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                     <button class="apd-detail-add-cart" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
-                            data-product-price="<?php echo esc_attr($display_price); ?>">
+                            data-price="<?php echo esc_attr($display_price); ?>">
                         Add to cart
                     </button>
                     
                     <button class="apd-detail-checkout" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
-                            data-product-price="<?php echo esc_attr($display_price); ?>">
+                            data-price="<?php echo esc_attr($display_price); ?>">
                         Check out
                     </button>
                     
@@ -587,7 +587,7 @@ jQuery(document).ready(function($) {
         var $btn = $(this);
         var productId = $btn.data('product-id');
         var productName = $btn.data('product-name');
-        var productPrice = $btn.data('product-price');
+        var productPrice = $btn.data('price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
 
         $btn.prop('disabled', true).text('Adding...');
@@ -633,7 +633,7 @@ jQuery(document).ready(function($) {
         var $btn = $(this);
         var productId = $btn.data('product-id');
         var productName = $btn.data('product-name');
-        var productPrice = $btn.data('product-price');
+        var productPrice = $btn.data('price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
 
         // Get product image for preview
