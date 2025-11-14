@@ -2687,10 +2687,12 @@ class AdvancedProductDesigner
             
             // For non-customizable products, fetch the product's logo SVG
             if (empty($svg_download_url) && !empty($first['product_id'])) {
-                $product_id = intval($first['product_id']);
-                $product_logo = get_post_meta($product_id, '_fsc_logo_file', true);
+                $product_id_from_cart = intval($first['product_id']);
+                $product_logo = get_post_meta($product_id_from_cart, '_fsc_logo_file', true);
+                error_log("APD Order Detail - Looking for SVG: product_id={$product_id_from_cart}, logo_file=" . ($product_logo ?: 'EMPTY'));
                 if (!empty($product_logo) && preg_match('/\.svg$/i', $product_logo)) {
                     $svg_download_url = $product_logo;
+                    error_log("APD Order Detail - SVG found: {$product_logo}");
                 }
             }
         }
@@ -2707,6 +2709,11 @@ class AdvancedProductDesigner
             echo '<!-- DEBUG: customization_image_url = ' . esc_html($customization_image_url ?: 'EMPTY') . ' -->';
             echo '<!-- DEBUG: image_to_display = ' . esc_html($image_to_display ?: 'EMPTY') . ' -->';
             echo '<!-- DEBUG: svg_download_url = ' . esc_html($svg_download_url ?: 'EMPTY') . ' -->';
+            if (!empty($cart_items)) {
+                $first_item = $cart_items[0];
+                echo '<!-- DEBUG: first_cart_item_product_id = ' . esc_html($first_item['product_id'] ?? 'EMPTY') . ' -->';
+                echo '<!-- DEBUG: first_cart_item_keys = ' . esc_html(implode(', ', array_keys($first_item))) . ' -->';
+            }
         }
 
         if ($image_to_display) {
