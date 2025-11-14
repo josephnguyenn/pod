@@ -613,6 +613,12 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 if (response.success) {
                     $btn.text('Added to cart!');
+                    
+                    // Update cart count if available
+                    if (response.data && response.data.cart_count) {
+                        $('.apd-cart-count, .cart-count').text(response.data.cart_count);
+                    }
+                    
                     setTimeout(function() {
                         $btn.prop('disabled', false).text('Add to cart');
                     }, 2000);
