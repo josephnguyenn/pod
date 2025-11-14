@@ -182,6 +182,13 @@ class AdvancedProductDesigner
             'index.php?product_detail=1',
             'top'
         );
+        
+        // Add company taxonomy rewrite rule to make URLs like /company-name/ instead of /apd_company/company-name/
+        add_rewrite_rule(
+            '([^/]+)/?$',
+            'index.php?company=$matches[1]',
+            'bottom'
+        );
 
         add_filter('query_vars', array($this, 'add_query_vars'));
         add_action('template_redirect', array($this, 'template_redirect'));
@@ -192,9 +199,9 @@ class AdvancedProductDesigner
         add_action('wp', array($this, 'set_company_archive_elementor_template'));
 
         // Force flush rewrite rules if needed
-        if (get_option('apd_flush_rewrite_rules') !== '2') {
+        if (get_option('apd_flush_rewrite_rules') !== '3') {
             flush_rewrite_rules();
-            update_option('apd_flush_rewrite_rules', '2');
+            update_option('apd_flush_rewrite_rules', '3');
             error_log('APD Plugin: Rewrite rules flushed on init');
         }
     }
@@ -409,12 +416,8 @@ class AdvancedProductDesigner
             'hierarchical' => true,
             'show_ui' => true,
             'show_admin_column' => true,
-            'query_var' => true,
-            'rewrite' => array(
-                'slug' => '',
-                'with_front' => false,
-                'hierarchical' => false
-            ),
+            'query_var' => 'company',
+            'rewrite' => false, // Disable default rewrite, use custom rule instead
             'show_in_rest' => true,
             'public' => true,
             'publicly_queryable' => true,
@@ -5266,6 +5269,7 @@ class AdvancedProductDesigner
     {
         $vars[] = 'customizer';
         $vars[] = 'product_detail';
+        $vars[] = 'company';
         return $vars;
     }
 
@@ -5289,6 +5293,30 @@ class AdvancedProductDesigner
         if (get_query_var('product_detail')) {
             include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
             exit;
+        }
+        
+        // Handle company taxonomy archive
+        $company_slug = get_query_var('company');
+        if ($company_slug) {
+            // Get the term by slug
+            $term = get_term_by('slug', $company_slug, 'apd_company');
+            if ($term) {
+                // Set the global query to load the taxonomy archive
+                global $wp_query;
+                $wp_query->set('taxonomy', 'apd_company');
+                $wp_query->set('term', $company_slug);
+                $wp_query->is_tax = true;
+                $wp_query->is_archive = true;
+                $wp_query->queried_object = $term;
+                $wp_query->queried_object_id = $term->term_id;
+                
+                // Load the company taxonomy template
+                $template = $this->load_company_taxonomy_template('');
+                if ($template && file_exists($template)) {
+                    include $template;
+                    exit;
+                }
+            }
         }
     }
 

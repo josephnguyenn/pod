@@ -70,7 +70,7 @@ if (did_action('elementor/loaded')) {
     .apd-company-title {
         font-size: 2.5em;
         margin-bottom: 20px;
-        color: #333;
+        color: white !important;
     }
     
     .apd-company-description {
