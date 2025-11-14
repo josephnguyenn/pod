@@ -1022,24 +1022,45 @@ class AdvancedProductDesigner
             $product_sale_price = get_post_meta($product_data->ID, '_fsc_sale_price', true);
             $product_material = get_post_meta($product_data->ID, '_fsc_material', true);
             $product_features = get_post_meta($product_data->ID, '_fsc_features', true);
-            $product_logo_url = get_post_meta($product_data->ID, '_fsc_logo_file', true);
+            // Get logo URL - prefer attachment ID over meta field
+            $logo_id = get_post_meta($product_data->ID, '_fsc_logo_id', true);
+            $product_logo_url = '';
+            
+            if ($logo_id) {
+                $product_logo_url = wp_get_attachment_url($logo_id);
+                error_log('APD: Got logo from attachment ID ' . $logo_id . ': ' . ($product_logo_url ?: 'FAILED'));
+            }
+            
+            if (!$product_logo_url) {
+                $product_logo_url = get_post_meta($product_data->ID, '_fsc_logo_file', true);
+                if ($product_logo_url) {
+                    error_log('APD: Using logo_file meta as fallback: ' . $product_logo_url);
+                }
+            }
 
             // Get processed SVG content for product-specific logo
             if ($product_logo_url) {
-                error_log('APD: Product logo URL: ' . $product_logo_url);
-                error_log('APD: APD_PLUGIN_URL: ' . APD_PLUGIN_URL);
-                error_log('APD: APD_PLUGIN_PATH: ' . APD_PLUGIN_PATH);
+                // Convert URL to file path using WordPress uploads directory
+                $upload_dir = wp_upload_dir();
+                $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $product_logo_url);
                 
-                // Convert plugin URL to file path
-                $logo_path = str_replace(APD_PLUGIN_URL, APD_PLUGIN_PATH, $product_logo_url);
-                error_log('APD: Converted logo path: ' . $logo_path);
+                // Also try replacing the site URL for cases where full URL is stored
+                if (!file_exists($logo_path)) {
+                    $logo_path = str_replace(site_url(), ABSPATH, $product_logo_url);
+                }
                 
-                $product_logo_content = $this->_get_processed_svg_content($logo_path);
+                error_log('APD: Attempting to load SVG from: ' . $logo_path);
                 
-                if ($product_logo_content) {
-                    error_log('APD: Logo content loaded successfully');
+                if (file_exists($logo_path)) {
+                    $product_logo_content = $this->_get_processed_svg_content($logo_path);
+                    
+                    if ($product_logo_content) {
+                        error_log('APD: Logo content loaded successfully, size: ' . strlen($product_logo_content) . ' bytes');
+                    } else {
+                        error_log('APD: Failed to get processed SVG content');
+                    }
                 } else {
-                    error_log('APD: Failed to load logo content');
+                    error_log('APD: Logo file does not exist at path: ' . $logo_path);
                 }
             }
 
@@ -1932,15 +1953,35 @@ class AdvancedProductDesigner
         $material = get_post_meta($product_id, '_fsc_material', true);
         $features = get_post_meta($product_id, '_fsc_features', true);
         $color_options = get_post_meta($product_id, '_fsc_color_options', true);
-        $product_logo_url = get_post_meta($product_id, '_fsc_logo_file', true);
         $template_id = get_post_meta($product_id, '_fsc_template', true);
+        
+        // Get logo URL - prefer attachment ID over meta field
+        $logo_id = get_post_meta($product_id, '_fsc_logo_id', true);
+        $product_logo_url = '';
+        
+        if ($logo_id) {
+            $product_logo_url = wp_get_attachment_url($logo_id);
+        }
+        
+        if (!$product_logo_url) {
+            $product_logo_url = get_post_meta($product_id, '_fsc_logo_file', true);
+        }
 
         // Get processed SVG content for product-specific logo
         $product_logo_content = '';
         if ($product_logo_url) {
-            $plugin_dir = APD_PLUGIN_PATH;
-            $logo_path = str_replace(APD_PLUGIN_URL, $plugin_dir, $product_logo_url);
-            $product_logo_content = $this->_get_processed_svg_content($logo_path);
+            // Convert URL to file path using WordPress uploads directory
+            $upload_dir = wp_upload_dir();
+            $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $product_logo_url);
+            
+            // Also try replacing the site URL for cases where full URL is stored
+            if (!file_exists($logo_path)) {
+                $logo_path = str_replace(site_url(), ABSPATH, $product_logo_url);
+            }
+            
+            if (file_exists($logo_path)) {
+                $product_logo_content = $this->_get_processed_svg_content($logo_path);
+            }
         }
 
         // Do not inject mock defaults; leave empty values so UI reflects real data
