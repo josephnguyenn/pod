@@ -7291,7 +7291,25 @@ class AdvancedProductDesigner
         // Get product data
         $price = get_post_meta($product->ID, '_fsc_price', true);
         $sale_price = get_post_meta($product->ID, '_fsc_sale_price', true);
-        $image = get_post_meta($product->ID, '_fsc_logo_file', true);
+        $logo_file = get_post_meta($product->ID, '_fsc_logo_file', true);
+        $logo_id = get_post_meta($product->ID, '_fsc_logo_id', true);
+        
+        // Debug log the logo values
+        error_log("APD Customizer - Product {$product->ID}: logo_file = " . ($logo_file ?: 'EMPTY') . ", logo_id = " . ($logo_id ?: 'EMPTY'));
+        
+        // Prefer getting logo from attachment ID for reliability
+        $image = '';
+        if ($logo_id) {
+            $image = wp_get_attachment_url($logo_id);
+            error_log("APD Customizer - Product {$product->ID}: Got logo from attachment ID: " . ($image ?: 'FAILED'));
+        }
+        
+        // Fallback to logo_file meta if attachment URL not found
+        if (!$image && $logo_file) {
+            $image = $logo_file;
+            error_log("APD Customizer - Product {$product->ID}: Using logo_file meta as fallback: {$logo_file}");
+        }
+        
         $features = get_post_meta($product->ID, '_fsc_features', true);
         $template_id = get_post_meta($product->ID, '_fsc_template', true);
 
