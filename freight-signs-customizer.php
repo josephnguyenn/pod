@@ -7313,6 +7313,32 @@ class AdvancedProductDesigner
         $features = get_post_meta($product->ID, '_fsc_features', true);
         $template_id = get_post_meta($product->ID, '_fsc_template', true);
 
+        // Get logo content (SVG markup) if logo exists
+        $logo_content = '';
+        if ($image) {
+            // Convert URL to file path
+            $upload_dir = wp_upload_dir();
+            $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $image);
+            
+            // Also try replacing the site URL for cases where full URL is stored
+            if (!file_exists($logo_path)) {
+                $logo_path = str_replace(site_url(), ABSPATH, $image);
+            }
+            
+            error_log("APD Customizer - Product {$product->ID}: Attempting to load SVG from: {$logo_path}");
+            
+            if (file_exists($logo_path)) {
+                $logo_content = $this->_get_processed_svg_content($logo_path);
+                if ($logo_content) {
+                    error_log("APD Customizer - Product {$product->ID}: Successfully loaded logo content, size: " . strlen($logo_content) . " bytes");
+                } else {
+                    error_log("APD Customizer - Product {$product->ID}: Failed to get processed SVG content");
+                }
+            } else {
+                error_log("APD Customizer - Product {$product->ID}: Logo file does not exist at path: {$logo_path}");
+            }
+        }
+        
         $product_data = array(
             'id' => $product->ID,
             'title' => $product->post_title,
@@ -7321,6 +7347,7 @@ class AdvancedProductDesigner
             'price' => $price ?: '0.00',
             'sale_price' => $sale_price ?: '',
             'image' => $image ?: '',
+            'logo_content' => $logo_content,
             'features' => is_array($features) ? $features : array(),
             'template_id' => $template_id,
             'permalink' => get_permalink($product->ID)

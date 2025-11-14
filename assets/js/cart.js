@@ -377,17 +377,18 @@ const APDCart = {
     try {
       const customizationData = item.customization_data || {};
       
-      // Check if this is a customized product (has template objects/text)
-      const isCustomized = customizationData.objects && customizationData.objects.length > 0;
+      // Check if this is a customized product (has template objects/text/logo elements or template data)
+      const isCustomized = (customizationData.objects && customizationData.objects.length > 0) ||
+                          (customizationData.template_data && Object.keys(customizationData.template_data).length > 0) ||
+                          customizationData.preview_image_svg ||
+                          customizationData.preview_image_png;
       
-      // Get preview image - prioritize stored images for customized products
-      const previewImage = isCustomized 
-        ? (customizationData.preview_image_svg ||
-           customizationData.preview_image_png ||
-           customizationData.image_url ||
-           customizationData.customization_image_url)
-        : (customizationData.preview_image_url || 
-           customizationData.image_url);
+      // Get preview image - prioritize rendered preview images
+      const previewImage = customizationData.preview_image_svg ||
+                          customizationData.preview_image_png ||
+                          customizationData.preview_image_url ||
+                          customizationData.customization_image_url ||
+                          customizationData.image_url;
       
       // Check localStorage for persisted selection so the UI can render selected state immediately
       let isSelected = false;
