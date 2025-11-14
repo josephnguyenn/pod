@@ -2684,6 +2684,15 @@ class AdvancedProductDesigner
                     $svg_download_url = $cd['preview_image_svg'];
                 }
             }
+            
+            // For non-customizable products, fetch the product's logo SVG
+            if (empty($svg_download_url) && !empty($first['product_id'])) {
+                $product_id = intval($first['product_id']);
+                $product_logo = get_post_meta($product_id, '_fsc_logo_file', true);
+                if (!empty($product_logo) && preg_match('/\.svg$/i', $product_logo)) {
+                    $svg_download_url = $product_logo;
+                }
+            }
         }
         // If not explicitly found, but the displayed image is an SVG data URL, allow downloading that
         if (empty($svg_download_url) && is_string($image_to_display) && preg_match('/^data:image(?:\\+svg|\\/svg(?:\\+xml|\\-xml)?);/i', $image_to_display)) {
@@ -2697,6 +2706,7 @@ class AdvancedProductDesigner
             echo '<!-- DEBUG: preview_image_url = ' . esc_html($preview_image_url ?: 'EMPTY') . ' -->';
             echo '<!-- DEBUG: customization_image_url = ' . esc_html($customization_image_url ?: 'EMPTY') . ' -->';
             echo '<!-- DEBUG: image_to_display = ' . esc_html($image_to_display ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: svg_download_url = ' . esc_html($svg_download_url ?: 'EMPTY') . ' -->';
         }
 
         if ($image_to_display) {
