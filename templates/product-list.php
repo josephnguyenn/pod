@@ -260,7 +260,7 @@ $items_per_page = -1;
 
 /* --- Product Card --- */
 .apd-product-card {
-    display: none;
+    display: block;
     background: white;
     border: 2px solid var(--color-border);
     border-radius: 12px;
