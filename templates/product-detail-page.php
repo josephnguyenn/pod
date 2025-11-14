@@ -76,11 +76,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
             <!-- Product Image Gallery -->
             <div class="apd-product-gallery">
                 <div class="apd-main-image">
-                    <?php if (has_post_thumbnail($product_id)): ?>
-                        <img class="apd-product-image" src="<?php echo get_the_post_thumbnail_url($product_id, 'large'); ?>" alt="<?php echo esc_attr($product->post_title); ?>">
-                    <?php else: ?>
-                        <img class="apd-product-image" src="<?php echo esc_url(APD_PLUGIN_URL . 'assets/images/placeholder.png'); ?>" alt="<?php echo esc_attr($product->post_title); ?>">
-                    <?php endif; ?>
+                    <img class="apd-product-image" src="<?php echo esc_url($product_image); ?>" alt="<?php echo esc_attr($product->post_title); ?>">
                     <?php if ($has_sale): ?>
                         <div class="apd-sale-badge">Sale</div>
                     <?php endif; ?>
