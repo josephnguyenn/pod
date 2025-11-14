@@ -93,7 +93,7 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
                                             <?php endif; ?>
                                         </div>
                                     <?php endif; ?>
-                                    <button class="apd-customize-btn">Customize</button>
+                                    <button class="apd-product-list-cta-btn">Customize</button>
                                 </div>
                             </div>
                         </div>
@@ -315,7 +315,7 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
     left: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     transition: transform 0.3s ease;
 }
 
@@ -459,7 +459,7 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
     font-weight: 600;
 }
 
-.apd-customize-btn {
+.apd-product-list-cta-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -476,11 +476,11 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
     transition: all 0.15s ease;
 }
 
-.apd-product-card:hover .apd-customize-btn {
+.apd-product-card:hover .apd-product-list-cta-btn {
     background-color: var(--color-primary);
 }
 
-.apd-customize-btn:hover {
+.apd-product-list-cta-btn:hover {
     background-color: var(--color-primary-hover);
 }
 
@@ -666,6 +666,13 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
             return;
         }
         const productId = $(this).data('product-id');
+        window.location.href = `<?php echo home_url(); ?>/product-detail/?id=${productId}`;
+    });
+
+    // CTA button click handler - goes to product detail page
+    $('.apd-product-list-cta-btn').on('click', function(e) {
+        e.stopPropagation(); // Prevent card click
+        const productId = $(this).closest('.apd-product-card').data('product-id');
         window.location.href = `<?php echo home_url(); ?>/product-detail/?id=${productId}`;
     });
 
