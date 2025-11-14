@@ -449,7 +449,69 @@ foreach ($shop_us_states as $code => $name) {
             margin-bottom: 20px;
 
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
 
+        }
+        
+        /* Compact View Styles */
+        .apd-toggle-view-btn {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .apd-toggle-view-btn:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+        
+        .apd-compact-view .product-details-list {
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        
+        .apd-compact-view .product-details-list:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transform: translateY(-2px);
+        }
+        
+        .apd-compact-view .product-details-list .design-preview-card,
+        .apd-compact-view .product-details-list .detail-item:not(.apd-summary-row) {
+            display: none;
+        }
+        
+        .apd-compact-view .product-details-list.apd-expanded .design-preview-card,
+        .apd-compact-view .product-details-list.apd-expanded .detail-item {
+            display: flex;
+        }
+        
+        .apd-compact-view .product-details-list.apd-expanded {
+            padding: 20px;
+        }
+        
+        .apd-summary-row {
+            display: flex !important;
+            font-weight: 600;
+            padding: 0 !important;
+            border: none !important;
+        }
+        
+        .apd-expand-icon {
+            margin-left: auto;
+            font-size: 1.2rem;
+            transition: transform 0.3s ease;
+        }
+        
+        .apd-expanded .apd-expand-icon {
+            transform: rotate(180deg);
         }
 
         
@@ -1192,9 +1254,17 @@ console.log('🔥 [APD] Timestamp:', new Date().toISOString());
 
             <div class="checkout-summary-card">
 
-                <h3 class="checkout-summary-title">Order Summary</h3>
-
-
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 class="checkout-summary-title" style="margin: 0;">Order Summary</h3>
+                    <button id="apd-toggle-view" class="apd-toggle-view-btn" title="Toggle compact view">
+                        <span id="apd-view-icon">📋</span> <span id="apd-view-text">Compact</span>
+                    </button>
+                </div>
+                
+                <!-- Items count summary -->
+                <div id="apd-items-summary" style="padding: 8px 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 12px; font-size: 0.9rem; color: #495057; display: none;">
+                    <strong id="apd-items-count">0 items</strong> in your order
+                </div>
 
                 <!-- Dynamic cart items from server/localStorage -->
 
@@ -1765,6 +1835,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
         console.log('[APD] 🎨 Starting to render', CURRENT_CART.length, 'items...');
         
+        // Update items count summary
+        const itemsSummary = document.getElementById('apd-items-summary');
+        const itemsCount = document.getElementById('apd-items-count');
+        if (itemsSummary && itemsCount) {
+            itemsCount.textContent = CURRENT_CART.length + ' item' + (CURRENT_CART.length !== 1 ? 's' : '');
+            itemsSummary.style.display = 'block';
+        }
+        
         (CURRENT_CART).forEach(function(it, index) {
             console.log('[APD] Rendering item', index + 1, 'of', CURRENT_CART.length, ':', it.product_name);
             
@@ -1855,9 +1933,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const card = document.createElement('div');
 
             card.className = 'product-details-list';
+            card.setAttribute('data-item-index', index);
 
             // Build HTML using string concatenation to avoid PHP parsing issues
-            let cardHtml = '<div class="design-preview-card" style="margin-bottom:12px;">' + preview + '</div>';
+            let cardHtml = '';
+            
+            // Add summary row for compact view (always visible)
+            cardHtml += '<div class="detail-item apd-summary-row">';
+            cardHtml += '<span class="detail-value" style="font-weight: 600; color: #212529;">' + (name || 'Product') + '</span>';
+            cardHtml += '<span class="detail-value" style="font-weight: 700; color: #28a745;">' + formatMoney(line) + '</span>';
+            cardHtml += '<span class="apd-expand-icon">▼</span>';
+            cardHtml += '</div>';
+            
+            // Full details (hidden in compact view)
+            cardHtml += '<div class="design-preview-card" style="margin-bottom:12px;margin-top:12px;">' + preview + '</div>';
             cardHtml += '<div class="detail-item"><span class="detail-label">Product:</span><span class="detail-value">' + (name || 'Product') + '</span></div>';
             cardHtml += color + material;
             cardHtml += priceBreakdown;
@@ -1868,6 +1957,14 @@ document.addEventListener('DOMContentLoaded', function() {
             cardHtml += nameRow;
             
             card.innerHTML = cardHtml;
+            
+            // Add click handler for expand/collapse in compact view
+            card.addEventListener('click', function(e) {
+                if (document.getElementById('apd-order-items').classList.contains('apd-compact-view')) {
+                    e.preventDefault();
+                    this.classList.toggle('apd-expanded');
+                }
+            });
 
             console.log('[APD] Appending card for item', index + 1, 'to itemsWrap');
             try {
@@ -2771,6 +2868,44 @@ document.addEventListener('DOMContentLoaded', function() {
 
         updateShippingAndTotal();
 
+    }
+    
+    // Toggle compact view functionality
+    const toggleViewBtn = document.getElementById('apd-toggle-view');
+    const orderItemsContainer = document.getElementById('apd-order-items');
+    const viewIcon = document.getElementById('apd-view-icon');
+    const viewText = document.getElementById('apd-view-text');
+    
+    if (toggleViewBtn && orderItemsContainer) {
+        // Load saved preference
+        const savedView = localStorage.getItem('apd_checkout_view') || 'normal';
+        if (savedView === 'compact') {
+            orderItemsContainer.classList.add('apd-compact-view');
+            viewIcon.textContent = '📄';
+            viewText.textContent = 'Detailed';
+        }
+        
+        toggleViewBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const isCompact = orderItemsContainer.classList.toggle('apd-compact-view');
+            
+            if (isCompact) {
+                viewIcon.textContent = '📄';
+                viewText.textContent = 'Detailed';
+                localStorage.setItem('apd_checkout_view', 'compact');
+                console.log('[APD] Switched to compact view');
+            } else {
+                viewIcon.textContent = '📋';
+                viewText.textContent = 'Compact';
+                localStorage.setItem('apd_checkout_view', 'normal');
+                console.log('[APD] Switched to detailed view');
+                
+                // Collapse all items when switching back to detailed view
+                document.querySelectorAll('.product-details-list.apd-expanded').forEach(function(card) {
+                    card.classList.remove('apd-expanded');
+                });
+            }
+        });
     }
     
  } catch (checkoutError) {

@@ -322,10 +322,22 @@ class AdvancedProductDesigner
             update_post_meta($order_id, $k, $v);
         }
 
-        $thankyou = get_permalink(intval(get_option('apd_thankyou')));
-        if (!$thankyou) {
+        // Get thank you page URL - prefer slug-based option over page ID
+        $thankyou = home_url(get_option('apd_thank_you_url', '/thank-you/'));
+        
+        // Fallback to page ID if slug option is not set
+        if (!get_option('apd_thank_you_url')) {
+            $page_id = intval(get_option('apd_thankyou'));
+            if ($page_id) {
+                $thankyou = get_permalink($page_id);
+            }
+        }
+        
+        // Final fallback
+        if (!$thankyou || strpos($thankyou, '?page_id=') !== false) {
             $thankyou = home_url('/thank-you/');
         }
+        
         wp_send_json_success(array('order_id' => $order_id, 'redirect' => esc_url($thankyou)));
     }
 
@@ -2440,10 +2452,22 @@ class AdvancedProductDesigner
         error_reporting($error_reporting);
         ini_set('display_errors', $display_errors);
         
-        $thankyou = get_permalink(intval(get_option('apd_thankyou')));
-        if (!$thankyou) {
+        // Get thank you page URL - prefer slug-based option over page ID
+        $thankyou = home_url(get_option('apd_thank_you_url', '/thank-you/'));
+        
+        // Fallback to page ID if slug option is not set
+        if (!get_option('apd_thank_you_url')) {
+            $page_id = intval(get_option('apd_thankyou'));
+            if ($page_id) {
+                $thankyou = get_permalink($page_id);
+            }
+        }
+        
+        // Final fallback - avoid ?page_id= format
+        if (!$thankyou || strpos($thankyou, '?page_id=') !== false) {
             $thankyou = home_url('/thank-you/');
         }
+        
         wp_send_json_success(array('order_id' => $order_id, 'redirect' => esc_url($thankyou)));
     }
 
