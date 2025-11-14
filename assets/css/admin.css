@@ -1,0 +1,789 @@
+/* Advanced Product Designer - Admin Styles */
+
+
+
+/* Tailwind CSS classes are included via custom CSS below instead of CDN for production */
+
+
+
+/* Custom Admin Styles */
+
+.apd-dashboard,
+
+.apd-products,
+
+.apd-designer,
+
+.apd-settings {
+
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+}
+
+
+
+/* Dashboard Styles */
+
+.apd-header {
+
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+    border-radius: 12px;
+
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+
+}
+
+
+
+.apd-stat-card {
+
+    transition: all 0.3s ease;
+
+    border: 1px solid #e5e7eb;
+
+}
+
+
+
+.apd-stat-card:hover {
+
+    transform: translateY(-2px);
+
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+
+}
+
+
+
+/* Products Table Styles */
+
+.apd-products .table-container {
+
+    border-radius: 12px;
+
+    overflow: hidden;
+
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+
+}
+
+
+
+.apd-products table {
+
+    border-collapse: separate;
+
+    border-spacing: 0;
+
+}
+
+
+
+.apd-products th {
+
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+
+    font-weight: 600;
+
+    text-transform: uppercase;
+
+    letter-spacing: 0.05em;
+
+    font-size: 0.75rem;
+
+}
+
+
+
+.apd-products tr:hover {
+
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+
+}
+
+
+
+/* Designer Interface Styles */
+
+.apd-designer {
+
+    height: 100vh;
+
+    overflow: hidden;
+
+    background: #f8fafc;
+
+}
+
+
+
+.apd-designer .tool-tab {
+
+    transition: all 0.2s ease;
+
+    position: relative;
+
+}
+
+
+
+.apd-designer .tool-tab.active {
+
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+
+    border-bottom: 2px solid #3b82f6;
+
+    color: #1e40af;
+
+}
+
+
+
+.apd-designer .tool-tab:hover:not(.active) {
+
+    background: #f1f5f9;
+
+}
+
+
+
+/* Canvas Styles */
+
+#canvas-container {
+
+    position: relative;
+
+    border: 2px solid #e5e7eb;
+
+    border-radius: 8px;
+
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+    background: white;
+
+    min-width: 400px;
+
+    min-height: 300px;
+
+    transition: all 0.3s ease;
+
+}
+
+
+
+#canvas-container:hover {
+
+    border-color: #3b82f6;
+
+}
+
+
+
+/* Element Selection Styles */
+
+.selected {
+
+    outline: 2px solid #3b82f6;
+
+    outline-offset: 2px;
+
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+
+}
+
+
+
+/* Drag and Drop Styles */
+
+.dragging {
+
+    opacity: 0.7;
+
+    transform: rotate(2deg) scale(1.05);
+
+    z-index: 1000;
+
+    transition: all 0.2s ease;
+
+}
+
+
+
+.drag-over {
+
+    border-color: #3b82f6;
+
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+
+    transform: scale(1.02);
+
+}
+
+
+
+/* Upload Area Styles */
+
+#upload-area {
+
+    transition: all 0.3s ease;
+
+    border: 2px dashed #d1d5db;
+
+    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+
+}
+
+
+
+#upload-area:hover {
+
+    border-color: #3b82f6;
+
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+
+    transform: translateY(-2px);
+
+}
+
+
+
+#upload-area.drag-over {
+
+    border-color: #1d4ed8;
+
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+
+    color: white;
+
+    transform: scale(1.05);
+
+}
+
+
+
+/* Button Styles */
+
+.apd-btn {
+
+    transition: all 0.2s ease;
+
+    font-weight: 500;
+
+    border-radius: 8px;
+
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+}
+
+
+
+.apd-btn:hover {
+
+    transform: translateY(-1px);
+
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+}
+
+
+
+.apd-btn:active {
+
+    transform: translateY(0);
+
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+}
+
+
+
+/* Form Input Styles */
+
+.apd-input {
+
+    transition: all 0.2s ease;
+
+    border: 1px solid #d1d5db;
+
+    border-radius: 8px;
+
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+}
+
+
+
+.apd-input:focus {
+
+    border-color: #3b82f6;
+
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+
+    outline: none;
+
+}
+
+
+
+/* Tool Content Animations */
+
+.tool-content {
+
+    animation: fadeIn 0.3s ease-in-out;
+
+}
+
+
+
+@keyframes fadeIn {
+
+    from {
+
+        opacity: 0;
+
+        transform: translateY(10px);
+
+    }
+
+    to {
+
+        opacity: 1;
+
+        transform: translateY(0);
+
+    }
+
+}
+
+
+
+/* Loading States */
+
+.loading {
+
+    position: relative;
+
+    overflow: hidden;
+
+}
+
+
+
+.loading::after {
+
+    content: '';
+
+    position: absolute;
+
+    top: 0;
+
+    left: -100%;
+
+    width: 100%;
+
+    height: 100%;
+
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+
+    animation: loading 1.5s infinite;
+
+}
+
+
+
+@keyframes loading {
+
+    0% {
+
+        left: -100%;
+
+    }
+
+    100% {
+
+        left: 100%;
+
+    }
+
+}
+
+
+
+/* Success/Error States */
+
+.success {
+
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+
+    border: 1px solid #10b981;
+
+    color: #065f46;
+
+}
+
+
+
+.error {
+
+    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+
+    border: 1px solid #ef4444;
+
+    color: #991b1b;
+
+}
+
+
+
+/* Responsive Design */
+
+@media (max-width: 1024px) {
+
+    .apd-designer .w-80 {
+
+        width: 16rem;
+
+    }
+
+    
+
+    .apd-designer .lg\:col-span-2 {
+
+        grid-column: span 1;
+
+    }
+
+}
+
+
+
+@media (max-width: 768px) {
+
+    .apd-designer {
+
+        flex-direction: column;
+
+    }
+
+    
+
+    .apd-designer .w-80 {
+
+        width: 100%;
+
+        height: auto;
+
+        max-height: 50vh;
+
+    }
+
+    
+
+    .apd-designer .flex {
+
+        flex-direction: column;
+
+    }
+
+    
+
+    #canvas-container {
+
+        min-width: 300px;
+
+        min-height: 200px;
+
+    }
+
+}
+
+
+
+@media (max-width: 640px) {
+
+    .apd-dashboard,
+
+    .apd-products,
+
+    .apd-settings {
+
+        margin: 10px;
+
+        padding: 15px;
+
+    }
+
+    
+
+    .apd-header {
+
+        padding: 1.5rem;
+
+    }
+
+    
+
+    .apd-header h1 {
+
+        font-size: 2rem;
+
+    }
+
+}
+
+
+
+/* Dark Mode Support */
+
+@media (prefers-color-scheme: dark) {
+
+    .apd-dashboard,
+
+    .apd-products,
+
+    .apd-designer,
+
+    .apd-settings {
+
+        background: #1f2937;
+
+        color: #f9fafb;
+
+    }
+
+    
+
+    .apd-designer {
+
+        background: #111827;
+
+    }
+
+    
+
+    #canvas-container {
+
+        background: #374151;
+
+        border-color: #4b5563;
+
+    }
+
+    
+
+    .apd-input {
+
+        background: #374151;
+
+        border-color: #4b5563;
+
+        color: #f9fafb;
+
+    }
+
+    
+
+    .apd-input:focus {
+
+        border-color: #3b82f6;
+
+        background: #4b5563;
+
+    }
+
+}
+
+
+
+/* Custom Scrollbar */
+
+.apd-designer ::-webkit-scrollbar {
+
+    width: 8px;
+
+    height: 8px;
+
+}
+
+
+
+.apd-designer ::-webkit-scrollbar-track {
+
+    background: #f1f5f9;
+
+    border-radius: 4px;
+
+}
+
+
+
+.apd-designer ::-webkit-scrollbar-thumb {
+
+    background: #cbd5e1;
+
+    border-radius: 4px;
+
+}
+
+
+
+.apd-designer ::-webkit-scrollbar-thumb:hover {
+
+    background: #94a3b8;
+
+}
+
+
+
+/* Animation Classes */
+
+.fade-in {
+
+    animation: fadeIn 0.3s ease-in-out;
+
+}
+
+
+
+.slide-in-left {
+
+    animation: slideInLeft 0.3s ease-in-out;
+
+}
+
+
+
+.slide-in-right {
+
+    animation: slideInRight 0.3s ease-in-out;
+
+}
+
+
+
+@keyframes slideInLeft {
+
+    from {
+
+        opacity: 0;
+
+        transform: translateX(-20px);
+
+    }
+
+    to {
+
+        opacity: 1;
+
+        transform: translateX(0);
+
+    }
+
+}
+
+
+
+@keyframes slideInRight {
+
+    from {
+
+        opacity: 0;
+
+        transform: translateX(20px);
+
+    }
+
+    to {
+
+        opacity: 1;
+
+        transform: translateX(0);
+
+    }
+
+}
+
+
+
+/* Print Styles */
+
+@media print {
+
+    .apd-designer .tool-tab,
+
+    .apd-designer .tool-content,
+
+    .apd-designer .border-l,
+
+    .apd-designer .border-r {
+
+        display: none;
+
+    }
+
+    
+
+    #canvas-container {
+
+        border: 1px solid #000;
+
+        box-shadow: none;
+
+    }
+
+}
+
+
+
+/* High Contrast Mode */
+
+@media (prefers-contrast: high) {
+
+    .apd-designer {
+
+        background: #000;
+
+        color: #fff;
+
+    }
+
+    
+
+    #canvas-container {
+
+        background: #fff;
+
+        border: 2px solid #000;
+
+    }
+
+    
+
+    .selected {
+
+        outline: 3px solid #000;
+
+        outline-offset: 3px;
+
+    }
+
+}
+
+
+
+/* Reduced Motion */
+
+@media (prefers-reduced-motion: reduce) {
+
+    * {
+
+        animation-duration: 0.01ms !important;
+
+        animation-iteration-count: 1 !important;
+
+        transition-duration: 0.01ms !important;
+
+    }
+
+}

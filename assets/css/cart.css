@@ -1,0 +1,622 @@
+/**
+ * Cart Page Styles
+ * Styling for the cart page with live preview functionality
+ */
+
+.apd-cart-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.apd-cart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #e1e5e9;
+}
+
+.apd-cart-header h2 {
+  margin: 0;
+  color: #2c3e50;
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.apd-cart-summary {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.apd-select-all-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.apd-select-all-label input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.apd-select-all-ui {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #f1f4f8;
+  border: 1px solid #dfe6ef;
+  display: inline-block;
+  transition: all 0.12s ease;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03) inset;
+}
+.apd-select-all-ui::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 6px;
+  margin: 6px 0 0 6px;
+  border-left: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  transform: rotate(-45deg);
+}
+.apd-select-all-label input:checked + .apd-select-all-ui {
+  background: #007bff;
+  border-color: #007bff;
+}
+.apd-select-all-label input:checked + .apd-select-all-ui::after {
+  border-left-color: white;
+  border-bottom-color: white;
+}
+
+.apd-item-select-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  position: relative;
+}
+/* Make the native input cover the visible UI so clicks/taps always register */
+.apd-item-select-inline input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+.apd-item-select-inline .apd-item-select-ui {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #f0f2f5;
+  border: 1px solid #e0e6ef;
+  display: inline-block;
+  transition: all 0.12s ease;
+  position: relative;
+}
+.apd-item-select-inline input:checked + .apd-item-select-ui {
+  background: #007bff;
+  border-color: #007bff;
+}
+/* Center the check mark absolutely inside the box for consistent alignment */
+.apd-item-select-inline .apd-item-select-ui::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 5px;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  border-left: 2px solid white;
+  border-bottom: 2px solid white;
+  opacity: 0;
+}
+.apd-item-select-inline input:checked + .apd-item-select-ui::after {
+  opacity: 1;
+}
+
+/* Ensure checkbox sits above card content and is not clipped by rounded corners */
+.apd-item-select-inline {
+  position: relative;
+  z-index: 6;
+}
+.apd-cart-item {
+  overflow: visible;
+}
+
+/* Selected cart item visual style */
+.apd-item-selected {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 123, 255, 0.04),
+    rgba(0, 123, 255, 0.01)
+  ) !important;
+  border-left: 4px solid rgba(0, 123, 255, 0.12) !important;
+  padding-left: 20px !important; /* give space for left border */
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.04) !important;
+  transition:
+    background 0.18s ease,
+    border-left 0.18s ease,
+    box-shadow 0.18s ease,
+    padding-left 0.12s ease !important;
+}
+
+/* Slightly stronger highlight on hover when selected */
+.apd-item-selected:hover {
+  box-shadow: 0 8px 22px rgba(2, 6, 23, 0.06);
+}
+
+/* Additional selected-item refinements */
+/* Ensure visual checkbox state follows the selected class (useful when markup is server-rendered)
+   and give slight emphasis to the preview and title when selected. */
+.apd-item-select-ui {
+  background: #007bff;
+  border-color: #007bff;
+}
+.apd-item-customization {
+  border-left-color: rgba(0, 123, 255, 0.16);
+}
+.apd-preview-canvas {
+  box-shadow: 0 6px 18px rgba(0, 123, 255, 0.06) inset;
+}
+
+/* Focus and keyboard accessibility: highlight item when keyboard focus is inside it */
+.apd-cart-item:focus-within {
+  outline: 3px solid rgba(102, 126, 234, 0.12);
+  outline-offset: 4px;
+}
+
+/* Reduce layout shift when toggling selection by keeping a symmetric inner spacing
+   and animating transform instead of abrupt padding changes where possible */
+.apd-cart-item {
+  transition:
+    box-shadow 0.3s ease,
+    transform 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.apd-selected-total {
+  color: #184d47;
+  font-weight: 700;
+}
+
+/* Header select-all checkbox styling */
+.apd-select-all-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.apd-select-all-label input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.apd-select-all-ui {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #f1f4f8;
+  border: 1px solid #dfe6ef;
+  display: inline-block;
+  transition: all 0.12s ease;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03) inset;
+}
+.apd-select-all-ui::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 6px;
+  margin: 6px 0 0 6px;
+  border-left: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  transform: rotate(-45deg);
+}
+.apd-select-all-label input:checked + .apd-select-all-ui {
+  background: #007bff;
+  border-color: #007bff;
+}
+.apd-select-all-label input:checked + .apd-select-all-ui::after {
+  border-left-color: white;
+  border-bottom-color: white;
+}
+
+.apd-cart-count,
+.apd-cart-total {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #34495e;
+}
+
+.apd-cart-total {
+  color: #27ae60;
+  font-weight: 600;
+}
+
+.apd-cart-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Empty Cart State */
+.apd-cart-empty {
+  text-align: center;
+  padding: 60px 20px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  border: 2px dashed #dee2e6;
+}
+
+.apd-empty-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.apd-cart-empty h3 {
+  color: #6c757d;
+  margin-bottom: 10px;
+  font-size: 1.5rem;
+}
+
+.apd-cart-empty p {
+  color: #868e96;
+  margin-bottom: 30px;
+  font-size: 1.1rem;
+}
+
+/* Cart Items */
+.apd-cart-item {
+  display: flex;
+  gap: 30px;
+  padding: 25px;
+  background: #fff;
+  border: 1px solid #e1e5e9;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: box-shadow 0.3s ease;
+  position: relative; /* anchor absolute children like the select checkbox */
+}
+
+.apd-cart-item:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.apd-cart-item-preview {
+  flex: 0 0 300px;
+  overflow: visible;
+}
+
+/* Preview image when available */
+.apd-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: #f8fafc;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Cart count display */
+.fsc-cart-info {
+  text-align: center;
+  margin-top: 10px;
+}
+
+.apd-cart-count {
+  font-size: 0.9rem;
+  color: #667eea;
+  font-weight: 600;
+  background: #f8f9fa;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #e9ecef;
+}
+
+.apd-live-preview {
+  background: #f8f9fa;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #dee2e6;
+}
+
+.apd-preview-title {
+  background: #667eea;
+  color: white;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+.apd-preview-area {
+  padding: 20px;
+  background: #fff;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.apd-preview-content {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.apd-preview-canvas {
+  width: 100%;
+  height: 160px;
+  border-radius: 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: bold;
+  font-size: 1.2rem;
+  text-align: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.apd-material-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.8;
+  border-radius: 4px;
+}
+
+.apd-preview-text,
+.apd-preview-field {
+  position: relative;
+  z-index: 2;
+  font-weight: bold;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  margin: 5px 0;
+}
+
+/* Cart Item Details */
+.apd-cart-item-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.apd-item-title {
+  margin: 0;
+  color: #2c3e50;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.apd-item-customization {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.apd-item-customization h4 {
+  margin: 0 0 10px 0;
+  color: #495057;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.apd-customization-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.apd-customization-list li {
+  padding: 4px 0;
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
+.apd-customization-list strong {
+  color: #495057;
+}
+
+/* Pricing */
+.apd-item-pricing {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.apd-item-price {
+  color: #6c757d;
+  font-size: 1rem;
+}
+
+.apd-item-total {
+  color: #27ae60;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+/* Controls */
+.apd-item-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: auto;
+}
+
+.apd-quantity-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apd-qty-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dee2e6;
+  background: #fff;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #495057;
+  transition: all 0.2s ease;
+}
+
+.apd-qty-btn:hover {
+  background: #f8f9fa;
+  border-color: #adb5bd;
+}
+
+.apd-quantity-input {
+  width: 60px;
+  height: 32px;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.apd-quantity-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+/* Buttons */
+.apd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  gap: 8px;
+}
+
+.apd-btn-primary {
+  background: #667eea;
+  color: white;
+}
+
+.apd-btn-primary:hover {
+  background: #5a6fd8;
+  color: white;
+}
+
+.apd-btn-secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.apd-btn-secondary:hover {
+  background: #5a6268;
+  color: white;
+}
+
+.apd-btn-danger {
+  background: #dc3545;
+  color: white;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+}
+
+.apd-btn-danger:hover {
+  background: #c82333;
+  color: white;
+}
+
+/* Cart Actions */
+.apd-cart-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 2px solid #e1e5e9;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .apd-cart-page {
+    padding: 15px;
+  }
+
+  .apd-cart-header {
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+  }
+
+  .apd-cart-item {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .apd-cart-item-preview {
+    flex: none;
+  }
+
+  .apd-item-controls {
+    flex-direction: column;
+    gap: 15px;
+    align-items: stretch;
+  }
+
+  .apd-cart-actions {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .apd-cart-actions .apd-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .apd-cart-header h2 {
+    font-size: 1.5rem;
+  }
+
+  .apd-cart-summary {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .apd-cart-item {
+    padding: 20px 15px;
+  }
+
+  .apd-preview-canvas {
+    height: 120px;
+    font-size: 1rem;
+  }
+}

@@ -1,0 +1,353 @@
+/* Orders Page Styles */
+.apd-orders-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.apd-orders-header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding: 20px 0;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.apd-orders-header h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 10px 0;
+}
+
+.apd-orders-header p {
+    font-size: 1.1rem;
+    color: #6b7280;
+    margin: 0;
+}
+
+/* Empty Orders State */
+.apd-empty-orders {
+    text-align: center;
+    padding: 60px 20px;
+    background: #f9fafb;
+    border-radius: 12px;
+    border: 2px dashed #d1d5db;
+}
+
+.apd-empty-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+.apd-empty-orders h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #374151;
+    margin: 0 0 10px 0;
+}
+
+.apd-empty-orders p {
+    font-size: 1rem;
+    color: #6b7280;
+    margin: 0 0 30px 0;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Orders List */
+.apd-orders-list {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.apd-order-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.apd-order-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+}
+
+.apd-order-card.apd-order-expanded {
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+/* Order Header */
+.apd-order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.apd-order-info h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 4px 0;
+}
+
+.apd-order-date {
+    font-size: 0.9rem;
+    color: #6b7280;
+    margin: 0;
+}
+
+.apd-order-status {
+    flex-shrink: 0;
+}
+
+.apd-status-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.apd-status-pending {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #f59e0b;
+}
+
+.apd-status-processing {
+    background: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #3b82f6;
+}
+
+.apd-status-shipped {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #10b981;
+}
+
+.apd-status-delivered {
+    background: #f3e8ff;
+    color: #6b21a8;
+    border: 1px solid #8b5cf6;
+}
+
+.apd-status-cancelled {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #ef4444;
+}
+
+/* Order Items */
+.apd-order-items {
+    margin-bottom: 20px;
+}
+
+.apd-order-item {
+    display: flex;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.apd-order-item:last-child {
+    border-bottom: none;
+}
+
+.apd-order-item-preview {
+    flex-shrink: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f9fafb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.apd-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.apd-preview-placeholder {
+    font-size: 2rem;
+    color: #9ca3af;
+}
+
+.apd-order-item-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.apd-order-item-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 8px 0;
+    line-height: 1.4;
+}
+
+.apd-order-item-specs {
+    font-size: 0.9rem;
+    color: #6b7280;
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+}
+
+.apd-order-item-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.apd-order-item-quantity {
+    font-size: 0.9rem;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.apd-order-item-price {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+/* Order Footer */
+.apd-order-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 16px;
+    border-top: 1px solid #f3f4f6;
+}
+
+.apd-order-total {
+    font-size: 1.1rem;
+    color: #1f2937;
+}
+
+.apd-order-actions {
+    display: flex;
+    gap: 12px;
+}
+
+/* Buttons */
+.apd-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 120px;
+}
+
+.apd-btn-primary {
+    background: #3b82f6;
+    color: #ffffff;
+    border: 1px solid #3b82f6;
+}
+
+.apd-btn-primary:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+    transform: translateY(-1px);
+}
+
+.apd-btn-secondary {
+    background: #ffffff;
+    color: #374151;
+    border: 1px solid #d1d5db;
+}
+
+.apd-btn-secondary:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
+    transform: translateY(-1px);
+}
+
+/* Error State */
+.apd-error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #fecaca;
+    text-align: center;
+    font-weight: 500;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .apd-orders-page {
+        padding: 16px;
+    }
+    
+    .apd-orders-header h1 {
+        font-size: 2rem;
+    }
+    
+    .apd-order-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: flex-start;
+    }
+    
+    .apd-order-item {
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .apd-order-item-preview {
+        width: 100%;
+        height: 120px;
+    }
+    
+    .apd-order-footer {
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+    }
+    
+    .apd-order-actions {
+        justify-content: center;
+    }
+    
+    .apd-btn {
+        flex: 1;
+        min-width: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .apd-order-card {
+        padding: 16px;
+    }
+    
+    .apd-orders-header {
+        margin-bottom: 24px;
+    }
+    
+    .apd-orders-header h1 {
+        font-size: 1.75rem;
+    }
+}
