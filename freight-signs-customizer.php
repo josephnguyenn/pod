@@ -533,14 +533,27 @@ class AdvancedProductDesigner
                 <td>
                     <?php
                     $thumbnail_id = get_post_meta($post->ID, '_fsc_thumbnail_id', true);
+                    $thumbnail_url = '';
                     if ($thumbnail_id) {
                         $thumbnail_url = wp_get_attachment_image_url($thumbnail_id, 'medium');
-                        echo '<div class="fsc-thumbnail-preview" style="margin-bottom: 10px;">';
-                        echo '<img src="' . esc_url($thumbnail_url) . '" style="max-width: 200px; height: auto; border: 1px solid #ddd; border-radius: 4px;">';
-                        echo '</div>';
                     }
                     ?>
-                    <input type="file" id="fsc_thumbnail" name="fsc_thumbnail" accept="image/*" class="regular-text">
+                    <div class="fsc-thumbnail-wrapper">
+                        <div class="fsc-thumbnail-preview" style="margin-bottom: 10px;">
+                            <?php if ($thumbnail_url): ?>
+                                <img src="<?php echo esc_url($thumbnail_url); ?>" style="max-width: 200px; height: auto; border: 1px solid #ddd; border-radius: 4px; display: block;">
+                            <?php else: ?>
+                                <img src="<?php echo esc_url(APD_PLUGIN_URL . 'assets/images/placeholder.png'); ?>" style="max-width: 200px; height: auto; border: 1px solid #ddd; border-radius: 4px; display: block;">
+                            <?php endif; ?>
+                        </div>
+                        <input type="hidden" id="fsc_thumbnail_id" name="fsc_thumbnail_id" value="<?php echo esc_attr($thumbnail_id); ?>">
+                        <button type="button" class="button fsc-upload-thumbnail-btn">
+                            <?php echo $thumbnail_id ? 'Change Thumbnail' : 'Upload Thumbnail'; ?>
+                        </button>
+                        <?php if ($thumbnail_id): ?>
+                            <button type="button" class="button fsc-remove-thumbnail-btn" style="margin-left: 5px;">Remove Thumbnail</button>
+                        <?php endif; ?>
+                    </div>
                     <p class="description">Upload a thumbnail image for this product (JPG, PNG, GIF)</p>
                 </td>
             </tr>
@@ -571,14 +584,35 @@ class AdvancedProductDesigner
             <tr>
                 <th><label for="fsc_logo_file">Product Logo (SVG)</label></th>
                 <td>
-                    <?php if ($logo_file): ?>
-                        <div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
-                            <strong>Current logo:</strong> 
-                            <a href="<?php echo esc_url($logo_file); ?>" target="_blank"><?php echo esc_html(basename($logo_file)); ?></a>
-                        </div>
-                    <?php endif; ?>
-                    <input type="file" id="fsc_logo_file" name="fsc_logo_file" accept=".svg" class="regular-text">
-                    <p class="description">Upload SVG logo file for this product<?php echo $logo_file ? ' (upload new file to replace)' : ' (required)'; ?></p>
+                    <?php
+                    $logo_id = get_post_meta($post->ID, '_fsc_logo_id', true);
+                    $logo_url = '';
+                    $logo_filename = '';
+                    if ($logo_id) {
+                        $logo_url = wp_get_attachment_url($logo_id);
+                        $logo_filename = basename($logo_url);
+                    } elseif ($logo_file) {
+                        // Backward compatibility with old file-based system
+                        $logo_url = $logo_file;
+                        $logo_filename = basename($logo_file);
+                    }
+                    ?>
+                    <div class="fsc-logo-wrapper">
+                        <?php if ($logo_url): ?>
+                            <div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                                <strong>Current logo:</strong> 
+                                <a href="<?php echo esc_url($logo_url); ?>" target="_blank"><?php echo esc_html($logo_filename); ?></a>
+                            </div>
+                        <?php endif; ?>
+                        <input type="hidden" id="fsc_logo_id" name="fsc_logo_id" value="<?php echo esc_attr($logo_id); ?>">
+                        <button type="button" class="button fsc-upload-logo-btn">
+                            <?php echo $logo_url ? 'Change Logo' : 'Upload Logo'; ?>
+                        </button>
+                        <?php if ($logo_url): ?>
+                            <button type="button" class="button fsc-remove-logo-btn" style="margin-left: 5px;">Remove Logo</button>
+                        <?php endif; ?>
+                    </div>
+                    <p class="description">Upload SVG logo file for this product<?php echo $logo_url ? ' (click to replace)' : ' (required)'; ?></p>
                 </td>
             </tr>
             <tr style="display: none;">
@@ -695,108 +729,22 @@ class AdvancedProductDesigner
             update_post_meta($post_id, '_fsc_features', $features);
         }
 
-        // Handle thumbnail upload
-        if (isset($_FILES['fsc_thumbnail']) && $_FILES['fsc_thumbnail']['error'] === UPLOAD_ERR_OK) {
-            $file = $_FILES['fsc_thumbnail'];
-
-            // Check file type
-            $file_type = wp_check_filetype($file['name']);
-            if (in_array($file_type['type'], array('image/jpeg', 'image/png', 'image/gif'))) {
-                // Upload file
-                $upload = wp_handle_upload($file, array('test_form' => false));
-                if (!isset($upload['error'])) {
-                    // Create attachment
-                    $attachment = array(
-                        'post_mime_type' => $file_type['type'],
-                        'post_title' => sanitize_file_name($file['name']),
-                        'post_content' => '',
-                        'post_status' => 'inherit'
-                    );
-                    $attachment_id = wp_insert_attachment($attachment, $upload['file'], $post_id);
-
-                    if (!is_wp_error($attachment_id)) {
-                        // Generate attachment metadata
-                        require_once (ABSPATH . 'wp-admin/includes/image.php');
-                        $attachment_data = wp_generate_attachment_metadata($attachment_id, $upload['file']);
-                        wp_update_attachment_metadata($attachment_id, $attachment_data);
-
-                        // Save thumbnail ID
-                        update_post_meta($post_id, '_fsc_thumbnail_id', $attachment_id);
-                    }
-                }
-            }
+        // Save thumbnail ID from media selector
+        if (isset($_POST['fsc_thumbnail_id'])) {
+            update_post_meta($post_id, '_fsc_thumbnail_id', sanitize_text_field($_POST['fsc_thumbnail_id']));
         }
 
-        // Handle logo upload
-        if (isset($_FILES['fsc_logo_file']) && $_FILES['fsc_logo_file']['error'] === UPLOAD_ERR_OK) {
-            $file = $_FILES['fsc_logo_file'];
-
-            // Check file type
-            $file_type = wp_check_filetype($file['name']);
-            if ($file_type['type'] !== 'image/svg+xml') {
-                add_action('admin_notices', function () {
-                    echo '<div class="notice notice-error"><p>❌ Invalid file type. Only SVG files are allowed for logo upload.</p></div>';
-                });
-                return;
-            }
-
-            // Check file size (2MB limit)
-            if ($file['size'] > 2 * 1024 * 1024) {
-                add_action('admin_notices', function () {
-                    echo '<div class="notice notice-error"><p>❌ File too large. Maximum size is 2MB.</p></div>';
-                });
-                return;
-            }
-
-            // Create object directory if it doesn't exist
-            $plugin_dir = APD_PLUGIN_PATH;
-            $object_dir = $plugin_dir . 'uploads/object/';
-            if (!is_dir($object_dir)) {
-                wp_mkdir_p($object_dir);
-            }
-
-            // Generate unique filename: object_{post_id}.svg
-            $logo_filename = 'object_' . $post_id . '.svg';
-            $logo_path = $object_dir . $logo_filename;
-
-            // Read and validate SVG content
-            $svg_content = file_get_contents($file['tmp_name']);
+        // Save logo ID from media selector
+        if (isset($_POST['fsc_logo_id'])) {
+            $logo_id = sanitize_text_field($_POST['fsc_logo_id']);
+            update_post_meta($post_id, '_fsc_logo_id', $logo_id);
             
-            // Clean up SVG content
-            // Remove UTF-8 BOM
-            $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content);
-            
-            // Remove XML declaration and DOCTYPE
-            $svg_content = preg_replace('/<\?xml[^>]*\?>/i', '', $svg_content);
-            $svg_content = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svg_content);
-            
-            // Trim whitespace
-            $svg_content = trim($svg_content);
-            
-            // Validate it starts with <svg
-            if (!preg_match('/^<svg[\s>]/i', $svg_content)) {
-                add_action('admin_notices', function () {
-                    echo '<div class="notice notice-error"><p>❌ Invalid SVG file. File must start with &lt;svg&gt; tag.</p></div>';
-                });
-                return;
-            }
-            
-            // Save cleaned SVG content
-            if (file_put_contents($logo_path, $svg_content)) {
-                // Set proper permissions
-                chmod($logo_path, 0644);
-
-                // Save the URL to post meta
-                $logo_url = APD_PLUGIN_URL . 'uploads/object/' . $logo_filename;
-                update_post_meta($post_id, '_fsc_logo_file', $logo_url);
-
-                add_action('admin_notices', function () {
-                    echo '<div class="notice notice-success"><p>✅ Logo uploaded successfully!</p></div>';
-                });
-            } else {
-                add_action('admin_notices', function () {
-                    echo '<div class="notice notice-error"><p>❌ Failed to save logo file. Please check directory permissions.</p></div>';
-                });
+            // Also update the logo file URL for backward compatibility
+            if ($logo_id) {
+                $logo_url = wp_get_attachment_url($logo_id);
+                if ($logo_url) {
+                    update_post_meta($post_id, '_fsc_logo_file', $logo_url);
+                }
             }
         }
     }
@@ -839,8 +787,14 @@ class AdvancedProductDesigner
         wp_enqueue_style('apd-admin-styles', APD_PLUGIN_URL . 'assets/css/admin.css', array(), APD_VERSION);
         wp_enqueue_style('apd-admin-fixes', APD_PLUGIN_URL . 'assets/css/admin-fixes.css', array(), APD_VERSION);
 
-        // Enqueue designer scripts only on designer page
+        // Enqueue media uploader on product edit page
         $screen = get_current_screen();
+        if ($screen && $screen->post_type === 'apd_product') {
+            wp_enqueue_media();
+            wp_enqueue_script('apd-product-admin', APD_PLUGIN_URL . 'assets/js/product-admin.js', array('jquery'), APD_VERSION, true);
+        }
+
+        // Enqueue designer scripts only on designer page
         if ($screen && strpos($screen->id, 'apd-designer') !== false) {
             wp_enqueue_script('apd-designer', APD_PLUGIN_URL . 'assets/js/designer.js', array('jquery'), APD_VERSION, true);
 
