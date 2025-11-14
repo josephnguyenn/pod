@@ -956,7 +956,7 @@ console.log('🔥 [APD] Timestamp:', new Date().toISOString());
 
     <div class="checkout-nav">
 
-        <a href="#" class="checkout-back-link">← Continue Shopping</a>
+        <a href="<?php echo home_url('/product/'); ?>" class="checkout-back-link">← Continue Shopping</a>
 
     </div>
 
@@ -2762,7 +2762,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             </p>
 
-            <button onclick="this.closest('.modal').remove()" style="
+            <button onclick="window.location.href='<?php echo home_url('/product/'); ?>'" style="
 
                 background: #007bff;
 

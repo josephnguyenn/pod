@@ -411,9 +411,9 @@ class AdvancedProductDesigner
             'show_admin_column' => true,
             'query_var' => true,
             'rewrite' => array(
-                'slug' => 'company',
+                'slug' => '',
                 'with_front' => false,
-                'hierarchical' => true
+                'hierarchical' => false
             ),
             'show_in_rest' => true,
             'public' => true,
@@ -3340,8 +3340,8 @@ class AdvancedProductDesigner
                 position: fixed;
                 bottom: 30px;
                 right: 30px;
-                width: 60px;
-                height: 60px;
+                width: 70px;
+                height: 70px;
                 background: #2271b1;
                 border-radius: 50%;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -3360,7 +3360,7 @@ class AdvancedProductDesigner
             }
             .apd-floating-cart-icon {
                 color: white;
-                font-size: 24px;
+                font-size: 28px;
                 position: relative;
             }
             .apd-floating-cart-count {
@@ -3388,11 +3388,11 @@ class AdvancedProductDesigner
                 .apd-floating-cart {
                     bottom: 20px;
                     right: 20px;
-                    width: 50px;
-                    height: 50px;
+                    width: 60px;
+                    height: 60px;
                 }
                 .apd-floating-cart-icon {
-                    font-size: 20px;
+                    font-size: 24px;
                 }
             }
         </style>
