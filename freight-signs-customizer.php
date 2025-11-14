@@ -7799,6 +7799,14 @@ function apd_init()
     global $advanced_product_designer;
     $advanced_product_designer = new AdvancedProductDesigner();
     new APD_Block_Registration();
+    
+    // Initialize health check and debug logger
+    if (class_exists('APD_Health_Check')) {
+        new APD_Health_Check();
+    }
+    if (class_exists('APD_Debug_Logger')) {
+        APD_Debug_Logger::get_instance();
+    }
 }
 
 add_action('plugins_loaded', 'apd_init');

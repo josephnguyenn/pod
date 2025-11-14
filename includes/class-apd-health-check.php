@@ -571,5 +571,4 @@ class APD_Health_Check {
     }
 }
 
-// Initialize
-new APD_Health_Check();
+// Note: Initialized in main plugin file

@@ -244,5 +244,4 @@ function apd_log_info($message, $context = array()) {
     APD_Debug_Logger::get_instance()->info($message, $context);
 }
 
-// Initialize
-APD_Debug_Logger::get_instance();
+// Note: Initialized in main plugin file
