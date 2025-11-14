@@ -2667,6 +2667,30 @@ class AdvancedProductDesigner
         if (!$image_to_display && !empty($cart_items)) {
             $first = $cart_items[0];
             $image_to_display = $first['preview_image_svg'] ?? $first['preview_image_png'] ?? $first['preview_image_url'] ?? $first['customization_image_url'] ?? $first['image_url'] ?? '';
+            
+            // For non-customizable products, try to get product thumbnail or logo
+            if (!$image_to_display && !empty($first['product_id'])) {
+                $prod_id = intval($first['product_id']);
+                
+                // Try thumbnail first
+                $thumbnail_id = get_post_meta($prod_id, '_fsc_thumbnail_id', true);
+                if ($thumbnail_id) {
+                    $image_to_display = wp_get_attachment_image_url($thumbnail_id, 'large');
+                }
+                
+                // Fallback to logo if no thumbnail
+                if (!$image_to_display) {
+                    $logo_url = get_post_meta($prod_id, '_fsc_logo_file', true);
+                    if ($logo_url) {
+                        $image_to_display = $logo_url;
+                    }
+                }
+                
+                // Last resort: post thumbnail
+                if (!$image_to_display) {
+                    $image_to_display = get_the_post_thumbnail_url($prod_id, 'large');
+                }
+            }
         }
 
         // Determine best SVG source (if available) for direct download
