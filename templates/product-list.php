@@ -129,7 +129,7 @@ $items_per_page = -1;
 
 /* --- General Container --- */
 .apd-product-list-container {
-    max-width: 1200px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 0;
 }

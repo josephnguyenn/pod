@@ -4880,7 +4880,7 @@ class AdvancedProductDesigner
         ob_start();
         ?>
         <div class="apd-thankyou-page" style="
-            max-width: 1200px;
+            max-width: 100%;
             margin: 0 auto;
             padding: 40px 20px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -5034,28 +5034,6 @@ class AdvancedProductDesigner
                 justify-content: center;
                 flex-wrap: wrap;
             ">
-                <a href="<?php echo home_url('/my-orders/'); ?>" style="
-                    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-                    color: white;
-                    padding: 16px 32px;
-                    border-radius: 12px;
-                    text-decoration: none;
-                    font-weight: 600;
-                    font-size: 1.125rem;
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 10px;
-                    box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
-                    transition: all 0.3s ease;
-                    border: none;
-                    cursor: pointer;
-                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 15px 35px rgba(59, 130, 246, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 25px rgba(59, 130, 246, 0.3)'">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                    View My Orders
-                </a>
-                
                 <a href="<?php echo home_url('/'); ?>" style="
                     background: white;
                     color: #3b82f6;

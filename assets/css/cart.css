@@ -4,7 +4,8 @@
  */
 
 .apd-cart-page {
-  max-width: 1200px;
+  background: white !important;
+  max-width: 100% !important;
   margin: 0 auto;
   padding: 20px;
   font-family:

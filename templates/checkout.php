@@ -286,7 +286,7 @@ foreach ($shop_us_states as $code => $name) {
 
             align-items: start;
 
-            max-width: 1200px;
+            max-width: 100%;
 
             margin: 0 auto;
 
