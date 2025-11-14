@@ -2308,10 +2308,12 @@ jQuery(document).ready(function($) {
             // Debug: Check if button exists
             console.log('ADD TO CART buttons found:', $('.fsc-btn-add-cart').length);
             
-            // Customize button
-            $('.fsc-btn-customize').on('click', function(e) {
+            // Reset button - reloads the page to reset all customizations
+            $('.fsc-btn-reset').on('click', function(e) {
                 e.preventDefault();
-                FSC.saveCustomization('customize');
+                if (confirm('Are you sure you want to reset all customizations? This will reload the page.')) {
+                    window.location.reload();
+                }
             });
         },
 

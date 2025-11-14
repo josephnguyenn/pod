@@ -135,7 +135,7 @@ window.htmlElementToImage = function(element) {
                 </div>
                 <div class="fsc-button-group">
                     <button class="fsc-btn fsc-btn-primary fsc-btn-add-cart">ADD TO CART</button>
-                    <button class="fsc-btn fsc-btn-secondary fsc-btn-customize">CUSTOMIZE</button>
+                    <button class="fsc-btn fsc-btn-secondary fsc-btn-reset">🔄 RESET</button>
                 </div>
             </div>
             
