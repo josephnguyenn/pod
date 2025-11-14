@@ -184,10 +184,11 @@ class AdvancedProductDesigner
         );
         
         // Add company taxonomy rewrite rule to make URLs like /company-name/ instead of /apd_company/company-name/
+        // Use top priority and check in template_redirect if it's a valid company
         add_rewrite_rule(
             '([^/]+)/?$',
-            'index.php?company=$matches[1]',
-            'bottom'
+            'index.php?company_check=$matches[1]',
+            'top'
         );
 
         add_filter('query_vars', array($this, 'add_query_vars'));
@@ -199,9 +200,9 @@ class AdvancedProductDesigner
         add_action('wp', array($this, 'set_company_archive_elementor_template'));
 
         // Force flush rewrite rules if needed
-        if (get_option('apd_flush_rewrite_rules') !== '3') {
+        if (get_option('apd_flush_rewrite_rules') !== '4') {
             flush_rewrite_rules();
-            update_option('apd_flush_rewrite_rules', '3');
+            update_option('apd_flush_rewrite_rules', '4');
             error_log('APD Plugin: Rewrite rules flushed on init');
         }
     }
@@ -5270,11 +5271,38 @@ class AdvancedProductDesigner
         $vars[] = 'customizer';
         $vars[] = 'product_detail';
         $vars[] = 'company';
+        $vars[] = 'company_check';
         return $vars;
     }
 
     public function template_redirect()
     {
+        // Handle company_check - verify if it's a valid company before processing
+        $company_check = get_query_var('company_check');
+        if ($company_check) {
+            // Check if this slug is a company term
+            $term = get_term_by('slug', $company_check, 'apd_company');
+            if ($term) {
+                // It's a valid company, set it up
+                global $wp_query;
+                $wp_query->set('taxonomy', 'apd_company');
+                $wp_query->set('term', $company_check);
+                $wp_query->is_tax = true;
+                $wp_query->is_archive = true;
+                $wp_query->is_404 = false;
+                $wp_query->queried_object = $term;
+                $wp_query->queried_object_id = $term->term_id;
+                
+                // Load the company taxonomy template
+                $custom_template = APD_PLUGIN_PATH . 'templates/taxonomy-apd_company.php';
+                if (file_exists($custom_template)) {
+                    include $custom_template;
+                    exit;
+                }
+            }
+            // If not a valid company, let WordPress handle it normally (might be a page, etc.)
+        }
+        
         $customizer_id = get_query_var('customizer');
         if ($customizer_id) {
             // Debug: Log customizer redirect
