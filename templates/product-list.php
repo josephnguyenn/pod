@@ -15,7 +15,8 @@ $show_title = $template_data['show_title'];
 $show_description = $template_data['show_description'];
 $show_price = $template_data['show_price'];
 $show_sale = $template_data['show_sale'];
-$items_per_page = 6; // Hardcoded for 3x2 grid
+// Show all products - no pagination
+$items_per_page = -1;
 ?>
 
 <div class="apd-product-list-container">
@@ -100,19 +101,7 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
                     <?php endforeach; ?>
                 </div>
 
-                <?php
-                $total_products = count($products);
-                $total_pages = ceil($total_products / $items_per_page);
-                if ($total_pages > 1):
-                ?>
-                <div class="apd-pagination" data-category="<?php echo $category_slug; ?>">
-                    <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                        <a href="#" class="apd-page-link <?php echo ($i == 1) ? 'active' : ''; ?>" data-page="<?php echo $i; ?>">
-                            <?php echo $i; ?>
-                        </a>
-                    <?php endfor; ?>
-                </div>
-                <?php endif; ?>
+                <!-- Pagination removed - showing all products -->
 
             </div>
         <?php $first_category = false; endforeach; ?>
@@ -597,40 +586,7 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
         }
         
         jQuery(document).ready(function($) {
-    const itemsPerPage = 6; // 3 columns x 2 rows
-
-    /**
-     * Shows a specific page of products for a given category.
-     * @param {string} category The category slug.
-     * @param {number} pageNum The page number to display (1-based).
-     */
-    function showPage(category, pageNum) {
-        const $grid = $(`.apd-product-grid[data-category="${category}"]`);
-        const $cards = $grid.find('.apd-product-card');
-        const $paginationLinks = $(`.apd-pagination[data-category="${category}"]`).find('.apd-page-link');
-
-        // Hide all cards for this category
-        $cards.hide();
-
-        // Calculate the range of items to show
-        const startIndex = (pageNum - 1) * itemsPerPage;
-        const endIndex = startIndex + itemsPerPage;
-
-        // Show the cards for the current page with a fade-in effect
-        $cards.slice(startIndex, endIndex).fadeIn(300).css('display', 'block');
-
-        // Update active state for pagination links
-        $paginationLinks.removeClass('active');
-        $paginationLinks.filter(`[data-page="${pageNum}"]`).addClass('active');
-    }
-
-    // --- INITIALIZATION ---
-
-    // Initialize the view for each category on page load
-    $('.apd-category-content').each(function() {
-        const category = $(this).data('category');
-        showPage(category, 1); // Show the first page by default
-    });
+    // No pagination - show all products
 
     // --- EVENT HANDLERS ---
 
@@ -645,19 +601,6 @@ $items_per_page = 6; // Hardcoded for 3x2 grid
         // Show corresponding content
         $('.apd-category-content').removeClass('active');
         $(`.apd-category-content[data-category="${category}"]`).addClass('active');
-        
-        // Show the first page of the newly selected category
-        showPage(category, 1);
-    });
-
-    // Pagination link click
-    $('.apd-page-link').on('click', function(e) {
-        e.preventDefault();
-        const $link = $(this);
-        const pageNum = $link.data('page');
-        const category = $link.closest('.apd-pagination').data('category');
-        
-        showPage(category, pageNum);
     });
 
     // Product card click handler
