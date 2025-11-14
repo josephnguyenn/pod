@@ -1393,6 +1393,7 @@ class AdvancedProductDesigner
         }
         
         error_log('APD: SVG file loaded, size: ' . strlen($svg_content) . ' bytes');
+        error_log('APD: First 100 chars: ' . substr($svg_content, 0, 100));
 
         // Normalize encoding to UTF-8 if file appears to be UTF-16
         if (strpos($svg_content, "\x00") !== false || preg_match('/encoding=["\']utf-16["\']/i', $svg_content)) {
@@ -1408,10 +1409,22 @@ class AdvancedProductDesigner
         $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content); // UTF-8 BOM
         $svg_content = preg_replace('/<\?xml[^>]*\?>/i', '', $svg_content);
         $svg_content = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svg_content);
+        
+        // Trim whitespace
+        $svg_content = trim($svg_content);
+
+        // Validate it starts with <svg
+        if (!preg_match('/^<svg[\s>]/i', $svg_content)) {
+            error_log('APD: Invalid SVG - does not start with <svg tag. First 200 chars: ' . substr($svg_content, 0, 200));
+            return false;
+        }
 
         // Keep only the <svg>...</svg> fragment
         if (preg_match('/<svg[\s\S]*<\/svg>/i', $svg_content, $m)) {
             $svg_content = $m[0];
+        } else {
+            error_log('APD: Could not find complete <svg>...</svg> tags');
+            return false;
         }
 
         // Ensure xmlns exists for robust DOM parsing
@@ -1430,7 +1443,7 @@ class AdvancedProductDesigner
             $svg_content = str_replace('<defs>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>', $svg_content);
         }
         
-        error_log('APD: Processed SVG, final size: ' . strlen($svg_content) . ' bytes');
+        error_log('APD: Processed SVG successfully, final size: ' . strlen($svg_content) . ' bytes');
 
         return $svg_content ?: false;
     }
@@ -2011,7 +2024,8 @@ class AdvancedProductDesigner
             'logo_content' => $product_logo_content,
             'url' => get_permalink($product_id),
             'template_id' => $template_id ? intval($template_id) : 0,
-            'templateData' => $template_data
+            'template_data' => $template_data,
+            'templateData' => $template_data  // Keep both for backwards compatibility
         );
 
         if ($template_id && $template_data) {

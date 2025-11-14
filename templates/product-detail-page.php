@@ -583,33 +583,104 @@ jQuery(document).ready(function($) {
 
         $btn.prop('disabled', true).text('Adding...');
 
+        // Generate preview image from template
         $.ajax({
             url: apd_ajax.ajax_url,
             type: 'POST',
             data: {
-                action: 'apd_add_to_cart',
+                action: 'apd_get_customizer_data',
                 nonce: apd_ajax.nonce,
-                product_id: productId,
-                quantity: quantity,
-                customization_data: {
-                    product_name: productName,
-                    product_price: productPrice
-                }
+                product_id: productId
             },
-            success: function(response) {
-                if (response.success) {
-                    $btn.text('Added to cart!');
-                    setTimeout(function() {
-                        $btn.prop('disabled', false).text('Add to cart');
-                    }, 2000);
-                } else {
-                    alert('Error adding to cart: ' + (response.data || 'Unknown error'));
-                    $btn.prop('disabled', false).text('Add to cart');
+            success: function(templateResponse) {
+                var previewImageSvg = '';
+                
+                // Try to generate preview from template
+                if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
+                    var templateData = templateResponse.data.template_data;
+                    
+                    // Create a temporary canvas to render the template
+                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" viewBox="0 0 ' + (templateData.canvas?.width || 733) + ' ' + (templateData.canvas?.height || 550) + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" fill="' + (templateData.canvas?.backgroundColor || '#c2c2c2') + '"/></svg>');
+                    
+                    // Add template elements if available
+                    if (templateData.elements && templateData.elements.length > 0) {
+                        templateData.elements.forEach(function(el) {
+                            var $g = $('<g class="apd-el" transform="translate(' + (el.x || 0) + ', ' + (el.y || 0) + ')"></g>');
+                            if (el.content) {
+                                $g.html(el.content);
+                            }
+                            $tempCanvas.append($g);
+                        });
+                    }
+                    
+                    // Serialize to data URL
+                    var svgString = new XMLSerializer().serializeToString($tempCanvas[0]);
+                    previewImageSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
                 }
+                
+                // Add to cart with preview
+                $.ajax({
+                    url: apd_ajax.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_add_to_cart',
+                        nonce: apd_ajax.nonce,
+                        product_id: productId,
+                        quantity: quantity,
+                        customization_data: {
+                            product_name: productName,
+                            product_price: productPrice,
+                            preview_image_svg: previewImageSvg
+                        }
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $btn.text('Added to cart!');
+                            setTimeout(function() {
+                                $btn.prop('disabled', false).text('Add to cart');
+                            }, 2000);
+                        } else {
+                            alert('Error adding to cart: ' + (response.data || 'Unknown error'));
+                            $btn.prop('disabled', false).text('Add to cart');
+                        }
+                    },
+                    error: function() {
+                        alert('Error adding to cart. Please try again.');
+                        $btn.prop('disabled', false).text('Add to cart');
+                    }
+                });
             },
             error: function() {
-                alert('Error adding to cart. Please try again.');
-                $btn.prop('disabled', false).text('Add to cart');
+                // If template fetch fails, add to cart without preview
+                $.ajax({
+                    url: apd_ajax.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_add_to_cart',
+                        nonce: apd_ajax.nonce,
+                        product_id: productId,
+                        quantity: quantity,
+                        customization_data: {
+                            product_name: productName,
+                            product_price: productPrice
+                        }
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $btn.text('Added to cart!');
+                            setTimeout(function() {
+                                $btn.prop('disabled', false).text('Add to cart');
+                            }, 2000);
+                        } else {
+                            alert('Error adding to cart: ' + (response.data || 'Unknown error'));
+                            $btn.prop('disabled', false).text('Add to cart');
+                        }
+                    },
+                    error: function() {
+                        alert('Error adding to cart. Please try again.');
+                        $btn.prop('disabled', false).text('Add to cart');
+                    }
+                });
             }
         });
     });
@@ -622,29 +693,94 @@ jQuery(document).ready(function($) {
         var productPrice = $btn.data('product-price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
 
-        // Add to cart first, then redirect to checkout
+        // Generate preview image from template
         $.ajax({
             url: apd_ajax.ajax_url,
             type: 'POST',
             data: {
-                action: 'apd_add_to_cart',
+                action: 'apd_get_customizer_data',
                 nonce: apd_ajax.nonce,
-                product_id: productId,
-                quantity: quantity,
-                customization_data: {
-                    product_name: productName,
-                    product_price: productPrice
-                }
+                product_id: productId
             },
-            success: function(response) {
-                if (response.success) {
-                    window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
-                } else {
-                    alert('Error: ' + (response.data || 'Could not add to cart'));
+            success: function(templateResponse) {
+                var previewImageSvg = '';
+                
+                // Try to generate preview from template
+                if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
+                    var templateData = templateResponse.data.template_data;
+                    
+                    // Create a temporary canvas to render the template
+                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" viewBox="0 0 ' + (templateData.canvas?.width || 733) + ' ' + (templateData.canvas?.height || 550) + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" fill="' + (templateData.canvas?.backgroundColor || '#c2c2c2') + '"/></svg>');
+                    
+                    // Add template elements if available
+                    if (templateData.elements && templateData.elements.length > 0) {
+                        templateData.elements.forEach(function(el) {
+                            var $g = $('<g class="apd-el" transform="translate(' + (el.x || 0) + ', ' + (el.y || 0) + ')"></g>');
+                            if (el.content) {
+                                $g.html(el.content);
+                            }
+                            $tempCanvas.append($g);
+                        });
+                    }
+                    
+                    // Serialize to data URL
+                    var svgString = new XMLSerializer().serializeToString($tempCanvas[0]);
+                    previewImageSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
                 }
+                
+                // Add to cart first, then redirect to checkout
+                $.ajax({
+                    url: apd_ajax.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_add_to_cart',
+                        nonce: apd_ajax.nonce,
+                        product_id: productId,
+                        quantity: quantity,
+                        customization_data: {
+                            product_name: productName,
+                            product_price: productPrice,
+                            preview_image_svg: previewImageSvg
+                        }
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
+                        } else {
+                            alert('Error: ' + (response.data || 'Could not add to cart'));
+                        }
+                    },
+                    error: function() {
+                        alert('Error processing request. Please try again.');
+                    }
+                });
             },
             error: function() {
-                alert('Error processing request. Please try again.');
+                // If template fetch fails, add to cart without preview
+                $.ajax({
+                    url: apd_ajax.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_add_to_cart',
+                        nonce: apd_ajax.nonce,
+                        product_id: productId,
+                        quantity: quantity,
+                        customization_data: {
+                            product_name: productName,
+                            product_price: productPrice
+                        }
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            window.location.href = apd_ajax.checkout_url || '<?php echo home_url('/checkout/'); ?>';
+                        } else {
+                            alert('Error: ' + (response.data || 'Could not add to cart'));
+                        }
+                    },
+                    error: function() {
+                        alert('Error processing request. Please try again.');
+                    }
+                });
             }
         });
     });
