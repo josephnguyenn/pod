@@ -616,7 +616,28 @@ jQuery(document).ready(function($) {
                     
                     // Update cart count if available
                     if (response.data && response.data.cart_count) {
-                        $('.apd-cart-count, .cart-count').text(response.data.cart_count);
+                        var count = response.data.cart_count;
+                        
+                        // Update all cart count elements
+                        $('.apd-cart-count, .cart-count').text(count);
+                        $('#apd-cart-count-display').text(count);
+                        
+                        // Update floating cart count
+                        var $floatingCount = $('#apd-floating-cart-count');
+                        if ($floatingCount.length) {
+                            $floatingCount.text(count);
+                            if (count > 0) {
+                                $floatingCount.removeClass('hidden');
+                            } else {
+                                $floatingCount.addClass('hidden');
+                            }
+                        }
+                        
+                        // Trigger custom event for other components
+                        $(document).trigger('apd_cart_updated');
+                        if (window.dispatchEvent) {
+                            window.dispatchEvent(new Event('apd_cart_updated'));
+                        }
                     }
                     
                     setTimeout(function() {
