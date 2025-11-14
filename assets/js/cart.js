@@ -376,12 +376,19 @@ const APDCart = {
     console.log("🎨 Rendering cart item:", item);
     try {
       const customizationData = item.customization_data || {};
-      const previewImage =
-        customizationData.preview_image_svg ||
-        customizationData.preview_image_png ||
-        customizationData.image_url ||
-        customizationData.customization_image_url ||
-        "";
+      
+      // Check if this is a customized product (has template objects/text)
+      const isCustomized = customizationData.objects && customizationData.objects.length > 0;
+      
+      // Get preview image - prioritize stored images for customized products
+      const previewImage = isCustomized 
+        ? (customizationData.preview_image_svg ||
+           customizationData.preview_image_png ||
+           customizationData.image_url ||
+           customizationData.customization_image_url)
+        : (customizationData.preview_image_url || 
+           customizationData.image_url);
+      
       // Check localStorage for persisted selection so the UI can render selected state immediately
       let isSelected = false;
       try {
@@ -402,7 +409,8 @@ const APDCart = {
                             ? `
                         <img class="apd-preview-img" src="${previewImage}" alt="Preview of ${item.product_name || "Product"}"/>
                         `
-                            : `
+                            : isCustomized
+                            ? `
                         <div class="apd-live-preview">
                             <div class="apd-preview-title">Live Preview</div>
                             <div class="apd-preview-area">
@@ -410,6 +418,16 @@ const APDCart = {
                                     ${this.renderLivePreview(item, customizationData)}
                                 </div>
                             </div>
+                        </div>
+                        `
+                            : `
+                        <div class="apd-no-preview">
+                            <svg width="100%" height="100%" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect width="200" height="200" fill="#f0f0f0"/>
+                                <path d="M100 80C94.4772 80 90 84.4772 90 90V110C90 115.523 94.4772 120 100 120C105.523 120 110 115.523 110 110V90C110 84.4772 105.523 80 100 80Z" fill="#ccc"/>
+                                <path d="M70 50C64.4772 50 60 54.4772 60 60V140C60 145.523 64.4772 150 70 150H130C135.523 150 140 145.523 140 140V60C140 54.4772 135.523 50 130 50H70Z" stroke="#ccc" stroke-width="3" fill="none"/>
+                            </svg>
+                            <p style="text-align: center; color: #999; margin-top: 10px;">No preview</p>
                         </div>
                         `
                         }
