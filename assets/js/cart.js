@@ -287,8 +287,8 @@ const APDCart = {
                 <div class="apd-cart-empty">
                     <div class="apd-empty-icon">🛒</div>
                     <h3>Your cart is empty</h3>
-                    <p>Add some customized products to get started!</p>
-                    <a href="/products/" class="apd-btn apd-btn-primary">Browse Products</a>
+                    <p>Add some products to get started!</p>
+                    <a href="/product" class="apd-btn apd-btn-primary">Browse Products</a>
                 </div>
             `);
       $count.text("0 items");

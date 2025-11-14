@@ -598,9 +598,12 @@ jQuery(document).ready(function($) {
                 // Try to generate preview from template
                 if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
                     var templateData = templateResponse.data.template_data;
+                    var canvasWidth = (templateData.canvas && templateData.canvas.width) || 733;
+                    var canvasHeight = (templateData.canvas && templateData.canvas.height) || 550;
+                    var canvasColor = (templateData.canvas && templateData.canvas.backgroundColor) || '#c2c2c2';
                     
                     // Create a temporary canvas to render the template
-                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" viewBox="0 0 ' + (templateData.canvas?.width || 733) + ' ' + (templateData.canvas?.height || 550) + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" fill="' + (templateData.canvas?.backgroundColor || '#c2c2c2') + '"/></svg>');
+                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + canvasWidth + '" height="' + canvasHeight + '" viewBox="0 0 ' + canvasWidth + ' ' + canvasHeight + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + canvasWidth + '" height="' + canvasHeight + '" fill="' + canvasColor + '"/></svg>');
                     
                     // Add template elements if available
                     if (templateData.elements && templateData.elements.length > 0) {
@@ -708,9 +711,12 @@ jQuery(document).ready(function($) {
                 // Try to generate preview from template
                 if (templateResponse.success && templateResponse.data && templateResponse.data.template_data) {
                     var templateData = templateResponse.data.template_data;
+                    var canvasWidth = (templateData.canvas && templateData.canvas.width) || 733;
+                    var canvasHeight = (templateData.canvas && templateData.canvas.height) || 550;
+                    var canvasColor = (templateData.canvas && templateData.canvas.backgroundColor) || '#c2c2c2';
                     
                     // Create a temporary canvas to render the template
-                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" viewBox="0 0 ' + (templateData.canvas?.width || 733) + ' ' + (templateData.canvas?.height || 550) + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + (templateData.canvas?.width || 733) + '" height="' + (templateData.canvas?.height || 550) + '" fill="' + (templateData.canvas?.backgroundColor || '#c2c2c2') + '"/></svg>');
+                    var $tempCanvas = $('<svg class="apd-template-canvas-full" width="' + canvasWidth + '" height="' + canvasHeight + '" viewBox="0 0 ' + canvasWidth + ' ' + canvasHeight + '" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;"><defs/><rect width="' + canvasWidth + '" height="' + canvasHeight + '" fill="' + canvasColor + '"/></svg>');
                     
                     // Add template elements if available
                     if (templateData.elements && templateData.elements.length > 0) {
