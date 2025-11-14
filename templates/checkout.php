@@ -1825,7 +1825,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 purl = customizationData.preview_image_svg || customizationData.preview_image_png || customizationData.preview_image_url || customizationData.customization_image_url || customizationData.image_url || '';
             }
 
-            const preview = purl ? '<div style="width:100%;height:120px;border-radius:8px;background:#f8f9fa;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="' + purl + '" alt="Design" style="max-width:100%;max-height:120px;object-fit:contain;display:block"/></div>' : '';
+            // Create preview with placeholder and data attributes for lazy loading
+            const previewId = 'preview-' + index;
+            let preview = '';
+            if (purl) {
+                preview = '<div style="width:100%;height:120px;border-radius:8px;background:#f8f9fa;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="' + purl + '" alt="Design" style="max-width:100%;max-height:120px;object-fit:contain;display:block"/></div>';
+            } else if (it.product_id) {
+                // Show placeholder and mark for lazy loading
+                preview = '<div id="' + previewId + '" data-product-id="' + it.product_id + '" style="width:100%;height:120px;border-radius:8px;background:#f8f9fa;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#999;font-size:12px;">Loading preview...</div>';
+            }
 
             // Build price breakdown
             let priceBreakdown = '';
@@ -1894,6 +1902,60 @@ document.addEventListener('DOMContentLoaded', function() {
 
         updateShippingAndTotal();
 
+        // After rendering, lazy load template previews for products without preview images
+        lazyLoadTemplatePreviews();
+
+    }
+
+    // Lazy load template previews for products that don't have preview images
+    function lazyLoadTemplatePreviews() {
+        const previewsToLoad = document.querySelectorAll('[id^="preview-"][data-product-id]');
+        console.log('[APD] Found', previewsToLoad.length, 'previews to lazy load');
+        
+        previewsToLoad.forEach(function(previewEl) {
+            const productId = previewEl.getAttribute('data-product-id');
+            if (!productId) return;
+            
+            console.log('[APD] Lazy loading template preview for product', productId);
+            
+            // Check if apd_ajax is available
+            const ajaxObj = (typeof window !== 'undefined' && window.apd_ajax) || (typeof apd_ajax !== 'undefined' ? apd_ajax : null);
+            if (!ajaxObj || !ajaxObj.ajax_url) {
+                console.error('[APD] apd_ajax not available for lazy loading preview');
+                previewEl.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;">Preview not available</div>';
+                return;
+            }
+            
+            // Fetch template data
+            fetch(ajaxObj.ajax_url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    action: 'apd_get_customizer_data',
+                    product_id: productId,
+                    nonce: ajaxObj.nonce || ''
+                })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data.success && data.data && data.data.product) {
+                    const product = data.data.product;
+                    // Use product image as fallback preview
+                    if (product.image) {
+                        previewEl.innerHTML = '<img src="' + product.image + '" alt="Product" style="max-width:100%;max-height:120px;object-fit:contain;display:block"/>';
+                    } else {
+                        previewEl.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;">No preview available</div>';
+                    }
+                } else {
+                    console.warn('[APD] Failed to load template data for product', productId);
+                    previewEl.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;">Preview not available</div>';
+                }
+            })
+            .catch(function(error) {
+                console.error('[APD] Error lazy loading preview for product', productId, ':', error);
+                previewEl.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;">Preview error</div>';
+            });
+        });
     }
 
 
