@@ -745,6 +745,9 @@ class AdvancedProductDesigner
                 if ($logo_url) {
                     update_post_meta($post_id, '_fsc_logo_file', $logo_url);
                 }
+            } else {
+                // Clear logo file if no logo ID
+                delete_post_meta($post_id, '_fsc_logo_file');
             }
         }
     }
