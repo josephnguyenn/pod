@@ -7787,45 +7787,60 @@ class AdvancedProductDesigner
                     Order Summary
                 </h2>
                 
-                <div class="p-4">
-                    <div class="flex justify-between items-center py-4 border-b border-gray-100">
-                        <div class="flex items-center">
-                            <div class="w-16 h-16 bg-gray-200 rounded-md mr-4 flex-shrink-0"></div>
-                            <div>
-                                <p class="font-semibold text-gray-900"><?php echo esc_html($product_name); ?></p>
-                                <p class="text-sm text-gray-600">Quantity: <?php echo esc_html($quantity); ?></p>
-                            </div>
-                        </div>
-                        <p class="font-semibold text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
-                    </div>
-                </div>
-
-                <div class="p-4 bg-gray-50 border-t border-gray-200">
-                    <div class="flex justify-between items-center mb-2">
-                        <p class="text-gray-600">Subtotal</p>
-                        <p class="text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center mb-2">
-                        <p class="text-gray-600">Shipping</p>
-                        <p class="text-gray-900">$<?php echo number_format($shipping, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center mb-4">
-                        <p class="text-gray-600">Tax</p>
-                        <p class="text-gray-900">$<?php echo number_format($tax, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center text-lg font-bold text-gray-900 border-t border-gray-300 pt-4">
-                        <p>Total</p>
-                        <p>$<?php echo number_format($total, 2); ?></p>
-                    </div>
-                </div>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">Product</th>
+                            <th style="padding: 12px; text-align: center; font-weight: 600; color: #374151;">Quantity</th>
+                            <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151;">Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 16px; color: #111827; font-weight: 600;"><?php echo esc_html($product_name); ?></td>
+                            <td style="padding: 16px; text-align: center; color: #6b7280;"><?php echo esc_html($quantity); ?></td>
+                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">$<?php echo number_format($subtotal, 2); ?></td>
+                        </tr>
+                    </tbody>
+                    <tfoot style="background-color: #f9fafb;">
+                        <tr style="border-top: 1px solid #e5e7eb;">
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
+                        </tr>
+                        <tr style="border-top: 2px solid #d1d5db;">
+                            <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
+                            <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
             
             <?php if (!empty($customer_address)): ?>
-            <div class="mt-8">
-                <h3 class="text-lg font-semibold text-gray-900 mb-3">Shipping Address</h3>
-                <address class="text-gray-700 not-italic">
-                    <?php echo nl2br(esc_html($customer_address)); ?>
-                </address>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px;">
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <h3 class="text-lg font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Shipping Address</h3>
+                    <div style="padding: 16px;">
+                        <address class="text-gray-700" style="font-style: normal; line-height: 1.6;">
+                            <?php echo nl2br(esc_html($customer_address)); ?>
+                        </address>
+                    </div>
+                </div>
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <h3 class="text-lg font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Billing Address</h3>
+                    <div style="padding: 16px;">
+                        <address class="text-gray-700" style="font-style: normal; line-height: 1.6;">
+                            <?php echo nl2br(esc_html($customer_address)); ?>
+                        </address>
+                    </div>
+                </div>
             </div>
             <?php endif; ?>
             
@@ -7946,24 +7961,26 @@ class AdvancedProductDesigner
                 <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
                     Customer Information
                 </h2>
-                <div class="p-4">
-                    <div class="mb-3">
-                        <p class="text-sm text-gray-600">Name</p>
-                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_name); ?></p>
-                    </div>
-                    <div class="mb-3">
-                        <p class="text-sm text-gray-600">Email</p>
-                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_email); ?></p>
-                    </div>
-                    <div class="mb-3">
-                        <p class="text-sm text-gray-600">Phone</p>
-                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_phone); ?></p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-600">Address</p>
-                        <p class="font-semibold text-gray-900"><?php echo nl2br(esc_html($customer_address)); ?></p>
-                    </div>
-                </div>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280; width: 30%;">Name</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_name); ?></td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280;">Email</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_email); ?></td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280;">Phone</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_phone); ?></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; color: #6b7280; vertical-align: top;">Address</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo nl2br(esc_html($customer_address)); ?></td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
 
             <div class="border border-gray-200 rounded-lg overflow-hidden">
@@ -7971,38 +7988,45 @@ class AdvancedProductDesigner
                     Order Details
                 </h2>
                 
-                <div class="p-4">
-                    <div class="mb-3">
-                        <p class="text-sm text-gray-600">Order Date</p>
-                        <p class="font-semibold text-gray-900"><?php echo esc_html($order_date); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center py-4 border-t border-gray-100">
-                        <div>
-                            <p class="font-semibold text-gray-900"><?php echo esc_html($product_name); ?></p>
-                            <p class="text-sm text-gray-600">Quantity: <?php echo esc_html($quantity); ?></p>
-                        </div>
-                        <p class="font-semibold text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
-                    </div>
+                <div style="padding: 16px; border-bottom: 1px solid #e5e7eb;">
+                    <p style="color: #6b7280; font-size: 14px; margin: 0 0 4px 0;">Order Date</p>
+                    <p style="color: #111827; font-weight: 600; margin: 0;"><?php echo esc_html($order_date); ?></p>
                 </div>
 
-                <div class="p-4 bg-gray-50 border-t border-gray-200">
-                    <div class="flex justify-between items-center mb-2">
-                        <p class="text-gray-600">Subtotal</p>
-                        <p class="text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center mb-2">
-                        <p class="text-gray-600">Shipping</p>
-                        <p class="text-gray-900">$<?php echo number_format($shipping, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center mb-4">
-                        <p class="text-gray-600">Tax</p>
-                        <p class="text-gray-900">$<?php echo number_format($tax, 2); ?></p>
-                    </div>
-                    <div class="flex justify-between items-center text-lg font-bold text-gray-900 border-t border-gray-300 pt-4">
-                        <p>Total</p>
-                        <p>$<?php echo number_format($total, 2); ?></p>
-                    </div>
-                </div>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">Product</th>
+                            <th style="padding: 12px; text-align: center; font-weight: 600; color: #374151;">Quantity</th>
+                            <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151;">Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 16px; color: #111827; font-weight: 600;"><?php echo esc_html($product_name); ?></td>
+                            <td style="padding: 16px; text-align: center; color: #6b7280;"><?php echo esc_html($quantity); ?></td>
+                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">$<?php echo number_format($subtotal, 2); ?></td>
+                        </tr>
+                    </tbody>
+                    <tfoot style="background-color: #f9fafb;">
+                        <tr style="border-top: 1px solid #e5e7eb;">
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
+                        </tr>
+                        <tr style="border-top: 2px solid #d1d5db;">
+                            <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
+                            <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
         </div>
 
