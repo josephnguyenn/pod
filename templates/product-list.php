@@ -77,7 +77,7 @@ $items_per_page = -1;
                                 
                                 <?php if ($show_title): ?>
                                     <h3 class="apd-product-title">
-                                        <a href="<?php echo esc_url($product['permalink']); ?>">
+                                        <a href="<?php echo esc_url(home_url('/product-detail/?id=' . $product['id'])); ?>">
                                             <?php echo esc_html($product['title']); ?>
                                         </a>
                                     </h3>
