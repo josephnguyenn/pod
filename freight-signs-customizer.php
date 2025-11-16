@@ -2174,14 +2174,11 @@ class AdvancedProductDesigner
             'supports' => array('title', 'custom-fields'),
             'capability_type' => 'post'
         ));
-        // Statuses
+        // Statuses - only the 3 we actually use
         $statuses = array(
             'apd_pending' => 'Pending',
             'apd_confirmed' => 'Confirmed',
-            'apd_processing' => 'Processing',
-            'apd_shipped' => 'Shipped',
-            'apd_completed' => 'Completed',
-            'apd_canceled' => 'Canceled'
+            'apd_completed' => 'Completed'
         );
         foreach ($statuses as $key => $label) {
             if (!post_type_exists('apd_order'))
@@ -2551,7 +2548,7 @@ class AdvancedProductDesigner
     // --- Admin: Register/ensure statuses visible in All ---
     public function apd_register_statuses_visible()
     {
-        // If CPT already registered elsewhere, just (re)register statuses to be visible in admin lists
+        // Register only the statuses we actually use
         register_post_status('apd_pending', array(
             'label' => 'Pending',
             'public' => true,
@@ -2559,33 +2556,19 @@ class AdvancedProductDesigner
             'show_in_admin_status_list' => true,
             'label_count' => _n_noop('Pending <span class="count">(%s)</span>', 'Pending <span class="count">(%s)</span>')
         ));
-        register_post_status('in_production', array(
-            'label' => 'In Production',
+        register_post_status('apd_confirmed', array(
+            'label' => 'Confirmed',
             'public' => true,
             'show_in_admin_all_list' => true,
             'show_in_admin_status_list' => true,
-            'label_count' => _n_noop('In Production <span class="count">(%s)</span>', 'In Production <span class="count">(%s)</span>')
+            'label_count' => _n_noop('Confirmed <span class="count">(%s)</span>', 'Confirmed <span class="count">(%s)</span>')
         ));
-        register_post_status('quality_check', array(
-            'label' => 'Quality Check',
-            'public' => true,
-            'show_in_admin_all_list' => true,
-            'show_in_admin_status_list' => true,
-            'label_count' => _n_noop('Quality Check <span class="count">(%s)</span>', 'Quality Check <span class="count">(%s)</span>')
-        ));
-        register_post_status('completed', array(
+        register_post_status('apd_completed', array(
             'label' => 'Completed',
             'public' => true,
             'show_in_admin_all_list' => true,
             'show_in_admin_status_list' => true,
             'label_count' => _n_noop('Completed <span class="count">(%s)</span>', 'Completed <span class="count">(%s)</span>')
-        ));
-        register_post_status('cancelled', array(
-            'label' => 'Cancelled',
-            'public' => true,
-            'show_in_admin_all_list' => true,
-            'show_in_admin_status_list' => true,
-            'label_count' => _n_noop('Cancelled <span class="count">(%s)</span>', 'Cancelled <span class="count">(%s)</span>')
         ));
     }
 
@@ -2601,7 +2584,11 @@ class AdvancedProductDesigner
 
     private function apd_get_all_statuses()
     {
-        return array('apd_pending' => 'Pending', 'in_production' => 'In Production', 'quality_check' => 'Quality Check', 'completed' => 'Completed', 'cancelled' => 'Cancelled');
+        return array(
+            'apd_pending' => 'Pending',
+            'apd_confirmed' => 'Confirmed',
+            'apd_completed' => 'Completed'
+        );
     }
 
     public function apd_render_orders_list_page()
