@@ -492,17 +492,17 @@ if (!defined('ABSPATH')) {
 
     foreach ($orders as $order) {
 
-        $status = get_post_meta($order->ID, '_order_status', true);
+        $status = get_post_status($order->ID);
 
-        $total = get_post_meta($order->ID, '_order_total', true);
+        $total = get_post_meta($order->ID, 'total_amount', true);
 
         
 
-        if ($status === 'apd-pending') {
+        if ($status === 'apd_pending') {
 
             $pending_orders++;
 
-        } elseif ($status === 'apd-completed') {
+        } elseif ($status === 'apd_completed') {
 
             $completed_orders++;
 
@@ -612,13 +612,13 @@ if (!defined('ABSPATH')) {
 
                     <?php
 
-                    $customer_name = get_post_meta($order->ID, '_customer_name', true);
+                    $customer_name = get_post_meta($order->ID, 'customer_name', true);
 
-                    $customer_email = get_post_meta($order->ID, '_customer_email', true);
+                    $customer_email = get_post_meta($order->ID, 'customer_email', true);
 
-                    $order_status = get_post_meta($order->ID, '_order_status', true);
+                    $order_status = get_post_status($order->ID);
 
-                    $order_total = get_post_meta($order->ID, '_order_total', true);
+                    $order_total = get_post_meta($order->ID, 'total_amount', true);
 
                     $order_date = get_the_date('M j, Y', $order->ID);
 
@@ -628,17 +628,11 @@ if (!defined('ABSPATH')) {
 
                     $status_map = array(
 
-                        'apd-pending' => 'Pending',
+                        'apd_pending' => 'Pending',
 
-                        'apd-confirmed' => 'Confirmed',
+                        'apd_confirmed' => 'Confirmed',
 
-                        'apd-processing' => 'Processing',
-
-                        'apd-shipped' => 'Shipped',
-
-                        'apd-completed' => 'Completed',
-
-                        'apd-canceled' => 'Canceled'
+                        'apd_completed' => 'Completed'
 
                     );
 
@@ -646,7 +640,7 @@ if (!defined('ABSPATH')) {
 
                     $status_display = isset($status_map[$order_status]) ? $status_map[$order_status] : 'Unknown';
 
-                    $status_class = str_replace('apd-', 'status-', $order_status);
+                    $status_class = str_replace('apd_', 'status-', $order_status);
 
                     ?>
 

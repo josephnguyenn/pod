@@ -3094,6 +3094,9 @@ class AdvancedProductDesigner
 
     public function apd_update_order_status()
     {
+        // Enable error logging for debugging
+        error_log('APD Update Order Status - Start');
+        
         if (!current_user_can('manage_options'))
             wp_send_json_error(array('message' => 'forbidden'), 403);
         if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'apd_ajax_nonce'))
@@ -3103,6 +3106,8 @@ class AdvancedProductDesigner
         if (!$order_id || !$status)
             wp_send_json_error(array('message' => 'missing'), 400);
         
+        error_log('APD Update Order Status - Order: ' . $order_id . ', Status: ' . $status);
+        
         // Get old status before updating
         $old_status = get_post_status($order_id);
         
@@ -3111,26 +3116,50 @@ class AdvancedProductDesigner
         
         // Send email if status changed to confirmed or completed
         if ($old_status !== $status && in_array($status, array('apd_confirmed', 'apd_completed'))) {
+            error_log('APD Update Order Status - Status changed from ' . $old_status . ' to ' . $status . ', sending email');
+            
             // Get order data for email
+            $cart_items_raw = get_post_meta($order_id, 'cart_items', true);
+            
+            // Decode cart_items if it's a JSON string
+            if (is_string($cart_items_raw)) {
+                $cart_items = json_decode($cart_items_raw, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    error_log('APD Update Order Status - Failed to decode cart_items JSON: ' . json_last_error_msg());
+                    $cart_items = array();
+                }
+            } else {
+                $cart_items = is_array($cart_items_raw) ? $cart_items_raw : array();
+            }
+            
             $order_data = array(
                 'customer_name' => get_post_meta($order_id, 'customer_name', true),
                 'customer_email' => get_post_meta($order_id, 'customer_email', true),
                 'customer_phone' => get_post_meta($order_id, 'customer_phone', true),
                 'customer_address' => get_post_meta($order_id, 'customer_address', true),
-                'cart_items' => get_post_meta($order_id, 'cart_items', true),
+                'cart_items' => $cart_items,
                 'product_price' => get_post_meta($order_id, 'product_price', true),
                 'shipping_cost' => get_post_meta($order_id, 'shipping_cost', true),
                 'tax' => get_post_meta($order_id, 'tax', true),
                 'order_date' => get_post_meta($order_id, 'order_date', true),
             );
             
-            if ($status === 'apd_confirmed') {
-                $this->send_order_status_email($order_id, $order_data, 'confirmed');
-            } elseif ($status === 'apd_completed') {
-                $this->send_order_status_email($order_id, $order_data, 'completed');
+            error_log('APD Update Order Status - Email to: ' . $order_data['customer_email']);
+            
+            try {
+                if ($status === 'apd_confirmed') {
+                    $result = $this->send_order_status_email($order_id, $order_data, 'confirmed');
+                    error_log('APD Update Order Status - Confirmed email sent: ' . ($result ? 'yes' : 'no'));
+                } elseif ($status === 'apd_completed') {
+                    $result = $this->send_order_status_email($order_id, $order_data, 'completed');
+                    error_log('APD Update Order Status - Completed email sent: ' . ($result ? 'yes' : 'no'));
+                }
+            } catch (Exception $e) {
+                error_log('APD Update Order Status - Email error: ' . $e->getMessage());
             }
         }
         
+        error_log('APD Update Order Status - Success');
         wp_send_json_success();
     }
 
