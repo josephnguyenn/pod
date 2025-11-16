@@ -7682,14 +7682,20 @@ class AdvancedProductDesigner
     /**
      * Build order confirmation email template
      */
-    private function build_order_confirmation_template($order_id, $order_data) {
+    private function build_order_confirmation_template($order_id, $order_data, $heading = null, $message = null) {
         $customer_name = $order_data['customer_name'] ?? 'Customer';
-        $product_name = $order_data['product_name'] ?? 'Custom Product';
-        $quantity = $order_data['quantity'] ?? '1';
-        $subtotal = $order_data['product_price'] ?? 0;
+        $cart_items = $order_data['cart_items'] ?? array();
+        if (is_string($cart_items)) {
+            $decoded = json_decode($cart_items, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $cart_items = $decoded;
+            }
+        }
+        if (!is_array($cart_items)) {
+            $cart_items = array();
+        }
         $shipping = $order_data['shipping_cost'] ?? 0;
         $tax = $order_data['tax'] ?? 0;
-        $total = $subtotal + $shipping + $tax;
         $order_date = $order_data['order_date'] ?? current_time('F j, Y');
         $customer_address = $order_data['customer_address'] ?? '';
         $site_name = get_bloginfo('name');
@@ -7697,7 +7703,20 @@ class AdvancedProductDesigner
         $current_year = date('Y');
         $logo_url = get_option('apd_email_logo_url', '');
         $support_email = get_option('admin_email');
-
+        // Calculate subtotal and total
+        $subtotal = 0;
+        foreach ($cart_items as $item) {
+            $item_price = isset($item['product_price']) ? floatval($item['product_price']) : (isset($item['price']) ? floatval($item['price']) : 0);
+            $item_qty = isset($item['quantity']) ? intval($item['quantity']) : 1;
+            $subtotal += $item_price * $item_qty;
+        }
+        $total = $subtotal + floatval($shipping) + floatval($tax);
+        if ($heading === null) {
+            $heading = 'Thank you for your order!';
+        }
+        if ($message === null) {
+            $message = "We've received it and are getting it ready for you.";
+        }
         ob_start();
         ?>
 <!DOCTYPE html>
@@ -7770,8 +7789,8 @@ class AdvancedProductDesigner
                     <?php echo esc_html($site_name); ?>
                 </div>
             <?php endif; ?>
-            <h1 class="text-3xl font-bold text-gray-900">Thank you for your order!</h1>
-            <p class="text-gray-600 mt-2">We've received it and are getting it ready for you.</p>
+            <h1 class="text-3xl font-bold text-gray-900"><?php echo esc_html($heading); ?></h1>
+            <p class="text-gray-600 mt-2"><?php echo esc_html($message); ?></p>
         </div>
 
         <div class="content">
@@ -7783,42 +7802,47 @@ class AdvancedProductDesigner
             </p>
 
             <div class="border border-gray-200 rounded-lg overflow-hidden">
-                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
-                    Order Summary
-                </h2>
-                
-                <table style="width: 100%; border-collapse: collapse;">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Order Summary</h2>
+                <table style="width:100%;border-collapse:collapse;">
                     <thead>
-                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
-                            <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">Product</th>
-                            <th style="padding: 12px; text-align: center; font-weight: 600; color: #374151;">Quantity</th>
-                            <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151;">Price</th>
-                        </tr>
+                    <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+                        <th style="padding:12px;text-align:left;font-weight:600;color:#374151;">Product</th>
+                        <th style="padding:12px;text-align:center;font-weight:600;color:#374151;">Quantity</th>
+                        <th style="padding:12px;text-align:right;font-weight:600;color:#374151;">Price</th>
+                    </tr>
                     </thead>
                     <tbody>
+                    <?php foreach ($cart_items as $item): ?>
                         <tr style="border-bottom: 1px solid #f3f4f6;">
-                            <td style="padding: 16px; color: #111827; font-weight: 600;"><?php echo esc_html($product_name); ?></td>
-                            <td style="padding: 16px; text-align: center; color: #6b7280;"><?php echo esc_html($quantity); ?></td>
-                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">$<?php echo number_format($subtotal, 2); ?></td>
+                            <td style="padding: 16px; color: #111827; font-weight: 600;">
+                                <?php echo esc_html($item['product_name'] ?? ''); ?>
+                            </td>
+                            <td style="padding: 16px; text-align: center; color: #6b7280;">
+                                <?php echo esc_html($item['quantity'] ?? 1); ?>
+                            </td>
+                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">
+                                $<?php echo number_format((float)($item['product_price'] ?? ($item['price'] ?? 0)) * (int)($item['quantity'] ?? 1), 2); ?>
+                            </td>
                         </tr>
+                    <?php endforeach; ?>
                     </tbody>
                     <tfoot style="background-color: #f9fafb;">
-                        <tr style="border-top: 1px solid #e5e7eb;">
-                            <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
-                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
-                        </tr>
-                        <tr>
-                            <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
-                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
-                        </tr>
-                        <tr>
-                            <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
-                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
-                        </tr>
-                        <tr style="border-top: 2px solid #d1d5db;">
-                            <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
-                            <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
-                        </tr>
+                    <tr style="border-top: 1px solid #e5e7eb;">
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
+                    </tr>
+                    <tr style="border-top: 2px solid #d1d5db;">
+                        <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
+                        <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
+                    </tr>
                     </tfoot>
                 </table>
             </div>
@@ -7876,18 +7900,32 @@ class AdvancedProductDesigner
         $customer_name = $order_data['customer_name'] ?? 'N/A';
         $customer_email = $order_data['customer_email'] ?? 'N/A';
         $customer_phone = $order_data['customer_phone'] ?? 'N/A';
-        $product_name = $order_data['product_name'] ?? 'Custom Product';
-        $quantity = $order_data['quantity'] ?? '1';
-        $subtotal = $order_data['product_price'] ?? 0;
+        $cart_items = $order_data['cart_items'] ?? array();
+        if (is_string($cart_items)) {
+            $decoded = json_decode($cart_items, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $cart_items = $decoded;
+            }
+        }
+        if (!is_array($cart_items)) {
+            $cart_items = array();
+        }
         $shipping = $order_data['shipping_cost'] ?? 0;
         $tax = $order_data['tax'] ?? 0;
-        $total = $subtotal + $shipping + $tax;
         $order_date = $order_data['order_date'] ?? current_time('F j, Y g:i A');
         $customer_address = $order_data['customer_address'] ?? 'N/A';
         $site_name = get_bloginfo('name');
         $site_url = home_url();
         $current_year = date('Y');
         $logo_url = get_option('apd_email_logo_url', '');
+        // Calculate subtotal and total
+        $subtotal = 0;
+        foreach ($cart_items as $item) {
+            $item_price = isset($item['product_price']) ? floatval($item['product_price']) : (isset($item['price']) ? floatval($item['price']) : 0);
+            $item_qty = isset($item['quantity']) ? intval($item['quantity']) : 1;
+            $subtotal += $item_price * $item_qty;
+        }
+        $total = $subtotal + floatval($shipping) + floatval($tax);
 
         ob_start();
         ?>
@@ -8002,11 +8040,19 @@ class AdvancedProductDesigner
                         </tr>
                     </thead>
                     <tbody>
-                        <tr style="border-bottom: 1px solid #f3f4f6;">
-                            <td style="padding: 16px; color: #111827; font-weight: 600;"><?php echo esc_html($product_name); ?></td>
-                            <td style="padding: 16px; text-align: center; color: #6b7280;"><?php echo esc_html($quantity); ?></td>
-                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">$<?php echo number_format($subtotal, 2); ?></td>
-                        </tr>
+                        <?php foreach ($cart_items as $item): ?>
+                            <tr style="border-bottom: 1px solid #f3f4f6;">
+                                <td style="padding: 16px; color: #111827; font-weight: 600;">
+                                    <?php echo esc_html($item['product_name'] ?? ''); ?>
+                                </td>
+                                <td style="padding: 16px; text-align: center; color: #6b7280;">
+                                    <?php echo esc_html($item['quantity'] ?? 1); ?>
+                                </td>
+                                <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">
+                                    $<?php echo number_format((float)($item['product_price'] ?? ($item['price'] ?? 0)) * (int)($item['quantity'] ?? 1), 2); ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
                     </tbody>
                     <tfoot style="background-color: #f9fafb;">
                         <tr style="border-top: 1px solid #e5e7eb;">
