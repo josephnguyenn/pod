@@ -3115,7 +3115,35 @@ class AdvancedProductDesigner
         $status = sanitize_text_field($_POST['status'] ?? '');
         if (!$order_id || !$status)
             wp_send_json_error(array('message' => 'missing'), 400);
+        
+        // Get old status before updating
+        $old_status = get_post_status($order_id);
+        
+        // Update the order status
         wp_update_post(array('ID' => $order_id, 'post_status' => $status));
+        
+        // Send email if status changed to confirmed or completed
+        if ($old_status !== $status && in_array($status, array('apd_confirmed', 'apd_completed'))) {
+            // Get order data for email
+            $order_data = array(
+                'customer_name' => get_post_meta($order_id, 'customer_name', true),
+                'customer_email' => get_post_meta($order_id, 'customer_email', true),
+                'customer_phone' => get_post_meta($order_id, 'customer_phone', true),
+                'customer_address' => get_post_meta($order_id, 'customer_address', true),
+                'cart_items' => get_post_meta($order_id, 'cart_items', true),
+                'product_price' => get_post_meta($order_id, 'product_price', true),
+                'shipping_cost' => get_post_meta($order_id, 'shipping_cost', true),
+                'tax' => get_post_meta($order_id, 'tax', true),
+                'order_date' => get_post_meta($order_id, 'order_date', true),
+            );
+            
+            if ($status === 'apd_confirmed') {
+                $this->send_order_status_email($order_id, $order_data, 'confirmed');
+            } elseif ($status === 'apd_completed') {
+                $this->send_order_status_email($order_id, $order_data, 'completed');
+            }
+        }
+        
         wp_send_json_success();
     }
 
@@ -7671,6 +7699,61 @@ class AdvancedProductDesigner
             );
 
             $sent = wp_mail($admin_email, $subject, $message, $headers);
+
+            return $sent;
+
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Send order status change email (confirmed/completed)
+     */
+    public function send_order_status_email($order_id, $order_data, $status_type = 'confirmed') {
+        try {
+            // Check if email notifications are enabled
+            if (!get_option('apd_email_enabled', '1')) {
+                return false;
+            }
+
+            $customer_email = $order_data['customer_email'] ?? '';
+            if (empty($customer_email)) {
+                return false;
+            }
+
+            // Configure SMTP if enabled
+            if (get_option('apd_smtp_enabled', '0') === '1') {
+                $this->configure_smtp(true);
+            }
+
+            // Get email settings
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+            
+            // Set subject and content based on status
+            if ($status_type === 'confirmed') {
+                $subject = 'Order Confirmed - #' . $order_id;
+                $heading = 'Your order has been confirmed!';
+                $message_text = 'Great news! Your order has been confirmed and is being prepared for shipment.';
+            } elseif ($status_type === 'completed') {
+                $subject = 'Order Completed - #' . $order_id;
+                $heading = 'Your order is complete!';
+                $message_text = 'Your order has been completed and shipped. Thank you for your business!';
+            } else {
+                return false;
+            }
+
+            // Build email HTML using the shared template
+            $message = $this->build_order_confirmation_template($order_id, $order_data, $heading, $message_text);
+
+            // Set headers
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            $sent = wp_mail($customer_email, $subject, $message, $headers);
 
             return $sent;
 
