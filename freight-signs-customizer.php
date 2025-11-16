@@ -4880,7 +4880,7 @@ class AdvancedProductDesigner
         ob_start();
         ?>
         <div class="apd-thankyou-page" style="
-            max-width: 100%;
+            max-width: 100% ;
             margin: 0 auto;
             padding: 40px 20px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -7601,75 +7601,38 @@ class AdvancedProductDesigner
         try {
             // Check if email notifications are enabled
             if (!get_option('apd_email_enabled', '1')) {
-                // error_log("Email notifications are disabled in settings");
                 return false;
             }
 
             $customer_email = $order_data['customer_email'] ?? '';
             if (empty($customer_email)) {
-                // error_log("No customer email address provided in order data");
                 return false;
             }
 
-            // Configure SMTP if enabled (same as test email does)
+            // Configure SMTP if enabled
             if (get_option('apd_smtp_enabled', '0') === '1') {
-                $this->configure_smtp(true); // Disable debug during AJAX
-                // error_log("SMTP configured for order confirmation email");
+                $this->configure_smtp(true);
             }
 
             // Get email settings
-            $from_name = get_option('apd_email_from_name', 'Freight Signs Customizer');
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
             $from_email = get_option('apd_email_from_address', get_option('admin_email'));
-            $subject = get_option('apd_email_subject', 'Order Confirmation - #{order_id}');
-            $template = get_option('apd_email_template', 'Dear {customer_name},
+            $subject = 'Order Confirmation - #' . $order_id;
 
-Thank you for your order! We have received your order #{order_id} and will process it shortly.
+            // Build email HTML
+            $message = $this->build_order_confirmation_template($order_id, $order_data);
 
-Order Details:
-- Product: {product_name}
-- Quantity: {quantity}
-- Total: {total_price}
-- Order Date: {order_date}
-
-We will send you another email once your order is ready for shipping.
-
-Best regards,
-{site_name}');
-
-            // Replace placeholders
-            $placeholders = array(
-                '{customer_name}' => $order_data['customer_name'] ?? 'Customer',
-                '{order_id}' => $order_id,
-                '{product_name}' => $order_data['product_name'] ?? 'Custom Product',
-                '{quantity}' => $order_data['quantity'] ?? '1',
-                '{total_price}' => '$' . number_format($order_data['product_price'] ?? 0, 2),
-                '{order_date}' => $order_data['order_date'] ?? current_time('Y-m-d H:i:s'),
-                '{site_name}' => get_option('apd_email_from_name', 'Freight Signs Customizer')
-            );
-
-            $subject = str_replace(array_keys($placeholders), array_values($placeholders), $subject);
-            $message = str_replace(array_keys($placeholders), array_values($placeholders), $template);
-
-            // Set headers (same as test email)
+            // Set headers
             $headers = array(
                 'Content-Type: text/html; charset=UTF-8',
                 'From: ' . $from_name . ' <' . $from_email . '>'
             );
 
-            // Send email (silently during AJAX to prevent JSON corruption)
-            // error_log("Attempting to send order confirmation email to: " . $customer_email);
             $sent = wp_mail($customer_email, $subject, $message, $headers);
-
-            // if ($sent) {
-            //     error_log("✅ Order confirmation email sent successfully to: " . $customer_email);
-            // } else {
-            //     error_log("❌ Failed to send order confirmation email to: " . $customer_email);
-            // }
 
             return $sent;
 
         } catch (Exception $e) {
-            // error_log("Error sending order confirmation email: " . $e->getMessage());
             return false;
         }
     }
@@ -7681,59 +7644,378 @@ Best regards,
         try {
             // Check if admin notifications are enabled
             if (!get_option('apd_admin_email_notifications', '1')) {
-                // error_log("Admin email notifications are disabled in settings");
                 return false;
             }
 
             $admin_email = get_option('apd_admin_email_address', get_option('admin_email'));
             if (empty($admin_email)) {
-                // error_log("No admin email address configured");
                 return false;
             }
 
-            // Configure SMTP if enabled (same as test email does)
+            // Configure SMTP if enabled
             if (get_option('apd_smtp_enabled', '0') === '1') {
-                $this->configure_smtp(true); // Disable debug during AJAX
-                // error_log("SMTP configured for admin notification email");
+                $this->configure_smtp(true);
             }
 
-            $from_name = get_option('apd_email_from_name', 'Freight Signs Customizer');
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
             $from_email = get_option('apd_email_from_address', get_option('admin_email'));
 
-            $subject = 'New Order #' . $order_id . ' - ' . get_option('apd_email_from_name', 'Freight Signs Customizer');
+            $subject = 'New Order #' . $order_id . ' - ' . get_bloginfo('name');
             
-            $message = '<h2>New Order Received</h2>
-            <p><strong>Order ID:</strong> #' . $order_id . '</p>
-            <p><strong>Customer:</strong> ' . ($order_data['customer_name'] ?? 'N/A') . '</p>
-            <p><strong>Email:</strong> ' . ($order_data['customer_email'] ?? 'N/A') . '</p>
-            <p><strong>Phone:</strong> ' . ($order_data['customer_phone'] ?? 'N/A') . '</p>
-            <p><strong>Product:</strong> ' . ($order_data['product_name'] ?? 'N/A') . '</p>
-            <p><strong>Quantity:</strong> ' . ($order_data['quantity'] ?? '1') . '</p>
-            <p><strong>Total:</strong> $' . number_format($order_data['product_price'] ?? 0, 2) . '</p>
-            <p><strong>Order Date:</strong> ' . ($order_data['order_date'] ?? current_time('Y-m-d H:i:s')) . '</p>
-            <p><strong>Address:</strong><br>' . nl2br($order_data['customer_address'] ?? 'N/A') . '</p>';
+            // Build admin email HTML
+            $message = $this->build_admin_notification_template($order_id, $order_data);
 
             $headers = array(
                 'Content-Type: text/html; charset=UTF-8',
                 'From: ' . $from_name . ' <' . $from_email . '>'
             );
 
-            // Send email (silently during AJAX to prevent JSON corruption)
-            // error_log("Attempting to send admin notification email to: " . $admin_email);
             $sent = wp_mail($admin_email, $subject, $message, $headers);
-
-            // if ($sent) {
-            //     error_log("✅ Admin notification email sent successfully to: " . $admin_email);
-            // } else {
-            //     error_log("❌ Failed to send admin notification email to: " . $admin_email);
-            // }
 
             return $sent;
 
         } catch (Exception $e) {
-            // error_log("Error sending admin notification email: " . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * Build order confirmation email template
+     */
+    private function build_order_confirmation_template($order_id, $order_data) {
+        $customer_name = $order_data['customer_name'] ?? 'Customer';
+        $product_name = $order_data['product_name'] ?? 'Custom Product';
+        $quantity = $order_data['quantity'] ?? '1';
+        $subtotal = $order_data['product_price'] ?? 0;
+        $shipping = $order_data['shipping_cost'] ?? 0;
+        $tax = $order_data['tax'] ?? 0;
+        $total = $subtotal + $shipping + $tax;
+        $order_date = $order_data['order_date'] ?? current_time('F j, Y');
+        $customer_address = $order_data['customer_address'] ?? '';
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+        $support_email = get_option('admin_email');
+
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Confirmation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #111827;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 0.375rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900">Thank you for your order!</h1>
+            <p class="text-gray-600 mt-2">We've received it and are getting it ready for you.</p>
+        </div>
+
+        <div class="content">
+            <p class="text-lg text-gray-800 mb-6">
+                Dear <?php echo esc_html($customer_name); ?>,
+            </p>
+            <p class="text-gray-700 mb-6">
+                Your order <strong class="text-gray-900">#<?php echo esc_html($order_id); ?></strong> has been successfully placed on <?php echo esc_html($order_date); ?>. We'll send you another email as soon as your order is ready to ship.
+            </p>
+
+            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
+                    Order Summary
+                </h2>
+                
+                <div class="p-4">
+                    <div class="flex justify-between items-center py-4 border-b border-gray-100">
+                        <div class="flex items-center">
+                            <div class="w-16 h-16 bg-gray-200 rounded-md mr-4 flex-shrink-0"></div>
+                            <div>
+                                <p class="font-semibold text-gray-900"><?php echo esc_html($product_name); ?></p>
+                                <p class="text-sm text-gray-600">Quantity: <?php echo esc_html($quantity); ?></p>
+                            </div>
+                        </div>
+                        <p class="font-semibold text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-gray-50 border-t border-gray-200">
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-gray-600">Subtotal</p>
+                        <p class="text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-gray-600">Shipping</p>
+                        <p class="text-gray-900">$<?php echo number_format($shipping, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center mb-4">
+                        <p class="text-gray-600">Tax</p>
+                        <p class="text-gray-900">$<?php echo number_format($tax, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center text-lg font-bold text-gray-900 border-t border-gray-300 pt-4">
+                        <p>Total</p>
+                        <p>$<?php echo number_format($total, 2); ?></p>
+                    </div>
+                </div>
+            </div>
+            
+            <?php if (!empty($customer_address)): ?>
+            <div class="mt-8">
+                <h3 class="text-lg font-semibold text-gray-900 mb-3">Shipping Address</h3>
+                <address class="text-gray-700 not-italic">
+                    <?php echo nl2br(esc_html($customer_address)); ?>
+                </address>
+            </div>
+            <?php endif; ?>
+            
+            <div class="text-center mt-8">
+                <a href="<?php echo esc_url($site_url); ?>" class="button">
+                    Visit Our Store
+                </a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="mb-2">
+                Questions about your order?
+            </p>
+            <p class="mb-4">
+                Contact our support team at <a href="mailto:<?php echo esc_attr($support_email); ?>" class="text-blue-600 underline"><?php echo esc_html($support_email); ?></a>.
+            </p>
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Build admin notification email template
+     */
+    private function build_admin_notification_template($order_id, $order_data) {
+        $customer_name = $order_data['customer_name'] ?? 'N/A';
+        $customer_email = $order_data['customer_email'] ?? 'N/A';
+        $customer_phone = $order_data['customer_phone'] ?? 'N/A';
+        $product_name = $order_data['product_name'] ?? 'Custom Product';
+        $quantity = $order_data['quantity'] ?? '1';
+        $subtotal = $order_data['product_price'] ?? 0;
+        $shipping = $order_data['shipping_cost'] ?? 0;
+        $tax = $order_data['tax'] ?? 0;
+        $total = $subtotal + $shipping + $tax;
+        $order_date = $order_data['order_date'] ?? current_time('F j, Y g:i A');
+        $customer_address = $order_data['customer_address'] ?? 'N/A';
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Order Notification</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900">New Order Received!</h1>
+            <p class="text-gray-600 mt-2">Order #<?php echo esc_html($order_id); ?></p>
+        </div>
+
+        <div class="content">
+            <div class="border border-gray-200 rounded-lg overflow-hidden mb-6">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
+                    Customer Information
+                </h2>
+                <div class="p-4">
+                    <div class="mb-3">
+                        <p class="text-sm text-gray-600">Name</p>
+                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_name); ?></p>
+                    </div>
+                    <div class="mb-3">
+                        <p class="text-sm text-gray-600">Email</p>
+                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_email); ?></p>
+                    </div>
+                    <div class="mb-3">
+                        <p class="text-sm text-gray-600">Phone</p>
+                        <p class="font-semibold text-gray-900"><?php echo esc_html($customer_phone); ?></p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Address</p>
+                        <p class="font-semibold text-gray-900"><?php echo nl2br(esc_html($customer_address)); ?></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
+                    Order Details
+                </h2>
+                
+                <div class="p-4">
+                    <div class="mb-3">
+                        <p class="text-sm text-gray-600">Order Date</p>
+                        <p class="font-semibold text-gray-900"><?php echo esc_html($order_date); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center py-4 border-t border-gray-100">
+                        <div>
+                            <p class="font-semibold text-gray-900"><?php echo esc_html($product_name); ?></p>
+                            <p class="text-sm text-gray-600">Quantity: <?php echo esc_html($quantity); ?></p>
+                        </div>
+                        <p class="font-semibold text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-gray-50 border-t border-gray-200">
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-gray-600">Subtotal</p>
+                        <p class="text-gray-900">$<?php echo number_format($subtotal, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-gray-600">Shipping</p>
+                        <p class="text-gray-900">$<?php echo number_format($shipping, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center mb-4">
+                        <p class="text-gray-600">Tax</p>
+                        <p class="text-gray-900">$<?php echo number_format($tax, 2); ?></p>
+                    </div>
+                    <div class="flex justify-between items-center text-lg font-bold text-gray-900 border-t border-gray-300 pt-4">
+                        <p>Total</p>
+                        <p>$<?php echo number_format($total, 2); ?></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
     }
 
     /**
@@ -7938,14 +8220,124 @@ Best regards,
     }
 
     private function get_test_email_template($email_type) {
-        $templates = array(
-            'order_confirmation' => 'Dear Test Customer,<br><br>Thank you for your test order! This is a test email to verify your email configuration.<br><br>Best regards,<br>Freight Signs Customizer',
-            'order_shipped' => 'Dear Test Customer,<br><br>Your test order has been shipped! This is a test email to verify your email configuration.<br><br>Best regards,<br>Freight Signs Customizer',
-            'welcome_customer' => 'Dear Test Customer,<br><br>Welcome to our store! This is a test email to verify your email configuration.<br><br>Best regards,<br>Freight Signs Customizer',
-            'admin_notification' => 'Dear Admin,<br><br>This is a test admin notification email to verify your email configuration.<br><br>Best regards,<br>Freight Signs Customizer'
-        );
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+        $support_email = get_option('admin_email');
 
-        return $templates[$email_type] ?? $templates['order_confirmation'];
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Email</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #111827;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 0.375rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900">Test Email</h1>
+            <p class="text-gray-600 mt-2">This is a test email from your system</p>
+        </div>
+
+        <div class="content">
+            <p class="text-lg text-gray-800 mb-6">
+                Dear Test User,
+            </p>
+            <p class="text-gray-700 mb-6">
+                This is a test email to verify that your email configuration is working correctly. If you're reading this, it means your email settings are properly configured!
+            </p>
+            
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50 mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Email Type</h3>
+                <p class="text-gray-700"><?php echo esc_html(ucwords(str_replace('_', ' ', $email_type))); ?></p>
+            </div>
+            
+            <div class="text-center mt-8">
+                <a href="<?php echo esc_url($site_url); ?>" class="button">
+                    Visit Website
+                </a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="mb-2">
+                Questions about your configuration?
+            </p>
+            <p class="mb-4">
+                Contact support at <a href="mailto:<?php echo esc_attr($support_email); ?>" class="text-blue-600 underline"><?php echo esc_html($support_email); ?></a>.
+            </p>
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
     }
 
     private function get_test_attachments() {
