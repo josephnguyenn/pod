@@ -2624,10 +2624,8 @@ class AdvancedProductDesigner
                 $q->the_post();
                 $pid = get_the_ID();
                 $cust = get_post_meta($pid, 'customer_name', true);
-                $price = get_post_meta($pid, 'product_price', true);
-                $qty = get_post_meta($pid, 'quantity', true);
+                $total = floatval(get_post_meta($pid, 'total_amount', true));
                 $status_label = get_post_status_object(get_post_status($pid));
-                $total = floatval($price) * max(1, intval($qty));
                 printf('<tr><td>%d</td><td>%s</td><td>%s</td><td>$%0.2f</td><td>%s</td><td><a class="button" href="%s">View</a></td></tr>',
                     $pid,
                     esc_html($cust ?: '-'),
@@ -2662,11 +2660,6 @@ class AdvancedProductDesigner
             'customer_email' => get_post_meta($order_id, 'customer_email', true),
             'customer_phone' => get_post_meta($order_id, 'customer_phone', true),
             'customer_address' => get_post_meta($order_id, 'customer_address', true),
-            'product_name' => get_post_meta($order_id, 'product_name', true),
-            'product_price' => get_post_meta($order_id, 'product_price', true),
-            'quantity' => get_post_meta($order_id, 'quantity', true),
-            'print_color' => get_post_meta($order_id, 'print_color', true),
-            'vinyl_material' => get_post_meta($order_id, 'vinyl_material', true),
         );
         $text_fields = get_post_meta($order_id, 'text_fields', true);
         $template_data = get_post_meta($order_id, 'template_data', true);
@@ -7793,8 +7786,8 @@ class AdvancedProductDesigner
         if (!is_array($cart_items)) {
             $cart_items = array();
         }
-        $shipping = $order_data['shipping_cost'] ?? 0;
-        $tax = $order_data['tax'] ?? 0;
+        $shipping = floatval($order_data['shipping_cost'] ?? 0);
+        $tax = floatval($order_data['tax'] ?? 0);
         $order_date = $order_data['order_date'] ?? current_time('F j, Y');
         $customer_address = $order_data['customer_address'] ?? '';
         $site_name = get_bloginfo('name');
@@ -7809,7 +7802,7 @@ class AdvancedProductDesigner
             $item_qty = isset($item['quantity']) ? intval($item['quantity']) : 1;
             $subtotal += $item_price * $item_qty;
         }
-        $total = $subtotal + floatval($shipping) + floatval($tax);
+        $total = $subtotal + $shipping + $tax;
         if ($heading === null) {
             $heading = 'Thank you for your order!';
         }
