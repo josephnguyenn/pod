@@ -278,7 +278,7 @@ $items_per_page = -1;
 .apd-product-image {
     position: relative;
     width: 100%;
-    padding-top: 100%;
+    padding-top: 70%;
     background: var(--color-muted);
     overflow: hidden;
 }

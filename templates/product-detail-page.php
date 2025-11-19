@@ -67,10 +67,28 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     <div class="apd-container">
         <!-- Back to Products Link -->
         <div class="apd-breadcrumb">
-            <a href="<?php echo home_url('/product'); ?>" class="apd-back-link" onclick="event.preventDefault(); if (document.referrer && !document.referrer.includes('/product-detail/')) { window.history.back(); } else { window.location.href = this.href; }">
+            <a href="<?php echo home_url('/product'); ?>" class="apd-back-link" id="backToProductsLink">
                 ← Back to Products
             </a>
         </div>
+        
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const backLink = document.getElementById('backToProductsLink');
+            if (backLink) {
+                backLink.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const referrer = document.referrer;
+                    // Check if there's a referrer and it's not a product-detail page
+                    if (referrer && referrer.length > 0 && !referrer.includes('/product-detail/')) {
+                        window.history.back();
+                    } else {
+                        window.location.href = this.href;
+                    }
+                });
+            }
+        });
+        </script>
 
         <div class="apd-product-detail-wrapper">
             <!-- Product Image Gallery -->
