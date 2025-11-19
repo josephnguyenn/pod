@@ -7794,7 +7794,7 @@ class AdvancedProductDesigner
         $site_url = home_url();
         $current_year = date('Y');
         $logo_url = get_option('apd_email_logo_url', '');
-        $support_email = get_option('admin_email');
+        $support_email = 'gotospectrum@gmail.com';
         // Calculate subtotal and total
         $subtotal = 0;
         foreach ($cart_items as $item) {
@@ -8386,7 +8386,7 @@ class AdvancedProductDesigner
         $site_url = home_url();
         $current_year = date('Y');
         $logo_url = get_option('apd_email_logo_url', '');
-        $support_email = get_option('admin_email');
+        $support_email = 'gotospectrum@gmail.com';
 
         ob_start();
         ?>
