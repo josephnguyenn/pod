@@ -3091,8 +3091,8 @@ class AdvancedProductDesigner
                     }
                     
                     // Ensure SVG has proper XML declaration and namespace
-                    if (svgContent && !svgContent.trim().startsWith('<?xml')) {
-                        svgContent = '<?xml version="1.0" encoding="UTF-8"?>\n' + svgContent;
+                    if (svgContent && !svgContent.trim().startsWith('<' + '?xml')) {
+                        svgContent = '<' + '?xml version="1.0" encoding="UTF-8"?' + '>\n' + svgContent;
                     }
                     
                     // Ensure SVG has proper xmlns attribute
