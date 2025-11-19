@@ -7684,7 +7684,7 @@ class AdvancedProductDesigner
                 return false;
             }
 
-            $admin_email = get_option('apd_admin_email_address', get_option('admin_email'));
+            $admin_email = get_option('apd_admin_email_address', 'gotospectrum@gmail.com');
             if (empty($admin_email)) {
                 return false;
             }
