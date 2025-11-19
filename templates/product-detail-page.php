@@ -67,7 +67,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     <div class="apd-container">
         <!-- Back to Products Link -->
         <div class="apd-breadcrumb">
-            <a href="<?php echo home_url('/product'); ?>" class="apd-back-link">
+            <a href="<?php echo home_url('/product'); ?>" class="apd-back-link" onclick="event.preventDefault(); if (document.referrer && !document.referrer.includes('/product-detail/')) { window.history.back(); } else { window.location.href = this.href; }">
                 ← Back to Products
             </a>
         </div>
