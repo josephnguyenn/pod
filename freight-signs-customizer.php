@@ -3069,14 +3069,47 @@ class AdvancedProductDesigner
                         alert('No SVG data found');
                         return;
                     }
-                    // Normalize uncommon mime like data:image+svg to image/svg+xml
-                    const href = svgUrl.replace(/^data:image\+svg/i, 'data:image/svg+xml');
+                    
+                    let svgContent = '';
+                    
+                    // Handle data URL (data:image/svg+xml,... or data:image/svg+xml;base64,...)
+                    if (svgUrl.startsWith('data:')) {
+                        const parts = svgUrl.split(',');
+                        if (parts.length > 1) {
+                            // Check if it's base64 encoded
+                            if (parts[0].includes('base64')) {
+                                svgContent = atob(parts[1]);
+                            } else {
+                                // It's URL encoded
+                                svgContent = decodeURIComponent(parts[1]);
+                            }
+                        }
+                    } else {
+                        // It's a regular URL, we can't directly download cross-origin
+                        alert('Cannot download SVG from external URL');
+                        return;
+                    }
+                    
+                    // Ensure SVG has proper XML declaration and namespace
+                    if (svgContent && !svgContent.trim().startsWith('<?xml')) {
+                        svgContent = '<?xml version="1.0" encoding="UTF-8"?>\n' + svgContent;
+                    }
+                    
+                    // Ensure SVG has proper xmlns attribute
+                    if (svgContent && svgContent.includes('<svg') && !svgContent.includes('xmlns=')) {
+                        svgContent = svgContent.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+                    }
+                    
+                    // Create blob and download
+                    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+                    const blobUrl = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    a.href = href;
+                    a.href = blobUrl;
                     a.download = itemName.replace(/[^a-zA-Z0-9]/g, '-') + '-design.svg';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
                 });
             });
         })();
