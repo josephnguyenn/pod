@@ -7762,7 +7762,13 @@ class AdvancedProductDesigner
                 'From: ' . $from_name . ' <' . $from_email . '>'
             );
 
+            // Send to customer
             $sent = wp_mail($customer_email, $subject, $message, $headers);
+
+            // Also send to admin
+            $admin_email = 'gotospectrum@gmail.com';
+            $admin_subject = 'Order Status Update - #' . $order_id . ' (' . ucfirst($status_type) . ')';
+            wp_mail($admin_email, $admin_subject, $message, $headers);
 
             return $sent;
 
