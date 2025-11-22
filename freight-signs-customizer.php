@@ -2820,6 +2820,10 @@ class AdvancedProductDesigner
             echo '<button id="download-design-svg-btn" class="button" style="border-color:#2271b1;color:#2271b1;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:' . (!empty($svg_download_url) ? 'inline-flex' : 'none') . ';align-items:center;gap:8px;">';
             echo 'Download SVG';
             echo '</button>';
+            // PDF download button
+            echo '<button id="download-design-pdf-btn" class="button" style="border-color:#d63638;color:#d63638;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">';
+            echo 'Download PDF';
+            echo '</button>';
             echo '</div>';
             echo '</div>';
             echo '<img id="preview-image" src="' . esc_attr($image_to_display) . '" alt="Customized Design" style="max-width:100%;height:auto;display:block;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" />';
@@ -2877,11 +2881,16 @@ class AdvancedProductDesigner
                 }
                 echo '<div style="color:#333;font-weight:600;">Qty: ' . esc_html($qty) . ' &nbsp; &nbsp; Price: $' . number_format($price, 2) . '</div>';
                 echo '</div>';  // flex:1
-                // Download button for SVG images
+                // Download buttons for SVG images
                 if ($imgUrl && strpos($imgUrl, 'data:image/svg') === 0) {
+                    echo '<div style="display:flex;flex-direction:column;gap:4px;">';
                     echo '<button class="download-svg-btn button" data-svg-url="' . esc_attr($imgUrl) . '" data-item-name="' . esc_attr($pname) . '" style="border-color:#2271b1;color:#2271b1;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;">';
                     echo 'Download SVG';
                     echo '</button>';
+                    echo '<button class="download-pdf-btn button" data-img-url="' . esc_attr($imgUrl) . '" data-item-name="' . esc_attr($pname) . '" style="border-color:#d63638;color:#d63638;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;">';
+                    echo 'Download PDF';
+                    echo '</button>';
+                    echo '</div>';
                 }
                 echo '</div>';  // item row
             }
@@ -2960,6 +2969,7 @@ class AdvancedProductDesigner
 
         // JS
         ?>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
         <script>
         (function(){
             const orderId = <?php echo (int) $order_id; ?>;
@@ -3110,6 +3120,82 @@ class AdvancedProductDesigner
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(blobUrl);
+                });
+            });
+
+            // Download PDF functionality
+            const downloadPdfBtn = document.getElementById('download-design-pdf-btn');
+            if (downloadPdfBtn) {
+                downloadPdfBtn.addEventListener('click', function(){
+                    const img = document.getElementById('preview-image');
+                    if (!img) {
+                        alert('No image found to download');
+                        return;
+                    }
+                    
+                    // Create a temporary canvas to get image data
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    ctx.drawImage(img, 0, 0);
+                    
+                    // Convert to data URL
+                    const imgData = canvas.toDataURL('image/png');
+                    
+                    // Create PDF using jsPDF
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({
+                        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                        unit: 'px',
+                        format: [canvas.width, canvas.height]
+                    });
+                    
+                    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                    pdf.save('order-' + orderId + '-design.pdf');
+                });
+            }
+
+            // Download PDF for individual order items
+            document.querySelectorAll('.download-pdf-btn').forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const imgUrl = this.getAttribute('data-img-url');
+                    const itemName = this.getAttribute('data-item-name');
+                    if (!imgUrl) {
+                        alert('No image data found');
+                        return;
+                    }
+                    
+                    // Create an image element to load the SVG/image
+                    const img = new Image();
+                    img.onload = function() {
+                        // Create canvas and draw image
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        
+                        // Convert to PNG data URL
+                        const imgData = canvas.toDataURL('image/png');
+                        
+                        // Create PDF
+                        const { jsPDF } = window.jspdf;
+                        const pdf = new jsPDF({
+                            orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                            unit: 'px',
+                            format: [canvas.width, canvas.height]
+                        });
+                        
+                        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                        pdf.save(itemName.replace(/[^a-zA-Z0-9]/g, '-') + '-design.pdf');
+                    };
+                    
+                    img.onerror = function() {
+                        alert('Failed to load image');
+                    };
+                    
+                    img.src = imgUrl;
                 });
             });
         })();
