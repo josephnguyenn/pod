@@ -528,6 +528,39 @@ const APDCart = {
   renderCustomizationDetails: function (customizationData) {
     let details = [];
 
+    // Display variant information first if available (SKU-based variants)
+    if (customizationData.variant_info) {
+      if (customizationData.variant_info.size) {
+        details.push(
+          `<li><strong>Size:</strong> ${customizationData.variant_info.size}</li>`,
+        );
+      }
+      if (customizationData.variant_info.sku) {
+        details.push(
+          `<li><strong>SKU:</strong> ${customizationData.variant_info.sku}</li>`,
+        );
+      }
+      if (customizationData.variant_info.material) {
+        details.push(
+          `<li><strong>Variant Material:</strong> ${customizationData.variant_info.material}</li>`,
+        );
+      }
+    }
+    
+    // Legacy variant support (price-modifier variants)
+    if (customizationData.variants) {
+      if (customizationData.variants.material) {
+        details.push(
+          `<li><strong>Material:</strong> ${customizationData.variants.material}${customizationData.variants.material_price > 0 ? ' (+$' + customizationData.variants.material_price.toFixed(2) + ')' : ''}</li>`,
+        );
+      }
+      if (customizationData.variants.size) {
+        details.push(
+          `<li><strong>Size:</strong> ${customizationData.variants.size}${customizationData.variants.size_price > 0 ? ' (+$' + customizationData.variants.size_price.toFixed(2) + ')' : ''}</li>`,
+        );
+      }
+    }
+
     if (customizationData.print_color) {
       details.push(
         `<li><strong>Print Color:</strong> ${customizationData.print_color}</li>`,

@@ -641,7 +641,12 @@
 /* Responsive Design */
 @media (max-width: 768px) {
     .apd-product-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .apd-product-card {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
     }
     
     .apd-layout-list {

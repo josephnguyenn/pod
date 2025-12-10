@@ -5,42 +5,16 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+// Close PHP block
 ?>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
 <script type="module">
-/**
- * Converts an HTML element (specifically designed for SVG elements) into a Data URL image string.
- *
- * @param {SVGElement} element The SVG element to convert.
- * @returns {Promise<string>} A promise that resolves with the Data URL string.
- */
-window.htmlElementToImage = function(element) {
-    return new Promise((resolve, reject) => {
-        // 1. Check if the element is an SVG element
-        if (!element || element.tagName.toLowerCase() !== 'svg') {
-            return reject(new Error('Element is not a valid SVG element.'));
-        }
-
-        // 2. Serialize the SVG element to an XML string
-        const svgString = new XMLSerializer().serializeToString(element);
-
-        // 3. Encode the string for use in a Data URL
-        // Using encodeURIComponent is often more robust than btoa/base64 for SVG,
-        // especially to handle special characters.
-        const encodedSvg = encodeURIComponent(svgString);
-
-        // 4. Construct the Data URL
-        // The format is: data:image/svg+xml;charset=utf-8, <encoded_svg_string>
-        const dataUrl = `data:image/svg+xml;charset=utf-8,${encodedSvg}`;
-
-        // The image is already in data URL format, resolve immediately.
-        // If you needed to convert it to a PNG/JPEG (which is more complex and requires a Canvas),
-        // you'd do that here, but for SVG->Data URL, this is the most direct method.
-        resolve(dataUrl);
-    });
-};
+window.htmlElementToImage=function(e){return new Promise(function(t,n){try{if(!e||"svg"!==e.tagName.toLowerCase())return n(new Error("Element is not a valid SVG element."));var r=e.cloneNode(!0);r.hasAttribute("xmlns")||r.setAttribute("xmlns","http://www.w3.org/2000/svg"),r.hasAttribute("xmlns:xlink")||r.setAttribute("xmlns:xlink","http://www.w3.org/1999/xlink"),!r.hasAttribute("viewBox")&&r.hasAttribute("width")&&r.hasAttribute("height")&&r.setAttribute("viewBox","0 0 "+r.getAttribute("width")+" "+r.getAttribute("height"));var a=new XMLSerializer().serializeToString(r),o=String.fromCharCode(60,63)+'xml version="1.0" encoding="UTF-8" standalone="no"'+String.fromCharCode(63,62)+"\n"+a,i="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(o)));t(i)}catch(err){console.error("Error converting SVG to data URL:",err);try{var s=new XMLSerializer().serializeToString(e),c=encodeURIComponent(s),u="data:image/svg+xml;charset=utf-8,"+c;t(u)}catch(fallbackErr){n(fallbackErr)}}})};
 </script>
+<?php 
+// Resume PHP processing
+?>
 
 <div class="fsc-container">
     <div class="fsc-customizer-wrapper">
@@ -193,17 +167,17 @@ window.fscDefaults = {
 <script>
 // Simple Buy Now handler for customizer
 (function(){
-    async function buyNowHandler(e){
+    function buyNowHandler(e){
         e.preventDefault();
-        const btn = e.currentTarget;
+        var btn = e.currentTarget;
         btn.disabled = true;
-        const quantity = parseInt(document.getElementById('fsc-quantity').value || '1',10);
+        var quantity = parseInt(document.getElementById('fsc-quantity').value || '1',10);
         
         // Get price information from FSC object if available, otherwise use defaults
-        let basePrice = 0;
-        let salePrice = null;
-        let materialPrice = 0;
-        let productPrice = window.fscDefaults.product_price || 0;
+        var basePrice = 0;
+        var salePrice = null;
+        var materialPrice = 0;
+        var productPrice = window.fscDefaults.product_price || 0;
         
         if (window.FSC) {
             // Try to get base price from FSC
@@ -211,14 +185,14 @@ window.fscDefaults = {
             salePrice = FSC.salePrice || (window.fscDefaults.product_sale_price ? parseFloat(window.fscDefaults.product_sale_price) : null);
             
             // Get material price
-            const currentMaterial = FSC.currentMaterial || document.getElementById('fsc-form-material')?.value || '';
+            var currentMaterial = FSC.currentMaterial || document.getElementById('fsc-form-material')?.value || '';
             if (currentMaterial) {
                 // Try to get material price from selected material element
-                const materialEl = document.querySelector('.fsc-material-outline-option[data-material="' + currentMaterial + '"]');
+                var materialEl = document.querySelector('.fsc-material-outline-option[data-material="' + currentMaterial + '"]');
                 if (materialEl) {
                     materialPrice = parseFloat(materialEl.getAttribute('data-material-price')) || 0;
                 } else if (FSC.materialsMap && FSC.materialsMap[currentMaterial]) {
-                    const materialData = FSC.materialsMap[currentMaterial];
+                    var materialData = FSC.materialsMap[currentMaterial];
                     if (typeof materialData === 'object' && materialData.price !== undefined) {
                         materialPrice = parseFloat(materialData.price) || 0;
                     }
@@ -226,7 +200,7 @@ window.fscDefaults = {
             }
             
             // Calculate product price: base_price (or sale_price) + material_price
-            const basePriceToUse = salePrice || basePrice || parseFloat(window.fscDefaults.product_price) || 0;
+            var basePriceToUse = salePrice || basePrice || parseFloat(window.fscDefaults.product_price) || 0;
             productPrice = basePriceToUse + materialPrice;
         } else {
             // Fallback: use defaults
@@ -235,7 +209,7 @@ window.fscDefaults = {
             productPrice = salePrice || basePrice;
         }
         
-        const payload = {
+        var payload = {
             product_id: window.fscDefaults.product_id || ajaxObj.product_id,
             product_name: window.fscDefaults.product_name || '',
             product_price: productPrice, // Total price (base + material)
@@ -252,17 +226,17 @@ window.fscDefaults = {
 
         // Try to capture preview image if available (but limit size to avoid localStorage issues)
         try{
-            const previewArea = document.querySelector('.fsc-preview-content');
+            var previewArea = document.querySelector('.fsc-preview-content');
             if (previewArea && window.htmlElementToImage) {
-                const previewImage = await window.htmlElementToImage(previewArea, 2);
+                window.htmlElementToImage(previewArea, 2).then(function(previewImage){
                 // Only include preview if it's not too large (max 100KB to avoid localStorage issues)
-                if (previewImage && previewImage.length < 100000) {
-                    payload.preview_image_svg = previewImage;
-                    console.log('✅ Buy Now: Preview image captured, size:', previewImage.length, 'bytes');
-                } else if (previewImage) {
-                    console.warn('⚠️ Buy Now: Preview image too large (' + previewImage.length + ' bytes), skipping to avoid localStorage issues');
-                    // Don't include preview_image_svg if too large
-                }
+                    if (previewImage && previewImage.length < 100000) {
+                        payload.preview_image_svg = previewImage;
+                        console.log('✅ Buy Now: Preview image captured, size:', previewImage.length, 'bytes');
+                    } else if (previewImage) {
+                        console.warn('⚠️ Buy Now: Preview image too large (' + previewImage.length + ' bytes), skipping to avoid localStorage issues');
+                    }
+                }).catch(function(){}); 
             } else {
                 console.log('ℹ️ Buy Now: Preview area or htmlElementToImage not available, skipping preview capture');
             }
@@ -296,8 +270,8 @@ window.fscDefaults = {
             console.log('🛒 Buy Now: Price:', payload.product_price);
             
             // Check payload size before saving (localStorage has ~5-10MB limit, but we'll be conservative)
-            const payloadString = JSON.stringify(payload);
-            const payloadSize = new Blob([payloadString]).size;
+            var payloadString = JSON.stringify(payload);
+            var payloadSize = new Blob([payloadString]).size;
             console.log('📦 Buy Now: Payload size:', payloadSize, 'bytes');
             
             // If payload is too large (>500KB), remove preview image and try again
@@ -305,8 +279,8 @@ window.fscDefaults = {
                 console.warn('⚠️ Buy Now: Payload too large, removing preview image');
                 delete payload.preview_image_svg;
                 delete payload.preview_image_png;
-                const reducedPayloadString = JSON.stringify(payload);
-                const reducedSize = new Blob([reducedPayloadString]).size;
+                var reducedPayloadString = JSON.stringify(payload);
+                var reducedSize = new Blob([reducedPayloadString]).size;
                 console.log('📦 Buy Now: Reduced payload size:', reducedSize, 'bytes');
                 
                 if (reducedSize > 500000) {
@@ -318,7 +292,7 @@ window.fscDefaults = {
                 
                 // Use reduced payload
                 localStorage.setItem('apd_checkout_payload_oneclick', reducedPayloadString);
-                const saved = localStorage.getItem('apd_checkout_payload_oneclick');
+                var saved = localStorage.getItem('apd_checkout_payload_oneclick');
                 if (!saved || saved !== reducedPayloadString) {
                     console.error('Buy Now: Failed to save reduced payload to localStorage!');
                     alert('Error: Failed to save checkout data. Please try again.');
@@ -330,7 +304,7 @@ window.fscDefaults = {
                 localStorage.setItem('apd_checkout_payload_oneclick', payloadString);
                 
                 // Verify it was saved
-                const saved = localStorage.getItem('apd_checkout_payload_oneclick');
+                var saved = localStorage.getItem('apd_checkout_payload_oneclick');
                 if (!saved || saved !== payloadString) {
                     console.error('Buy Now: Failed to save payload to localStorage!');
                     alert('Error: Failed to save checkout data. Please try again.');
@@ -367,8 +341,8 @@ window.fscDefaults = {
     }
 
     document.addEventListener('DOMContentLoaded', function(){
-        const buyBtns = document.querySelectorAll('.fsc-btn-buy-now');
-        buyBtns.forEach(b => b.addEventListener('click', buyNowHandler));
+        var buyBtns = document.querySelectorAll('.fsc-btn-buy-now');
+        buyBtns.forEach(function(b){ b.addEventListener('click', buyNowHandler); });
     });
 })();
 </script>

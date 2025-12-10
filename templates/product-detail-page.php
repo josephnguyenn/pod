@@ -42,6 +42,13 @@ if ($is_customizable === '') {
     $is_customizable = '1'; // Default to customizable for backward compatibility
 }
 
+// Get variant data
+$variants = get_post_meta($product_id, '_apd_variants', true);
+$variants_enabled = is_array($variants) && isset($variants['enabled']) && $variants['enabled'];
+
+// Get all materials for swatches
+$all_materials = get_option('apd_materials', array());
+
 // Get product image
 $product_image = '';
 if ($thumbnail_id) {
@@ -91,9 +98,8 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
         </script>
 
         <div class="apd-product-detail-wrapper">
-            <!-- Product Image Gallery -->
             <div class="apd-product-gallery">
-                <div class="apd-main-image">
+                <div class="apd-main-image" data-product-id="<?php echo $product_id; ?>">
                     <img class="apd-product-image" src="<?php echo esc_url($product_image); ?>" alt="<?php echo esc_attr($product->post_title); ?>">
                     <?php if ($has_sale): ?>
                         <div class="apd-sale-badge">Sale</div>
@@ -115,7 +121,8 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                     <?php echo esc_html($product->post_title); ?>
                 </h1>
 
-                <!-- Price -->
+                <!-- Price (only show for non-variant products) -->
+                <?php if (!$variants_enabled): ?>
                 <div class="apd-product-pricing">
                     <?php if ($has_sale): ?>
                         <span class="apd-sale-price">$<?php echo esc_html($sale_price); ?></span>
@@ -124,11 +131,63 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         <span class="apd-regular-price">$<?php echo esc_html($display_price ?: '0.00'); ?></span>
                     <?php endif; ?>
                 </div>
+                <?php endif; ?>
 
                 <!-- Description -->
                 <?php if ($product->post_content): ?>
                     <div class="apd-product-description">
                         <?php echo wpautop($product->post_content); ?>
+                    </div>
+                <?php endif; ?>
+
+                <!-- Product Variants (SKU-based) -->
+                <?php if ($variants_enabled && !empty($variants['combinations'])): ?>
+                    <div class="apd-product-variants">
+                        <!-- Material Buttons (Text-based) -->
+                        <?php if (!empty($variants['material_options'])): ?>
+                            <div class="apd-variant-section">
+                                <h4>Select Material</h4>
+                                <div class="apd-material-buttons">
+                                    <?php foreach ($variants['material_options'] as $mat_idx => $mat): ?>
+                                        <button type="button" class="apd-material-btn" 
+                                             data-material-id="<?php echo esc_attr($mat['value']); ?>"
+                                             data-material-name="<?php echo esc_attr($mat['label']); ?>">
+                                            <?php echo esc_html($mat['label']); ?>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Size Dropdown -->
+                        <?php if (!empty($variants['size_options'])): ?>
+                            <div class="apd-variant-section">
+                                <h4>Select Size</h4>
+                                <select id="apd-size-select" class="apd-size-dropdown">
+                                    <?php foreach ($variants['size_options'] as $size): ?>
+                                        <option value="<?php echo esc_attr($size['value']); ?>">
+                                            <?php echo esc_html($size['label']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Dynamic Price Display -->
+                        <div class="apd-variant-pricing">
+                            <div class="apd-variant-price-wrapper">
+                                <span class="apd-variant-price-label">Price:</span>
+                                <span class="apd-variant-price">$<span id="apd-price-display">--</span></span>
+                                <span class="apd-variant-regular-price" style="display:none;"></span>
+                            </div>
+                            <div id="apd-stock-status" class="apd-stock-status in-stock">In Stock</div>
+                        </div>
+
+                        <!-- Pass combinations data to JavaScript -->
+                        <script>
+                        var apdCombinations = <?php echo json_encode($variants['combinations']); ?>;
+                        var apdProductId = <?php echo intval($product_id); ?>;
+                        </script>
                     </div>
                 <?php endif; ?>
 
@@ -168,6 +227,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 
                 <!-- Action Buttons -->
                 <div class="apd-product-actions">
+                    <!-- Add to Cart button (always shown) -->
                     <button class="apd-detail-add-cart" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
@@ -175,6 +235,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         Add to cart
                     </button>
                     
+                    <!-- Checkout button (always shown) -->
                     <button class="apd-detail-checkout" 
                             data-product-id="<?php echo $product_id; ?>"
                             data-product-name="<?php echo esc_attr($product->post_title); ?>"
@@ -182,11 +243,18 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         Check out
                     </button>
                     
-                    <?php if ($is_customizable == '1'): ?>
-                    <a href="<?php echo home_url('/customizer/' . $product_id . '/'); ?>" 
-                       class="apd-detail-customize">
-                        Customize this product
-                    </a>
+                    <!-- Customization button -->
+                    <?php if ($variants_enabled && $is_customizable == '1'): ?>
+                        <!-- For variant products that are customizable, show Start Customizing button -->
+                        <button id="apd-start-customizing" class="apd-detail-customize">
+                            Start Customizing
+                        </button>
+                    <?php elseif (!$variants_enabled && $is_customizable == '1'): ?>
+                        <!-- For non-variant customizable products -->
+                        <a href="<?php echo home_url('/customizer/' . $product_id . '/'); ?>" 
+                           class="apd-detail-customize">
+                            Customize this product
+                        </a>
                     <?php endif; ?>
                 </div>
 
@@ -229,13 +297,15 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 }
 
 .apd-container {
-    max-width: 1200px;
+    max-width: 1140px;
     margin: 0 auto;
     padding: 0 20px;
 }
 
 .apd-breadcrumb {
     margin-bottom: 30px;
+    font-size: 0.9rem;
+    color: #666;
 }
 
 .apd-back-link {
@@ -256,17 +326,27 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 .apd-product-detail-wrapper {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 60px;
+    gap: 50px;
     background: white;
     padding: 40px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
 }
 
 @media (max-width: 968px) {
     .apd-product-detail-wrapper {
         grid-template-columns: 1fr;
-        gap: 40px;
+        gap: 30px;
+        padding: 20px;
+    }
+    
+    .apd-quantity-section {
+        grid-template-columns: 1fr;
+    }
+    
+    .apd-variant-pricing {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
 
@@ -345,32 +425,29 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     font-size: 2rem;
     font-weight: 700;
     color: var(--color-foreground);
-    margin: 0;
-    line-height: 1.3;
+    margin: 0 0 15px 0;
+    line-height: 1.2;
 }
 
 .apd-product-pricing {
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-bottom: 20px;
 }
 
-.apd-sale-price {
-    font-size: 2rem;
-    font-weight: 900;
-    color: var(--color-destructive);
-}
-
+.apd-sale-price,
 .apd-regular-price {
-    font-size: 2rem;
-    font-weight: 900;
+    font-size: 1.5rem;
+    font-weight: 700;
     color: var(--color-foreground);
 }
 
 .apd-regular-price.apd-crossed {
     text-decoration: line-through;
-    color: var(--color-secondary);
-    font-size: 1.5rem;
+    color: #999;
+    font-size: 1rem;
+    font-weight: 400;
 }
 
 .apd-product-description {
@@ -379,10 +456,20 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     font-size: 1rem;
 }
 
+.apd-product-features {
+    margin-top: 30px;
+    background: #f4f6f8;
+    padding: 20px;
+    border-radius: 8px;
+}
+
 .apd-product-features h3 {
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: 700;
-    margin: 0 0 12px 0;
+    margin: 0 0 15px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #444;
 }
 
 .apd-feature-list {
@@ -391,13 +478,23 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .apd-feature-list li {
     color: #555;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     padding-left: 0;
+    display: flex;
+    align-items: center;
+}
+
+.apd-feature-list li::before {
+    content: '✓';
+    color: var(--color-success);
+    font-weight: bold;
+    margin-right: 10px;
+    font-size: 1.1rem;
 }
 
 .apd-product-material {
@@ -409,47 +506,49 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 
 /* Quantity Section */
 .apd-quantity-section {
-    display: flex;
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 15px;
     align-items: center;
-    gap: 16px;
+    margin-bottom: 15px;
 }
 
 .apd-quantity-section label {
     font-weight: 600;
     color: var(--color-foreground);
+    font-size: 0.9rem;
 }
 
 .apd-quantity-controls {
     display: flex;
     align-items: center;
     gap: 0;
-    border: 2px solid var(--color-border);
-    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
     overflow: hidden;
+    height: 50px;
 }
 
 .apd-qty-btn {
-    width: 40px;
-    height: 40px;
+    width: 45px;
+    height: 50px;
     border: none;
-    background: white;
+    background: #f8f8f8;
     color: var(--color-foreground);
-    font-size: 1.25rem;
+    font-size: 1.3rem;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .apd-qty-btn:hover {
-    background: var(--color-background);
+    background: #eee;
 }
 
 .apd-quantity-input {
-    width: 60px;
-    height: 40px;
+    flex: 1;
+    height: 50px;
     border: none;
-    border-left: 1px solid var(--color-border);
-    border-right: 1px solid var(--color-border);
     text-align: center;
     font-size: 1rem;
     font-weight: 600;
@@ -461,17 +560,21 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 
 /* Action Buttons */
 .apd-product-actions {
-    display: flex;
+    display: flex !important;
     flex-direction: column;
     gap: 12px;
-    margin-top: 10px;
+    margin-top: 20px;
+    width: 100%;
+    position: relative;
+    z-index: 10;
+    visibility: visible !important;
 }
 
 /* Base button styles */
 .apd-detail-add-cart,
 .apd-detail-checkout,
 .apd-detail-customize {
-    display: inline-flex;
+    display: inline-flex !important;
     align-items: center;
     justify-content: center;
     gap: 8px;
@@ -484,6 +587,9 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     transition: all 0.2s ease;
     text-decoration: none;
     text-align: center;
+    width: 100%;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .apd-detail-add-cart {
@@ -575,10 +681,210 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 .apd-error-message a:hover {
     text-decoration: underline;
 }
+
+/* Product Variants */
+.apd-product-variants {
+    border-top: 1px solid var(--color-border);
+    padding-top: 25px;
+    margin-top: 25px;
+}
+
+.apd-variant-section {
+    margin-bottom: 25px;
+}
+
+.apd-variant-section h4 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Material Buttons (Text-based with rounded style) */
+.apd-material-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.apd-material-btn {
+    min-width: 80px;
+    padding: 10px 20px;
+    border: 2px solid #ddd;
+    border-radius: 25px;
+    background: white;
+    color: #333;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: capitalize;
+}
+
+.apd-material-btn:hover {
+    border-color: #999;
+    background: #f8f8f8;
+    transform: translateY(-2px);
+}
+
+.apd-material-btn.selected {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 115, 170, 0.3);
+}
+
+/* Size Dropdown */
+.apd-size-dropdown {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid var(--color-border);
+    border-radius: 6px;
+    font-size: 1rem;
+    background: white;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.apd-size-dropdown:focus {
+    outline: none;
+    border-color: var(--color-primary);
+}
+
+.apd-size-dropdown:hover {
+    border-color: var(--color-secondary);
+}
+
+/* Variant Pricing */
+.apd-variant-pricing {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    margin: 25px 0;
+    padding: 20px;
+    background: #f4f6f8;
+    border-radius: 8px;
+}
+
+.apd-variant-price-wrapper {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.apd-variant-price-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #666;
+}
+
+.apd-variant-price {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-foreground);
+    line-height: 1;
+}
+
+.apd-variant-price.has-sale #apd-price-display {
+    color: var(--color-destructive);
+}
+
+.apd-variant-regular-price {
+    font-size: 1.5rem;
+    text-decoration: line-through;
+    color: var(--color-secondary);
+    margin-left: 10px;
+}
+
+.apd-stock-status {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.apd-stock-status.in-stock {
+    background: #d4edda;
+    color: #155724;
+}
+
+.apd-stock-status.out-of-stock {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* Disabled Start Customizing Button */
+#apd-start-customizing.disabled,
+#apd-start-customizing:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #999;
+}
+
+#apd-start-customizing.disabled:hover,
+#apd-start-customizing:disabled:hover {
+    background: #999;
+    transform: none;
+}
+
 </style>
 
 <script>
 jQuery(document).ready(function($) {
+    // Store base price and selected variants
+    const basePrice = <?php echo floatval($display_price); ?>;
+    let selectedMaterial = null;
+    let selectedSize = null;
+    let materialPrice = 0;
+    let sizePrice = 0;
+
+    // Initialize with defaults
+    const $firstMaterial = $('.apd-material-swatch.active');
+    if ($firstMaterial.length) {
+        selectedMaterial = $firstMaterial.data('material');
+        materialPrice = parseFloat($firstMaterial.data('price')) || 0;
+    }
+
+    const $sizeDropdown = $('#apd-size-selector');
+    if ($sizeDropdown.length) {
+        const $firstOption = $sizeDropdown.find('option:first');
+        selectedSize = $firstOption.val();
+        sizePrice = parseFloat($firstOption.data('price')) || 0;
+    }
+
+    // Update displayed price
+    function updatePrice() {
+        const totalPrice = basePrice + materialPrice + sizePrice;
+        $('.apd-sale-price, .apd-regular-price').text('$' + totalPrice.toFixed(2));
+    }
+
+    // Material swatch selection
+    $('.apd-material-swatch').on('click', function() {
+        $('.apd-material-swatch').removeClass('active');
+        $(this).addClass('active');
+        
+        selectedMaterial = $(this).data('material');
+        materialPrice = parseFloat($(this).data('price')) || 0;
+        
+        updatePrice();
+    });
+
+    // Size selection
+    $sizeDropdown.on('change', function() {
+        const $selected = $(this).find('option:selected');
+        selectedSize = $selected.val();
+        sizePrice = parseFloat($selected.data('price')) || 0;
+        
+        updatePrice();
+    });
+
+    // Initialize price on page load
+    updatePrice();
+
     // Quantity controls
     $('.apd-qty-minus').on('click', function() {
         var $input = $('#product-quantity');
@@ -596,20 +902,102 @@ jQuery(document).ready(function($) {
         }
     });
 
+    // Helper function to get variant data
+    function getVariantData() {
+        const variantData = {};
+        if (selectedMaterial) {
+            variantData.material = selectedMaterial;
+            variantData.material_price = materialPrice;
+        }
+        if (selectedSize) {
+            variantData.size = selectedSize;
+            variantData.size_price = sizePrice;
+        }
+        return variantData;
+    }
+
     // Add to Cart button
     $('.apd-detail-add-cart').on('click', function() {
         var $btn = $(this);
         var productId = $btn.data('product-id');
         var productName = $btn.data('product-name');
-        var productPrice = $btn.data('price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
+        
+        // Determine if this is a variant product
+        var isVariantProduct = typeof apdCombinations !== 'undefined' && apdCombinations && apdCombinations.length > 0;
+        var finalPrice = basePrice;
+        var variantData = {};
+        
+        if (isVariantProduct) {
+            // For variant products, get the selected combination
+            var selectedMaterialId = $('.apd-material-btn.selected').data('material-id');
+            var selectedMaterialName = $('.apd-material-btn.selected').data('material-name');
+            var selectedSizeVal = $('#apd-size-select').val();
+            
+            // Check which options are available
+            var hasMaterialOptions = $('.apd-material-btn').length > 0;
+            var hasSizeOptions = $('#apd-size-select').length > 0;
+            
+            // Set to empty string if no options available
+            if (!hasMaterialOptions) {
+                selectedMaterialId = '';
+                selectedMaterialName = '';
+            }
+            if (!hasSizeOptions) {
+                selectedSizeVal = '';
+            }
+            
+            // Fallback to material mapping if data attribute is not available
+            if (selectedMaterialName && typeof apdMaterialNames !== 'undefined' && apdMaterialNames[selectedMaterialId]) {
+                selectedMaterialName = apdMaterialNames[selectedMaterialId];
+            }
+            
+            // Validate: must have selection for each available dimension
+            if ((hasMaterialOptions && (selectedMaterialId === undefined || selectedMaterialId === null)) ||
+                (hasSizeOptions && !selectedSizeVal)) {
+                var missingFields = [];
+                if (hasMaterialOptions && !selectedMaterialId) missingFields.push('material');
+                if (hasSizeOptions && !selectedSizeVal) missingFields.push('size');
+                alert('Please select ' + missingFields.join(' and '));
+                return;
+            }
+            
+            // Find the matching combination - handle empty strings
+            var combo = apdCombinations.find(function(c) {
+                return String(c.size || '') === String(selectedSizeVal || '') && 
+                       String(c.material || '') === String(selectedMaterialId || '');
+            });
+            
+            if (!combo) {
+                alert('Invalid variant selection');
+                return;
+            }
+            
+            // Use variant price
+            finalPrice = combo.sale_price && parseFloat(combo.sale_price) > 0 
+                ? parseFloat(combo.sale_price) 
+                : parseFloat(combo.price);
+            
+            // Build variant data with material name
+            variantData = {
+                size: combo.size,
+                material: selectedMaterialName || 'Material ' + combo.material,
+                material_id: combo.material,
+                sku: combo.sku,
+                price: finalPrice
+            };
+        } else {
+            // For non-variant products, use old logic
+            finalPrice = basePrice + materialPrice + sizePrice;
+            variantData = getVariantData();
+        }
 
         $btn.prop('disabled', true).text('Adding...');
 
         // Get product image for preview
         var productImage = $('.apd-product-image').attr('src') || '';
 
-        // Add to cart with product image as preview
+        // Add to cart with variant data
         $.ajax({
             url: apd_ajax.ajax_url,
             type: 'POST',
@@ -620,8 +1008,9 @@ jQuery(document).ready(function($) {
                 quantity: quantity,
                 customization_data: {
                     product_name: productName,
-                    product_price: productPrice,
-                    preview_image_url: productImage
+                    product_price: finalPrice,
+                    preview_image_url: productImage,
+                    variants: variantData
                 }
             },
             success: function(response) {
@@ -674,8 +1063,76 @@ jQuery(document).ready(function($) {
         var $btn = $(this);
         var productId = $btn.data('product-id');
         var productName = $btn.data('product-name');
-        var productPrice = $btn.data('price');
         var quantity = parseInt($('#product-quantity').val()) || 1;
+        
+        // Determine if this is a variant product
+        var isVariantProduct = typeof apdCombinations !== 'undefined' && apdCombinations && apdCombinations.length > 0;
+        var finalPrice = basePrice;
+        var variantData = {};
+        
+        if (isVariantProduct) {
+            // For variant products, get the selected combination
+            var selectedMaterialId = $('.apd-material-btn.selected').data('material-id');
+            var selectedMaterialName = $('.apd-material-btn.selected').data('material-name');
+            var selectedSizeVal = $('#apd-size-select').val();
+            
+            // Check which options are available
+            var hasMaterialOptions = $('.apd-material-btn').length > 0;
+            var hasSizeOptions = $('#apd-size-select').length > 0;
+            
+            // Set to empty string if no options available
+            if (!hasMaterialOptions) {
+                selectedMaterialId = '';
+                selectedMaterialName = '';
+            }
+            if (!hasSizeOptions) {
+                selectedSizeVal = '';
+            }
+            
+            // Fallback to material mapping if data attribute is not available
+            if (selectedMaterialName && typeof apdMaterialNames !== 'undefined' && apdMaterialNames[selectedMaterialId]) {
+                selectedMaterialName = apdMaterialNames[selectedMaterialId];
+            }
+            
+            // Validate: must have selection for each available dimension
+            if ((hasMaterialOptions && (selectedMaterialId === undefined || selectedMaterialId === null)) ||
+                (hasSizeOptions && !selectedSizeVal)) {
+                var missingFields = [];
+                if (hasMaterialOptions && !selectedMaterialId) missingFields.push('material');
+                if (hasSizeOptions && !selectedSizeVal) missingFields.push('size');
+                alert('Please select ' + missingFields.join(' and '));
+                return;
+            }
+            
+            // Find the matching combination - handle empty strings
+            var combo = apdCombinations.find(function(c) {
+                return String(c.size || '') === String(selectedSizeVal || '') && 
+                       String(c.material || '') === String(selectedMaterialId || '');
+            });
+            
+            if (!combo) {
+                alert('Invalid variant selection');
+                return;
+            }
+            
+            // Use variant price
+            finalPrice = combo.sale_price && parseFloat(combo.sale_price) > 0 
+                ? parseFloat(combo.sale_price) 
+                : parseFloat(combo.price);
+            
+            // Build variant data with material name
+            variantData = {
+                size: combo.size,
+                material: selectedMaterialName || 'Material ' + combo.material,
+                material_id: combo.material,
+                sku: combo.sku,
+                price: finalPrice
+            };
+        } else {
+            // For non-variant products, use old logic
+            finalPrice = basePrice + materialPrice + sizePrice;
+            variantData = getVariantData();
+        }
 
         // Get product image for preview
         var productImage = $('.apd-product-image').attr('src') || '';
@@ -691,8 +1148,9 @@ jQuery(document).ready(function($) {
                 quantity: quantity,
                 customization_data: {
                     product_name: productName,
-                    product_price: productPrice,
-                    preview_image_url: productImage
+                    product_price: finalPrice,
+                    preview_image_url: productImage,
+                    variants: variantData
                 }
             },
             success: function(response) {
@@ -707,6 +1165,23 @@ jQuery(document).ready(function($) {
             }
         });
     });
+
+    // Update Customize button to include variant data in URL
+    <?php if ($is_customizable == '1'): ?>
+    $('.apd-detail-customize').on('click', function(e) {
+        e.preventDefault();
+        const baseUrl = $(this).attr('href');
+        const variantData = getVariantData();
+        
+        let url = baseUrl;
+        if (Object.keys(variantData).length > 0) {
+            const params = new URLSearchParams(variantData);
+            url += (baseUrl.includes('?') ? '&' : '?') + params.toString();
+        }
+        
+        window.location.href = url;
+    });
+    <?php endif; ?>
 });
 </script>
 

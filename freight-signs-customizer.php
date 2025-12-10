@@ -105,6 +105,11 @@ class AdvancedProductDesigner
         add_action('wp_ajax_nopriv_apd_remove_cart_item', array($this, 'ajax_remove_cart_item'));
         add_action('wp_ajax_apd_clear_cart', array($this, 'ajax_clear_cart'));
         add_action('wp_ajax_nopriv_apd_clear_cart', array($this, 'ajax_clear_cart'));
+        
+        // Variant AJAX handlers
+        add_action('wp_ajax_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
+        add_action('wp_ajax_nopriv_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
+        
         add_action('rest_api_init', array($this, 'register_rest_routes'));
         add_shortcode('apd_customizer', array($this, 'customizer_shortcode'));
         add_shortcode('apd_product_list', array($this, 'product_list_shortcode'));
@@ -475,6 +480,15 @@ class AdvancedProductDesigner
             'side',
             'default'
         );
+
+        add_meta_box(
+            'apd_product_variants',
+            'Product Variants (Material & Size)',
+            array($this, 'product_variants_meta_box'),
+            'apd_product',
+            'normal',
+            'default'
+        );
     }
 
     public function product_details_meta_box($post)
@@ -508,7 +522,7 @@ class AdvancedProductDesigner
             <tr>
                 <th><label for="fsc_template">Template</label></th>
                 <td>
-                    <select id="fsc_template" name="fsc_template" required>
+                    <select id="fsc_template" name="fsc_template">
                         <option value="">Select Template</option>
                         <?php foreach ($templates as $template): ?>
                             <option value="<?php echo $template->ID; ?>" <?php selected($template_id, $template->ID); ?>>
@@ -516,7 +530,7 @@ class AdvancedProductDesigner
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <p class="description">Choose a template for this product. <a href="<?php echo admin_url('admin.php?page=apd-templates'); ?>" target="_blank">Manage Templates</a></p>
+                    <p class="description">Choose a template for this product (optional if customization is disabled). <a href="<?php echo admin_url('admin.php?page=apd-templates'); ?>" target="_blank">Manage Templates</a></p>
                 </td>
             </tr>
             <tr>
@@ -687,6 +701,269 @@ class AdvancedProductDesigner
         <?php
     }
 
+    public function product_variants_meta_box($post)
+    {
+        $variants = get_post_meta($post->ID, '_apd_variants', true);
+        
+        // Initialize default structure
+        if (!is_array($variants)) {
+            $variants = array(
+                'enabled' => false,
+                'size_options' => array(
+                    array('value' => '12x6', 'label' => '12" × 6"'),
+                    array('value' => '18x12', 'label' => '18" × 12"')
+                ),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+        }
+        
+        // Get all available materials
+        $all_materials = get_option('apd_materials', array());
+        
+        ?>
+        <div class="apd-variants-wrapper">
+            <p>
+                <label>
+                    <input type="checkbox" id="apd_variants_enabled" name="apd_variants_enabled" value="1" <?php checked($variants['enabled'], true); ?>>
+                    <strong>Enable SKU-based variants for this product</strong>
+                </label>
+            </p>
+            <p class="description">When enabled, customers select material and size on the product detail page, then enter customizer with those selections.</p>
+            
+            <div id="apd-variants-content" style="<?php echo !$variants['enabled'] ? 'display:none;' : ''; ?>">
+                <hr>
+                
+                <!-- Size Options -->
+                <h3>Size Options</h3>
+                <p class="description">Define available sizes (e.g., 12×6, 18×12). Value is used in SKU, Label is shown to customer.</p>
+                
+                <table class="widefat" id="apd-size-options-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 200px;">Value (for SKU)</th>
+                            <th>Label (display name)</th>
+                            <th style="width: 80px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apd-size-options-body">
+                        <?php foreach ($variants['size_options'] as $idx => $size): ?>
+                        <tr>
+                            <td><input type="text" name="apd_size_value[]" value="<?php echo esc_attr($size['value']); ?>" class="regular-text" placeholder="12x6"></td>
+                            <td><input type="text" name="apd_size_label[]" value="<?php echo esc_attr($size['label']); ?>" class="regular-text" placeholder='12" × 6"'></td>
+                            <td><button type="button" class="button apd-remove-size-btn">Remove</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <button type="button" class="button apd-add-size-btn" style="margin-top: 10px;">Add Size</button>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Material Options -->
+                <h3>Material Options</h3>
+                <p class="description">Define available materials (e.g., Sticker, Steel, Metal). Value is used in SKU, Label is shown to customer.</p>
+                
+                <table class="widefat" id="apd-material-options-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 200px;">Value (for SKU)</th>
+                            <th>Label (display name)</th>
+                            <th style="width: 80px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apd-material-options-body">
+                        <?php foreach ($variants['material_options'] as $idx => $material): ?>
+                        <tr>
+                            <td><input type="text" name="apd_material_value[]" value="<?php echo esc_attr($material['value']); ?>" class="regular-text" placeholder="sticker"></td>
+                            <td><input type="text" name="apd_material_label[]" value="<?php echo esc_attr($material['label']); ?>" class="regular-text" placeholder="Sticker"></td>
+                            <td><button type="button" class="button apd-remove-material-btn">Remove</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <button type="button" class="button apd-add-material-btn" style="margin-top: 10px;">Add Material</button>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Generate Combinations -->
+                <button type="button" class="button button-primary" id="apd-generate-combinations">Generate Combinations Table</button>
+                <p class="description">Click to automatically create all size × material combinations below.</p>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Combinations Table -->
+                <h3>Variant Combinations</h3>
+                <p class="description">Each combination gets unique SKU, price, sale price, and stock status.</p>
+                
+                <div style="overflow-x: auto;">
+                    <table class="widefat" id="apd-combinations-table">
+                        <thead>
+                            <tr>
+                                <th>Size</th>
+                                <th>Material</th>
+                                <th style="width: 180px;">SKU</th>
+                                <th style="width: 100px;">Price ($)</th>
+                                <th style="width: 100px;">Sale Price ($)</th>
+                                <th style="width: 120px;">Stock Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apd-combinations-body">
+                            <?php foreach ($variants['combinations'] as $combo): ?>
+                            <tr>
+                                <td><?php echo esc_html($combo['size']); ?><input type="hidden" name="apd_comb_size[]" value="<?php echo esc_attr($combo['size']); ?>"></td>
+                                <td><?php echo esc_html($combo['material']); ?><input type="hidden" name="apd_comb_material[]" value="<?php echo esc_attr($combo['material']); ?>"></td>
+                                <td><input type="text" name="apd_comb_sku[]" value="<?php echo esc_attr($combo['sku']); ?>" class="regular-text" placeholder="VAR-12X6-GOLD"></td>
+                                <td><input type="number" name="apd_comb_price[]" value="<?php echo esc_attr($combo['price']); ?>" step="0.01" min="0" class="small-text"></td>
+                                <td><input type="number" name="apd_comb_sale_price[]" value="<?php echo esc_attr($combo['sale_price']); ?>" step="0.01" min="0" class="small-text"></td>
+                                <td>
+                                    <select name="apd_comb_stock[]">
+                                        <option value="instock" <?php selected($combo['stock'], 'instock'); ?>>In Stock</option>
+                                        <option value="outofstock" <?php selected($combo['stock'], 'outofstock'); ?>>Out of Stock</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            // Toggle variants content
+            $('#apd_variants_enabled').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#apd-variants-content').slideDown();
+                } else {
+                    $('#apd-variants-content').slideUp();
+                }
+            });
+            
+            // Add size option
+            $('.apd-add-size-btn').on('click', function() {
+                var newRow = '<tr>' +
+                    '<td><input type="text" name="apd_size_value[]" value="" class="regular-text" placeholder="24x12"></td>' +
+                    '<td><input type="text" name="apd_size_label[]" value="" class="regular-text" placeholder="24\\" × 12\\""></td>' +
+                    '<td><button type="button" class="button apd-remove-size-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-size-options-body').append(newRow);
+            });
+            
+            // Remove size option
+            $(document).on('click', '.apd-remove-size-btn', function() {
+                $(this).closest('tr').remove();
+            });
+            
+            // Add material option
+            $('.apd-add-material-btn').on('click', function() {
+                var newRow = '<tr>' +
+                    '<td><input type="text" name="apd_material_value[]" value="" class="regular-text" placeholder="steel"></td>' +
+                    '<td><input type="text" name="apd_material_label[]" value="" class="regular-text" placeholder="Steel"></td>' +
+                    '<td><button type="button" class="button apd-remove-material-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-material-options-body').append(newRow);
+            });
+            
+            // Remove material option
+            $(document).on('click', '.apd-remove-material-btn', function() {
+                $(this).closest('tr').remove();
+            });
+            
+            // Generate combinations
+            $('#apd-generate-combinations').on('click', function() {
+                var sizes = [];
+                $('input[name="apd_size_value[]"]').each(function(i) {
+                    var value = $(this).val();
+                    var label = $('input[name="apd_size_label[]"]').eq(i).val();
+                    if (value && label) {
+                        sizes.push({value: value, label: label});
+                    }
+                });
+                
+                var materials = [];
+                $('input[name="apd_material_value[]"]').each(function(i) {
+                    var value = $(this).val();
+                    var label = $('input[name="apd_material_label[]"]').eq(i).val();
+                    if (value && label) {
+                        materials.push({value: value, label: label});
+                    }
+                });
+                
+                // Allow either sizes only, materials only, or both
+                if (sizes.length === 0 && materials.length === 0) {
+                    alert('Please add at least one size or at least one material.');
+                    return;
+                }
+                
+                // Clear existing table
+                $('#apd-combinations-body').empty();
+                
+                // Generate combinations based on what's available
+                if (sizes.length > 0 && materials.length > 0) {
+                    // Both sizes and materials - create full combinations
+                    sizes.forEach(function(size) {
+                        materials.forEach(function(material) {
+                            var sku = 'VAR-' + size.value.toUpperCase() + '-' + material.value.toUpperCase().replace(/\s+/g, '-');
+                            var row = '<tr>' +
+                                '<td>' + size.label + '<input type="hidden" name="apd_comb_size[]" value="' + size.value + '"></td>' +
+                                '<td>' + material.label + '<input type="hidden" name="apd_comb_material[]" value="' + material.value + '"></td>' +
+                                '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
+                                '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
+                                '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
+                                '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
+                                '</tr>';
+                            $('#apd-combinations-body').append(row);
+                        });
+                    });
+                } else if (sizes.length > 0) {
+                    // Only sizes - create variants with empty material
+                    sizes.forEach(function(size) {
+                        var sku = 'VAR-' + size.value.toUpperCase();
+                        var row = '<tr>' +
+                            '<td>' + size.label + '<input type="hidden" name="apd_comb_size[]" value="' + size.value + '"></td>' +
+                            '<td>N/A<input type="hidden" name="apd_comb_material[]" value=""></td>' +
+                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
+                            '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
+                            '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
+                            '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
+                            '</tr>';
+                        $('#apd-combinations-body').append(row);
+                    });
+                } else {
+                    // Only materials - create variants with empty size
+                    materials.forEach(function(material) {
+                        var sku = 'VAR-' + material.value.toUpperCase().replace(/\s+/g, '-');
+                        var row = '<tr>' +
+                            '<td>N/A<input type="hidden" name="apd_comb_size[]" value=""></td>' +
+                            '<td>' + material.label + '<input type="hidden" name="apd_comb_material[]" value="' + material.value + '"></td>' +
+                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
+                            '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
+                            '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
+                            '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
+                            '</tr>';
+                        $('#apd-combinations-body').append(row);
+                    });
+                }
+                
+                alert('Combinations generated! Please fill in prices for each variant.');
+            });
+        });
+        </script>
+        
+        <style>
+        .apd-variants-wrapper table.widefat {
+            margin-top: 10px;
+        }
+        .apd-variants-wrapper table.widefat td input[type="text"],
+        .apd-variants-wrapper table.widefat td input[type="number"] {
+            width: 100%;
+        }
+        </style>
+        <?php
+    }
+
     public function save_product_meta($post_id)
     {
         // Check nonce
@@ -762,6 +1039,79 @@ class AdvancedProductDesigner
                 delete_post_meta($post_id, '_fsc_logo_file');
             }
         }
+
+        // Save product variants
+        if (isset($_POST['apd_variants_enabled'])) {
+            // Build variants data structure
+            $variants_data = array(
+                'enabled' => true,
+                'size_options' => array(),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+            
+            // Save size options
+            if (isset($_POST['apd_size_value']) && isset($_POST['apd_size_label'])) {
+                $size_values = $_POST['apd_size_value'];
+                $size_labels = $_POST['apd_size_label'];
+                
+                foreach ($size_values as $idx => $value) {
+                    if (!empty($value) && !empty($size_labels[$idx])) {
+                        $variants_data['size_options'][] = array(
+                            'value' => sanitize_text_field($value),
+                            'label' => sanitize_text_field($size_labels[$idx])
+                        );
+                    }
+                }
+            }
+            
+            // Save material options
+            if (isset($_POST['apd_material_value']) && isset($_POST['apd_material_label'])) {
+                $material_values = $_POST['apd_material_value'];
+                $material_labels = $_POST['apd_material_label'];
+                
+                foreach ($material_values as $idx => $value) {
+                    if (!empty($value) && !empty($material_labels[$idx])) {
+                        $variants_data['material_options'][] = array(
+                            'value' => sanitize_text_field($value),
+                            'label' => sanitize_text_field($material_labels[$idx])
+                        );
+                    }
+                }
+            }
+            
+            // Save combinations
+            if (isset($_POST['apd_comb_size']) && is_array($_POST['apd_comb_size'])) {
+                $comb_sizes = $_POST['apd_comb_size'];
+                $comb_materials = isset($_POST['apd_comb_material']) ? $_POST['apd_comb_material'] : array();
+                $comb_skus = isset($_POST['apd_comb_sku']) ? $_POST['apd_comb_sku'] : array();
+                $comb_prices = isset($_POST['apd_comb_price']) ? $_POST['apd_comb_price'] : array();
+                $comb_sale_prices = isset($_POST['apd_comb_sale_price']) ? $_POST['apd_comb_sale_price'] : array();
+                $comb_stocks = isset($_POST['apd_comb_stock']) ? $_POST['apd_comb_stock'] : array();
+                
+                foreach ($comb_sizes as $idx => $size) {
+                    $variants_data['combinations'][] = array(
+                        'size' => sanitize_text_field($size),
+                        'material' => sanitize_text_field($comb_materials[$idx]),
+                        'sku' => sanitize_text_field($comb_skus[$idx]),
+                        'price' => sanitize_text_field($comb_prices[$idx]),
+                        'sale_price' => sanitize_text_field($comb_sale_prices[$idx]),
+                        'stock' => sanitize_text_field($comb_stocks[$idx])
+                    );
+                }
+            }
+            
+            update_post_meta($post_id, '_apd_variants', $variants_data);
+        } else {
+            // Variants disabled
+            $variants_data = array(
+                'enabled' => false,
+                'size_options' => array(),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+            update_post_meta($post_id, '_apd_variants', $variants_data);
+        }
     }
 
     public function enqueue_scripts()
@@ -770,12 +1120,13 @@ class AdvancedProductDesigner
         if (get_query_var('customizer')) {
             wp_enqueue_style('apd-styles', APD_PLUGIN_URL . 'assets/css/customizer.css', array(), APD_VERSION);
             wp_enqueue_script('html2canvas', 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', array('jquery'), '1.4.1', true);
-            wp_enqueue_script('apd-script', APD_PLUGIN_URL . 'assets/js/customizer.js', array('jquery', 'html2canvas'), APD_VERSION, true);
+            // Use consistent handle 'apd-customizer' instead of 'apd-script'
+            wp_enqueue_script('apd-customizer', APD_PLUGIN_URL . 'assets/js/customizer.js', array('jquery', 'html2canvas'), APD_VERSION, true);
 
             // Get product ID for customizer
             $product_id = get_query_var('customizer');
 
-            wp_localize_script('apd-script', 'apd_ajax', array(
+            wp_localize_script('apd-customizer', 'apd_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
                 // Nonces used by various endpoints
                 'nonce' => wp_create_nonce('apd_ajax_nonce'),
@@ -788,7 +1139,7 @@ class AdvancedProductDesigner
             // Provide materials directly to the page to avoid extra AJAX calls
             $materials_map = $this->get_materials();
             // Convert to format expected by frontend: name => {url, price}
-            wp_localize_script('apd-script', 'fscDefaults', array(
+            wp_localize_script('apd-customizer', 'fscDefaults', array(
                 'materials' => $materials_map
             ));
 
@@ -879,9 +1230,8 @@ class AdvancedProductDesigner
         wp_enqueue_script('apd-product-customizer', APD_PLUGIN_URL . 'assets/js/product-customizer.js', array('jquery'), APD_VERSION, true);
         wp_enqueue_style('apd-product-customizer', APD_PLUGIN_URL . 'assets/css/product-customizer.css', array(), APD_VERSION);
 
-        // Enqueue main customizer script for shortcode usage
-        wp_enqueue_script('apd-customizer', APD_PLUGIN_URL . 'assets/js/customizer.js', array('jquery'), APD_VERSION, true);
-        wp_enqueue_style('apd-customizer', APD_PLUGIN_URL . 'assets/css/customizer.css', array(), APD_VERSION);
+        // NOTE: customizer.js is loaded by enqueue_scripts() on customizer pages only
+        // Do NOT load it here to avoid duplicate loading and conflicts
 
         // Enqueue cart scripts and styles on cart page
         if (is_page() && (has_shortcode(get_post()->post_content, 'apd_cart') || is_page(get_option('apd_cart')))) {
@@ -894,6 +1244,14 @@ class AdvancedProductDesigner
             wp_enqueue_script('apd-orders', APD_PLUGIN_URL . 'assets/js/orders.js', array('jquery'), APD_VERSION, true);
             wp_enqueue_style('apd-orders', APD_PLUGIN_URL . 'assets/css/orders.css', array(), APD_VERSION);
         }
+
+        // Enqueue product variants script on product detail pages
+        wp_enqueue_script('apd-product-variants', APD_PLUGIN_URL . 'assets/js/product-variants.js', array('jquery'), APD_VERSION, true);
+        wp_localize_script('apd-product-variants', 'apdVariantsConfig', array(
+            'homeUrl' => home_url(),
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('apd_ajax_nonce')
+        ));
 
         // Prepare apd_ajax data
         $apd_ajax_data = array(
@@ -1703,6 +2061,13 @@ class AdvancedProductDesigner
         $quantity = intval($_POST['quantity']);
         $customization_data = $_POST['customization_data'] ?? array();
 
+        // Debug: Log what we received
+        error_log('APD Add to Cart: product_id = ' . $product_id);
+        error_log('APD Add to Cart: quantity = ' . $quantity);
+        error_log('APD Add to Cart: customization_data keys = ' . implode(', ', array_keys($customization_data)));
+        error_log('APD Add to Cart: print_color = ' . ($customization_data['print_color'] ?? 'NOT SET'));
+        error_log('APD Add to Cart: vinyl_material = ' . ($customization_data['vinyl_material'] ?? 'NOT SET'));
+
         // Get product data
         $product = get_post($product_id);
         if (!$product || $product->post_type !== 'apd_product') {
@@ -1763,7 +2128,10 @@ class AdvancedProductDesigner
             'quantity' => $quantity,
             'total' => $price * $quantity,
             'customization_data' => $customization_data,
-            'added_at' => current_time('Y-m-d H:i:s')
+            'added_at' => current_time('Y-m-d H:i:s'),
+            // Extract print_color and vinyl_material to top level for easy access
+            'print_color' => $customization_data['print_color'] ?? '',
+            'vinyl_material' => $customization_data['vinyl_material'] ?? ''
         );
 
         // Get current cart
@@ -2260,6 +2628,14 @@ class AdvancedProductDesigner
             }
         }
 
+        // Debug: Log cart items
+        error_log('APD Place Order - Cart Items Count: ' . count($cart_items));
+        foreach ($cart_items as $idx => $ci) {
+            error_log("  Cart Item #$idx - Keys: " . implode(', ', array_keys($ci)));
+            error_log("    print_color: " . ($ci['print_color'] ?? 'NOT SET'));
+            error_log("    vinyl_material: " . ($ci['vinyl_material'] ?? 'NOT SET'));
+        }
+
         // Compute order totals from cart (if present)
         $order_total = 0.0;
         if (!empty($cart_items) && is_array($cart_items)) {
@@ -2286,8 +2662,12 @@ class AdvancedProductDesigner
             }
         }
 
-        // Debug: Log what we received (commented out to prevent output interference)
-        // error_log('APD Place Order - Customization Data: ' . print_r($customization_data, true));
+        // Debug: Log what we received
+        error_log('APD Place Order - Customization Data: ' . print_r($customization_data, true));
+        error_log('APD Place Order - $_POST keys: ' . implode(', ', array_keys($_POST)));
+        if (isset($_POST['customization_data'])) {
+            error_log('APD Place Order - Posted customization_data (raw): ' . $_POST['customization_data']);
+        }
 
         // Convert base64 image data to actual file URLs before saving
         $image_fields = array('image_url', 'preview_image_url', 'preview_image_png', 'customization_image_url');
@@ -2378,6 +2758,26 @@ class AdvancedProductDesigner
         $single_product_price = isset($first_item['price']) ? floatval($first_item['price']) : floatval($customization_data['product_price'] ?? 29.99);
         $single_quantity = isset($first_item['quantity']) ? intval($first_item['quantity']) : intval($customization_data['quantity'] ?? 1);
 
+        // Debug: Log what we have for material and color
+        error_log('APD Place Order - Debug Info:');
+        error_log('  customization_data keys: ' . implode(', ', array_keys($customization_data)));
+        error_log('  first_item keys: ' . (!empty($first_item) ? implode(', ', array_keys($first_item)) : 'EMPTY'));
+        error_log('  print_color from customization_data: ' . ($customization_data['print_color'] ?? 'EMPTY'));
+        error_log('  vinyl_material from customization_data: ' . ($customization_data['vinyl_material'] ?? 'EMPTY'));
+        error_log('  print_color from first_item: ' . ($first_item['print_color'] ?? 'EMPTY'));
+        error_log('  vinyl_material from first_item: ' . ($first_item['vinyl_material'] ?? 'EMPTY'));
+        
+        // Extract variant data if present (for non-customizable products)
+        $variant_material = '';
+        $variant_size = '';
+        if (!empty($first_item['customization_data']['variants'])) {
+            $variants = $first_item['customization_data']['variants'];
+            $variant_material = $variants['material'] ?? '';
+            $variant_size = $variants['size'] ?? '';
+            error_log('  variant_material: ' . ($variant_material ?: 'EMPTY'));
+            error_log('  variant_size: ' . ($variant_size ?: 'EMPTY'));
+        }
+
         $meta = array(
             // Product Information (summary for legacy admin views)
             'product_id' => $first_item['product_id'] ?? ($customization_data['product_id'] ?? ''),
@@ -2385,9 +2785,9 @@ class AdvancedProductDesigner
             'product_price' => $single_product_price,
             'quantity' => $single_quantity,
             'total_amount' => $cart_total,
-            // Design Specifications (from customization_data when applicable)
+            // Design Specifications (from customization_data OR variants)
             'print_color' => $customization_data['print_color'] ?? ($first_item['print_color'] ?? ''),
-            'vinyl_material' => $customization_data['vinyl_material'] ?? ($first_item['vinyl_material'] ?? ''),
+            'vinyl_material' => $customization_data['vinyl_material'] ?? ($first_item['vinyl_material'] ?? $variant_material),
             'material_texture_url' => $customization_data['material_texture_url'] ?? ($first_item['material_texture_url'] ?? ''),
             // User Input Fields (All template text fields)
             'text_fields' => $customization_data['text_fields'] ?? ($first_item['text_fields'] ?? array()),
@@ -2862,20 +3262,42 @@ class AdvancedProductDesigner
                 }
                 echo '<div style="flex:1;">';
                 echo '<div style="font-weight:600;margin-bottom:6px;">' . esc_html($pname) . '</div>';
-                // specs
+                // specs - check item, customization_data, variants, and order-level meta fields
                 $specs = array();
-                if (!empty($item['vinyl_material']))
-                    $specs[] = 'Material: ' . esc_html($item['vinyl_material']);
-                if (!empty($item['print_color']))
-                    $specs[] = 'Color: ' . esc_html($item['print_color']);
-                if (!empty($cd)) {
-                    if (!empty($cd['material']) && empty($specs['material']))
-                        $specs[] = 'Material: ' . esc_html($cd['material']);
-                    if (!empty($cd['color']) && empty($specs['color']))
-                        $specs[] = 'Color: ' . esc_html($cd['color']);
-                    if (!empty($cd['size']))
-                        $specs[] = 'Size: ' . esc_html($cd['size']);
+                
+                // Check for material in multiple places (customizer OR variants)
+                $material = $item['vinyl_material'] ?? $cd['vinyl_material'] ?? $cd['material'] ?? '';
+                // Check variants array for non-customizable products
+                if (empty($material) && !empty($cd['variants']['material'])) {
+                    $material = $cd['variants']['material'];
                 }
+                if (empty($material) && $idx === 0) {
+                    // For first item, fallback to order-level meta
+                    $material = get_post_meta($order_id, 'vinyl_material', true);
+                }
+                if (!empty($material)) {
+                    $specs[] = 'Material: ' . esc_html($material);
+                }
+                
+                // Check for color in multiple places
+                $color = $item['print_color'] ?? $cd['print_color'] ?? $cd['color'] ?? '';
+                if (empty($color) && $idx === 0) {
+                    // For first item, fallback to order-level meta
+                    $color = get_post_meta($order_id, 'print_color', true);
+                }
+                if (!empty($color)) {
+                    $specs[] = 'Color: ' . esc_html($color);
+                }
+                
+                // Check for size (customization_data OR variants)
+                $size = $cd['size'] ?? '';
+                if (empty($size) && !empty($cd['variants']['size'])) {
+                    $size = $cd['variants']['size'];
+                }
+                if (!empty($size)) {
+                    $specs[] = 'Size: ' . esc_html($size);
+                }
+                
                 if (!empty($specs)) {
                     echo '<div style="color:#666;margin-bottom:6px;">' . implode(' • ', $specs) . '</div>';
                 }
@@ -6666,15 +7088,47 @@ class AdvancedProductDesigner
      */
     public function handle_material_upload()
     {
+        $material_name = sanitize_text_field($_POST['material_name']);
+        $material_price = isset($_POST['material_price']) ? floatval($_POST['material_price']) : 0;
+        if ($material_price < 0) {
+            $material_price = 0;
+        }
+
+        $materials = get_option('apd_materials', array());
+        
+        // Check if using media library selection
+        if (isset($_POST['material_media_id']) && !empty($_POST['material_media_id'])) {
+            $media_id = intval($_POST['material_media_id']);
+            $media_url = wp_get_attachment_url($media_id);
+            
+            if ($media_url) {
+                $materials[] = array(
+                    'name' => $material_name,
+                    'filename' => basename($media_url),
+                    'url' => $media_url,
+                    'type' => 'media',
+                    'date' => current_time('mysql'),
+                    'price' => $material_price,
+                    'media_id' => $media_id
+                );
+                update_option('apd_materials', $materials);
+                
+                add_action('admin_notices', function () {
+                    echo '<div class="notice notice-success"><p>✅ Material added from media library successfully!</p></div>';
+                });
+                return;
+            }
+        }
+        
+        // Fallback to file upload
         if (!isset($_FILES['material_file']) || $_FILES['material_file']['error'] !== UPLOAD_ERR_OK) {
             add_action('admin_notices', function () {
-                echo '<div class="notice notice-error"><p>❌ Failed to upload material file.</p></div>';
+                echo '<div class="notice notice-error"><p>❌ Please select an image from media library or upload a file.</p></div>';
             });
             return;
         }
 
         $file = $_FILES['material_file'];
-        $material_name = sanitize_text_field($_POST['material_name']);
 
         // Validate file type
         $allowed_types = array('image/png', 'image/jpeg', 'image/jpg');
@@ -6699,13 +7153,6 @@ class AdvancedProductDesigner
         if (move_uploaded_file($file['tmp_name'], $file_path)) {
             chmod($file_path, 0644);
 
-            // Save material info to database
-            $material_price = isset($_POST['material_price']) ? floatval($_POST['material_price']) : 0;
-            if ($material_price < 0) {
-                $material_price = 0;
-            }
-
-            $materials = get_option('apd_materials', array());
             $materials[] = array(
                 'name' => $material_name,
                 'filename' => $filename,
@@ -7707,6 +8154,57 @@ class AdvancedProductDesigner
     }
 
     /**
+     * AJAX handler to get product variants
+     */
+    public function ajax_get_product_variants()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_send_json_error(array('message' => 'Security check failed'));
+        }
+
+        $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+        if ($product_id <= 0) {
+            wp_send_json_error(array('message' => 'Invalid product ID'));
+        }
+
+        $variants_enabled = get_post_meta($product_id, '_apd_variants_enabled', true);
+        $variant_materials = get_post_meta($product_id, '_apd_variant_materials', true);
+        $variant_sizes = get_post_meta($product_id, '_apd_variant_sizes', true);
+        
+        // Get all available materials with their data
+        $all_materials = get_option('apd_materials', array());
+        $materials_data = array();
+        
+        if ($variants_enabled == '1' && is_array($variant_materials)) {
+            foreach ($all_materials as $mat) {
+                $mat_name = $mat['name'];
+                $mat_price = 0;
+                
+                // Find the price for this material from variant settings
+                foreach ($variant_materials as $vm) {
+                    if ($vm['name'] === $mat_name) {
+                        $mat_price = $vm['price'];
+                        break;
+                    }
+                }
+                
+                $materials_data[] = array(
+                    'name' => $mat_name,
+                    'url' => $mat['url'],
+                    'price' => $mat_price
+                );
+            }
+        }
+        
+        wp_send_json_success(array(
+            'enabled' => $variants_enabled == '1',
+            'materials' => $materials_data,
+            'sizes' => is_array($variant_sizes) ? $variant_sizes : array()
+        ));
+    }
+
+    /**
      * Get material filename from material name
      */
     private function get_material_filename($material_name)
@@ -8033,6 +8531,31 @@ class AdvancedProductDesigner
                         <tr style="border-bottom: 1px solid #f3f4f6;">
                             <td style="padding: 16px; color: #111827; font-weight: 600;">
                                 <?php echo esc_html($item['product_name'] ?? ''); ?>
+                                <?php 
+                                // Get material from customizer OR variants
+                                $material = $item['vinyl_material'] ?? '';
+                                if (empty($material) && !empty($item['customization_data']['variants']['material'])) {
+                                    $material = $item['customization_data']['variants']['material'];
+                                }
+                                // Get size from variants
+                                $size = $item['customization_data']['variants']['size'] ?? '';
+                                $color = $item['print_color'] ?? '';
+                                ?>
+                                <?php if (!empty($color)): ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 4px;">
+                                        Color: <?php echo esc_html($color); ?>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($material)): ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                        Material: <?php echo esc_html($material); ?>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($size)): ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                        Size: <?php echo esc_html($size); ?>
+                                    </div>
+                                <?php endif; ?>
                             </td>
                             <td style="padding: 16px; text-align: center; color: #6b7280;">
                                 <?php echo esc_html($item['quantity'] ?? 1); ?>
@@ -8261,6 +8784,31 @@ class AdvancedProductDesigner
                             <tr style="border-bottom: 1px solid #f3f4f6;">
                                 <td style="padding: 16px; color: #111827; font-weight: 600;">
                                     <?php echo esc_html($item['product_name'] ?? ''); ?>
+                                    <?php 
+                                    // Get material from customizer OR variants
+                                    $material = $item['vinyl_material'] ?? '';
+                                    if (empty($material) && !empty($item['customization_data']['variants']['material'])) {
+                                        $material = $item['customization_data']['variants']['material'];
+                                    }
+                                    // Get size from variants
+                                    $size = $item['customization_data']['variants']['size'] ?? '';
+                                    $color = $item['print_color'] ?? '';
+                                    ?>
+                                    <?php if (!empty($color)): ?>
+                                        <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 4px;">
+                                            Color: <?php echo esc_html($color); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if (!empty($material)): ?>
+                                        <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                            Material: <?php echo esc_html($material); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if (!empty($size)): ?>
+                                        <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                            Size: <?php echo esc_html($size); ?>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td style="padding: 16px; text-align: center; color: #6b7280;">
                                     <?php echo esc_html($item['quantity'] ?? 1); ?>

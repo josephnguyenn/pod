@@ -33,8 +33,17 @@ if (!defined('ABSPATH')) {
                             <label for="material_file">Material File</label>
                         </th>
                         <td>
-                            <input type="file" id="material_file" name="material_file" accept=".png,.jpg,.jpeg" required>
-                            <p class="description">Upload PNG or JPG image file. Recommended size: 512x512px or larger.</p>
+                            <div style="margin-bottom: 15px;">
+                                <button type="button" id="apd_select_material_media" class="button">
+                                    Select from Media Library
+                                </button>
+                                <span id="apd_selected_media_name" style="margin-left: 10px; color: #666;"></span>
+                            </div>
+                            <div id="apd_selected_media_preview" style="margin-bottom: 10px;"></div>
+                            <input type="hidden" id="apd_material_media_id" name="material_media_id" value="">
+                            <p style="margin: 10px 0;"><strong>OR</strong></p>
+                            <input type="file" id="material_file" name="material_file" accept=".png,.jpg,.jpeg">
+                            <p class="description">Select an image from the media library or upload a new PNG or JPG file. Recommended size: 512x512px or larger.</p>
                         </td>
                     </tr>
                     <tr>
@@ -262,7 +271,59 @@ jQuery(document).ready(function($) {
     let mediaFrame;
     let selectedMedia = [];
     
-    // Media library button
+    // Material media selector
+    $('#apd_select_material_media').on('click', function(e) {
+        e.preventDefault();
+        
+        if (mediaFrame) {
+            mediaFrame.open();
+            return;
+        }
+        
+        mediaFrame = wp.media({
+            title: 'Select Material Image',
+            button: {
+                text: 'Use this image'
+            },
+            multiple: false,
+            library: {
+                type: 'image'
+            }
+        });
+        
+        mediaFrame.on('select', function() {
+            const attachment = mediaFrame.state().get('selection').first().toJSON();
+            
+            // Set hidden field value
+            $('#apd_material_media_id').val(attachment.id);
+            
+            // Show preview
+            const previewHtml = `
+                <div style="position: relative; display: inline-block;">
+                    <img src="${attachment.sizes.thumbnail ? attachment.sizes.thumbnail.url : attachment.url}" 
+                         style="max-width: 150px; max-height: 150px; border: 2px solid #0073aa; border-radius: 4px;">
+                    <button type="button" id="apd_remove_material_media" 
+                            style="position: absolute; top: -8px; right: -8px; background: #dc3232; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 16px; line-height: 1;">×</button>
+                </div>
+            `;
+            $('#apd_selected_media_preview').html(previewHtml);
+            $('#apd_selected_media_name').text(attachment.filename);
+            
+            // Clear file input
+            $('#material_file').val('');
+        });
+        
+        mediaFrame.open();
+    });
+    
+    // Remove selected media
+    $(document).on('click', '#apd_remove_material_media', function() {
+        $('#apd_material_media_id').val('');
+        $('#apd_selected_media_preview').empty();
+        $('#apd_selected_media_name').text('');
+    });
+    
+    // Old media library button (for backward compatibility)
     $('#select-media-btn').on('click', function(e) {
         e.preventDefault();
         

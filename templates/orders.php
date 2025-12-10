@@ -140,12 +140,22 @@ $orders_q = new WP_Query($query_args);
                                     <p class="apd-order-item-specs">
                                         <?php
                                         $specs = array();
+                                        
+                                        // Show variant info first if available (SKU-based variants)
+                                        if (!empty($cd['variant_info'])) {
+                                            if (!empty($cd['variant_info']['size'])) $specs[] = 'Size: ' . esc_html($cd['variant_info']['size']);
+                                            if (!empty($cd['variant_info']['sku'])) $specs[] = 'SKU: ' . esc_html($cd['variant_info']['sku']);
+                                        }
+                                        
+                                        // Show customization material/color
                                         if (!empty($item['vinyl_material'])) $specs[] = 'Material: ' . esc_html($item['vinyl_material']);
                                         if (!empty($item['print_color'])) $specs[] = 'Color: ' . esc_html($item['print_color']);
+                                        
+                                        // Fallback to customization_data fields
                                         if (!empty($cd)) {
                                             if (!empty($cd['material']) && empty($specs['material'])) $specs[] = 'Material: ' . esc_html($cd['material']);
                                             if (!empty($cd['color']) && empty($specs['color'])) $specs[] = 'Color: ' . esc_html($cd['color']);
-                                            if (!empty($cd['size'])) $specs[] = 'Size: ' . esc_html($cd['size']);
+                                            if (!empty($cd['size']) && empty($cd['variant_info'])) $specs[] = 'Size: ' . esc_html($cd['size']);
                                         }
                                         echo implode(' • ', $specs);
                                         ?>

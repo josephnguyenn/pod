@@ -50,7 +50,7 @@ $items_per_page = -1;
             <div class="apd-category-content <?php echo $first_category ? 'active' : ''; ?>" 
                  data-category="<?php echo $category_slug; ?>">
                 
-                <div class="apd-product-grid apd-grid-cols-3" data-category="<?php echo $category_slug; ?>">
+                <div class="apd-product-grid apd-grid-cols-3<?php echo count($products) === 1 ? ' apd-single-product' : ''; ?>" data-category="<?php echo $category_slug; ?>">
                     <?php foreach ($products as $product): ?>
                         <div class="apd-product-card" data-product-id="<?php echo esc_attr($product['id']); ?>">
                             
@@ -83,25 +83,20 @@ $items_per_page = -1;
                                     </h3>
                                 <?php endif; ?>
                                 
-                                <div class="apd-product-pricing-row">
-                                    <?php if ($show_price): ?>
-                                        <div class="apd-product-pricing">
-                                            <?php if (!empty($product['sale_price']) && $show_sale): ?>
-                                                <span class="apd-sale-price">$<?php echo esc_html($product['sale_price']); ?></span>
-                                                <span class="apd-regular-price apd-crossed">$<?php echo esc_html($product['price']); ?></span>
-                                            <?php else: ?>
-                                                <span class="apd-regular-price">$<?php echo esc_html($product['price']); ?></span>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <button class="apd-product-list-cta-btn">Customize</button>
-                                </div>
+                                <?php if ($show_price): ?>
+                                    <div class="apd-product-pricing">
+                                        <?php if (!empty($product['sale_price']) && $show_sale): ?>
+                                            <span class="apd-sale-price">$<?php echo esc_html($product['sale_price']); ?></span>
+                                            <span class="apd-regular-price apd-crossed">$<?php echo esc_html($product['price']); ?></span>
+                                        <?php else: ?>
+                                            <span class="apd-regular-price">$<?php echo esc_html($product['price']); ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
-
-                <!-- Pagination removed - showing all products -->
 
             </div>
         <?php $first_category = false; endforeach; ?>
@@ -352,14 +347,16 @@ $items_per_page = -1;
 
 /* --- Product Info --- */
 .apd-product-info {
-    padding: 20px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
+    min-height: 120px;
+    justify-content: space-between;
 }
 
 .apd-product-category {
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -369,9 +366,10 @@ $items_per_page = -1;
 
 .apd-product-title {
     margin: 0;
-    font-size: 1.125rem;
+    font-size: 0.95rem;
     font-weight: 700;
-    line-height: 1.3;
+    line-height: 1.2;
+    flex-grow: 1;
 }
 
 .apd-product-title a {
@@ -416,27 +414,21 @@ $items_per_page = -1;
     font-weight: bold;
 }
 
-.apd-product-pricing-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 8px;
-}
-
 .apd-product-pricing {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding-top: 4px;
 }
 
 .apd-sale-price {
-    font-size: 1.5rem;
+    font-size: 1.1rem;
     font-weight: 900;
     color: var(--color-foreground);
 }
 
 .apd-regular-price {
-    font-size: 1.5rem;
+    font-size: 1.1rem;
     font-weight: 900;
     color: var(--color-foreground);
 }
@@ -444,7 +436,7 @@ $items_per_page = -1;
 .apd-regular-price.apd-crossed {
     text-decoration: line-through;
     color: var(--color-muted-foreground);
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 600;
 }
 
@@ -453,10 +445,10 @@ $items_per_page = -1;
     align-items: center;
     justify-content: center;
     white-space: nowrap;
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     font-weight: 700;
-    height: 32px;
-    padding: 0 12px;
+    height: 28px;
+    padding: 0 10px;
     border-radius: 6px;
     border: none;
     background-color: var(--color-secondary);
@@ -518,6 +510,21 @@ $items_per_page = -1;
     .apd-tab-btn {
         width: 100%;
         justify-content: center;
+    }
+    .apd-product-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        padding: 8px;
+    }
+    .apd-product-card {
+        margin: 0;
+    }
+    .apd-product-grid.apd-single-product {
+        grid-template-columns: 1fr !important;
+    }
+    .apd-product-grid.apd-single-product .apd-product-card {
+        max-width: 480px;
+        margin: 0 auto;
     }
 }
 </style>
@@ -609,13 +616,6 @@ $items_per_page = -1;
             return;
         }
         const productId = $(this).data('product-id');
-        window.location.href = `<?php echo home_url(); ?>/product-detail/?id=${productId}`;
-    });
-
-    // CTA button click handler - goes to product detail page
-    $('.apd-product-list-cta-btn').on('click', function(e) {
-        e.stopPropagation(); // Prevent card click
-        const productId = $(this).closest('.apd-product-card').data('product-id');
         window.location.href = `<?php echo home_url(); ?>/product-detail/?id=${productId}`;
     });
 

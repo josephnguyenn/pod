@@ -1861,10 +1861,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
+            // Check if this is a variant product
+            const hasVariants = customizationData.variants && customizationData.variants.price;
+            
             // Use top-level fields or fall back to customization_data
-            const basePrice = Number(it.base_price ?? customizationData.base_price ?? 0);
-            const salePrice = it.sale_price ? Number(it.sale_price) : (customizationData.sale_price ? Number(customizationData.sale_price) : null);
+            let basePrice = Number(it.base_price ?? customizationData.base_price ?? 0);
+            let salePrice = it.sale_price ? Number(it.sale_price) : (customizationData.sale_price ? Number(customizationData.sale_price) : null);
             const materialPrice = Number(it.material_price ?? customizationData.material_price ?? 0);
+            
+            // For variant products, use variant price as base price
+            if (hasVariants) {
+                const variantPrice = Number(customizationData.variants.price);
+                basePrice = variantPrice;
+                salePrice = null; // Variant already includes any sale pricing
+            }
             
             // Calculate correct unit price: base_price + material_price (or sale_price + material_price if sale exists)
             // If price is already set and includes material (from instant checkout), use it directly
@@ -1896,6 +1906,21 @@ document.addEventListener('DOMContentLoaded', function() {
             const textName = textFields && Object.values(textFields)[0] ? Object.values(textFields)[0] : '';
 
             const nameRow = textName ? '<div class="detail-item"><span class="detail-label">Name:</span><span class="detail-value">' + textName + '</span></div>' : '';
+
+            // Variant information (SKU-based variants)
+            let variantInfo = '';
+            if (customizationData.variants) {
+                const v = customizationData.variants;
+                if (v.size) {
+                    variantInfo += '<div class="detail-item"><span class="detail-label">Size:</span><span class="detail-value">' + v.size + '</span></div>';
+                }
+                if (v.material) {
+                    variantInfo += '<div class="detail-item"><span class="detail-label">Variant Material:</span><span class="detail-value">' + v.material + '</span></div>';
+                }
+                if (v.sku) {
+                    variantInfo += '<div class="detail-item"><span class="detail-label">SKU:</span><span class="detail-value">' + v.sku + '</span></div>';
+                }
+            }
 
             // Get preview URL - check both top-level and customization_data
             let purl = getPreviewUrl(it);
@@ -1948,7 +1973,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Full details (hidden in compact view)
             cardHtml += '<div class="design-preview-card" style="margin-bottom:12px;margin-top:12px;">' + preview + '</div>';
             cardHtml += '<div class="detail-item"><span class="detail-label">Product:</span><span class="detail-value">' + (name || 'Product') + '</span></div>';
-            cardHtml += color + material;
+            cardHtml += color + material + variantInfo;
             cardHtml += priceBreakdown;
             cardHtml += '<div class="detail-item" style="margin-top: 8px; padding-top: 8px; border-top: 2px solid #dee2e6;">';
             cardHtml += '<span class="detail-label" style="font-weight: 700; font-size: 1rem;">Line Total:</span>';

@@ -1,5 +1,16 @@
 jQuery(document).ready(function($) {
     
+    // Parse URL parameters for product variants
+    const urlParams = new URLSearchParams(window.location.search);
+    const variantData = {
+        size: urlParams.get('variant_size'),
+        material: urlParams.get('variant_material'),
+        sku: urlParams.get('variant_sku'),
+        price: urlParams.get('variant_price')
+    };
+    
+    console.log('🎨 Variant data from URL:', variantData);
+    
     // Use apd_ajax (WordPress plugin standard)
     const ajaxObj = apd_ajax;
     
@@ -18,6 +29,7 @@ jQuery(document).ready(function($) {
         colorMap: {},
         materialsMap: null,
         materialsLoading: false,
+        variantData: variantData, // Store variant info from URL
         _lastMaterialUrl: null,
         _lastColor: null,
         _materialUrlCache: {},
@@ -93,6 +105,27 @@ jQuery(document).ready(function($) {
                 }
             } else {
                 console.log('No material URL found for:', materialName);
+            }
+        },
+
+        // Auto-select material from variant data
+        autoSelectVariantMaterial: function(materialName) {
+            console.log('🎯 Auto-selecting variant material:', materialName);
+            
+            // Find material option by name (case-insensitive)
+            const $materialOption = $('.fsc-material-outline-option, .fsc-material-option').filter(function() {
+                const optionMaterial = $(this).data('material') || '';
+                return optionMaterial.toLowerCase() === materialName.toLowerCase();
+            });
+            
+            if ($materialOption.length > 0) {
+                console.log('✅ Found material option, triggering click');
+                $materialOption.trigger('click');
+            } else {
+                console.warn('⚠️ Material option not found:', materialName);
+                console.log('Available materials:', $('.fsc-material-outline-option, .fsc-material-option').map(function() {
+                    return $(this).data('material');
+                }).get());
             }
         },
 
@@ -197,6 +230,14 @@ jQuery(document).ready(function($) {
                     // Update price when material is selected
                     FSC.updateProductPrice();
                 });
+                
+                // Auto-select material from variant URL parameter
+                if (variantData.material) {
+                    setTimeout(() => {
+                        FSC.autoSelectVariantMaterial(variantData.material);
+                    }, 500);
+                }
+                
                 return true;
             };
             if (materialsMap) { renderMaterialGroup(materialsMap); }
@@ -2686,6 +2727,12 @@ jQuery(document).ready(function($) {
 				}
 			}
 			
+			// Debug: Log material and color values
+			console.log('📋 saveCustomization - Material/Color Debug:');
+			console.log('  FSC.currentColor:', FSC.currentColor);
+			console.log('  FSC.currentMaterial:', FSC.currentMaterial);
+			console.log('  FSC.currentMaterialUrl:', FSC.currentMaterialUrl);
+			
 			const payload = {
                 print_color: FSC.currentColor,
                 vinyl_material: FSC.currentMaterial,
@@ -2702,7 +2749,14 @@ jQuery(document).ready(function($) {
 				template_data: templateData,
 				template_fields_array: templateFieldsArray,
 				fields_display: fieldsDisplay,
-				fields_hints: fieldsHints
+				fields_hints: fieldsHints,
+                // Include variant information if available
+                variant_info: FSC.variantData && (FSC.variantData.size || FSC.variantData.sku) ? {
+                    size: FSC.variantData.size || '',
+                    material: FSC.variantData.material || '',
+                    sku: FSC.variantData.sku || '',
+                    price: FSC.variantData.price || ''
+                } : null
             };
 
             $('.fsc-container').addClass('fsc-loading');
@@ -2788,6 +2842,11 @@ jQuery(document).ready(function($) {
                     }
                 }
                 
+                // Debug: Log material and color values before adding to cart
+                console.log('🛒 addToCart - Material/Color Debug:');
+                console.log('  FSC.currentColor:', FSC.currentColor);
+                console.log('  FSC.currentMaterial:', FSC.currentMaterial);
+                
                 // Collect current customization data
                 const customizationData = {
                     print_color: FSC.currentColor,
@@ -2802,7 +2861,15 @@ jQuery(document).ready(function($) {
                     material_texture_url: FSC.getMaterialUrl(FSC.currentMaterial),
                     text_fields: FSC.getTextFields(),
                     template_data: FSC.getTemplateData(),
-                    preview_image_svg: previewImage
+                    preview_image_svg: previewImage,
+                    // Include variant information if available
+                    variants: FSC.variantData && (FSC.variantData.size || FSC.variantData.sku) ? {
+                        size: FSC.variantData.size || '',
+                        material: FSC.variantData.material || '',
+                        material_id: FSC.variantData.material || '',
+                        sku: FSC.variantData.sku || '',
+                        price: FSC.variantData.price || ''
+                    } : null
                 };
                 
                 console.log('Customization Data:', customizationData);
