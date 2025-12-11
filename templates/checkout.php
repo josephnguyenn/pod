@@ -1883,7 +1883,9 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!unitPrice || unitPrice <= 0) {
                 // Fallback: calculate from base_price/sale_price + material_price
                 const productBasePrice = salePrice || basePrice || Number(it.product_price ?? customizationData.product_price ?? 0);
-                unitPrice = productBasePrice + materialPrice;
+                // For variant products, price is complete - don't add materialPrice
+                // For non-variant products, add materialPrice
+                unitPrice = hasVariants ? productBasePrice : (productBasePrice + materialPrice);
             }
 
             const qty = Number(it.quantity ?? 1);

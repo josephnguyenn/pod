@@ -788,10 +788,6 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     line-height: 1;
 }
 
-.apd-variant-price.has-sale #apd-price-display {
-    color: var(--color-destructive);
-}
-
 .apd-variant-regular-price {
     font-size: 1.5rem;
     text-decoration: line-through;
@@ -836,7 +832,8 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 <script>
 jQuery(document).ready(function($) {
     // Store base price and selected variants
-    const basePrice = <?php echo floatval($display_price); ?>;
+    // For variant products, base price should be 0 as price comes from variant combo
+    const basePrice = <?php echo $variants_enabled ? 0 : floatval($display_price); ?>;
     let selectedMaterial = null;
     let selectedSize = null;
     let materialPrice = 0;
@@ -962,11 +959,28 @@ jQuery(document).ready(function($) {
                 return;
             }
             
-            // Find the matching combination - handle empty strings
+            // Find the matching combination - handle empty strings and flexible size matching
+            console.log('[Add to Cart Debug] Looking for combo:', {size: selectedSizeVal, material: selectedMaterialId});
+            console.log('[Add to Cart Debug] All combos:', apdCombinations);
             var combo = apdCombinations.find(function(c) {
-                return String(c.size || '') === String(selectedSizeVal || '') && 
-                       String(c.material || '') === String(selectedMaterialId || '');
+                var comboSize = String(c.size || '').trim();
+                var comboMaterial = String(c.material || '').trim();
+                var selSize = String(selectedSizeVal || '').trim();
+                var selMaterial = String(selectedMaterialId || '').trim();
+                
+                // For size: check exact match OR if one value starts with the other (handles "24" vs "24\"w x 12\"h")
+                var sizeMatch = false;
+                if (!comboSize && !selSize) {
+                    sizeMatch = true; // Both empty
+                } else if (comboSize && selSize) {
+                    sizeMatch = comboSize === selSize || selSize.indexOf(comboSize) === 0 || comboSize.indexOf(selSize) === 0;
+                }
+                
+                var materialMatch = comboMaterial === selMaterial;
+                console.log('[Add to Cart Debug] Combo:', c, 'sizeMatch:', sizeMatch, 'materialMatch:', materialMatch);
+                return sizeMatch && materialMatch;
             });
+            console.log('[Add to Cart Debug] Found:', combo);
             
             if (!combo) {
                 alert('Invalid variant selection');
@@ -1104,11 +1118,28 @@ jQuery(document).ready(function($) {
                 return;
             }
             
-            // Find the matching combination - handle empty strings
+            // Find the matching combination - handle empty strings and flexible size matching
+            console.log('[Checkout Debug] Looking for combo:', {size: selectedSizeVal, material: selectedMaterialId});
+            console.log('[Checkout Debug] All combos:', apdCombinations);
             var combo = apdCombinations.find(function(c) {
-                return String(c.size || '') === String(selectedSizeVal || '') && 
-                       String(c.material || '') === String(selectedMaterialId || '');
+                var comboSize = String(c.size || '').trim();
+                var comboMaterial = String(c.material || '').trim();
+                var selSize = String(selectedSizeVal || '').trim();
+                var selMaterial = String(selectedMaterialId || '').trim();
+                
+                // For size: check exact match OR if one value starts with the other (handles "24" vs "24\"w x 12\"h")
+                var sizeMatch = false;
+                if (!comboSize && !selSize) {
+                    sizeMatch = true; // Both empty
+                } else if (comboSize && selSize) {
+                    sizeMatch = comboSize === selSize || selSize.indexOf(comboSize) === 0 || comboSize.indexOf(selSize) === 0;
+                }
+                
+                var materialMatch = comboMaterial === selMaterial;
+                console.log('[Checkout Debug] Combo:', c, 'sizeMatch:', sizeMatch, 'materialMatch:', materialMatch);
+                return sizeMatch && materialMatch;
             });
+            console.log('[Checkout Debug] Found:', combo);
             
             if (!combo) {
                 alert('Invalid variant selection');

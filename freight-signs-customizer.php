@@ -110,10 +110,6 @@ class AdvancedProductDesigner
         add_action('wp_ajax_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
         add_action('wp_ajax_nopriv_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
         
-        // Load product AJAX handler
-        add_action('wp_ajax_apd_load_product', array($this, 'load_product'));
-        add_action('wp_ajax_nopriv_apd_load_product', array($this, 'load_product'));
-        
         add_action('rest_api_init', array($this, 'register_rest_routes'));
         add_shortcode('apd_customizer', array($this, 'customizer_shortcode'));
         add_shortcode('apd_product_list', array($this, 'product_list_shortcode'));
@@ -1775,77 +1771,51 @@ class AdvancedProductDesigner
                 $converted = @mb_convert_encoding($svg_content, 'UTF-8', 'UTF-16,UTF-16LE,UTF-16BE,UTF-8');
                 if ($converted !== false) {
                     $svg_content = $converted;
-                    // Update encoding declaration in XML prolog if present
-                    $svg_content = preg_replace('/(<\?xml[^>]*encoding=["\'])utf-16(["\']\?>)/i', '$1UTF-8$2', $svg_content);
                 }
             }
         }
 
-        // Strip UTF-8 BOM if present
-        $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content);
+        // Strip UTF-8 BOM and XML prolog/DOCTYPE which can break innerHTML parsing
+        $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content); // UTF-8 BOM
+        $svg_content = preg_replace('/<\?xml[^>]*\?>/i', '', $svg_content);
+        $svg_content = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svg_content);
         
-        // IMPORTANT: DO NOT strip XML prolog or DOCTYPE!
-        // These are required for CNC/engraving software like CodeIDDraw
-        // CorelDRAW exports include: <?xml version="1.0" encoding="UTF-16"?>
-        // and <!DOCTYPE svg PUBLIC ...>
-        // Stripping these breaks compatibility with professional design software
-        
-        // Trim only leading/trailing whitespace
+        // Trim whitespace
         $svg_content = trim($svg_content);
 
-        // Validate it contains <svg tag (may not be at start due to XML prolog/DOCTYPE/comments)
-        if (!preg_match('/<svg[\s>]/i', $svg_content)) {
-            error_log('APD: Invalid SVG - does not contain <svg tag. First 200 chars: ' . substr($svg_content, 0, 200));
+        // Validate it starts with <svg
+        if (!preg_match('/^<svg[\s>]/i', $svg_content)) {
+            error_log('APD: Invalid SVG - does not start with <svg tag. First 200 chars: ' . substr($svg_content, 0, 200));
             return false;
         }
 
-        // Extract the <svg>...</svg> fragment for inline display
-        // But preserve everything before it (XML prolog, DOCTYPE, comments) for download
+        // Keep only the <svg>...</svg> fragment
         if (preg_match('/<svg[\s\S]*<\/svg>/i', $svg_content, $m)) {
-            $svg_tag_only = $m[0];
-            $prefix = str_replace($svg_tag_only, '', $svg_content);
+            $svg_content = $m[0];
         } else {
             error_log('APD: Could not find complete <svg>...</svg> tags');
             return false;
         }
 
         // Ensure xmlns exists for robust DOM parsing
-        if (stripos($svg_tag_only, 'xmlns=') === false) {
-            $svg_tag_only = preg_replace('/<svg\b/i', '<svg xmlns="http://www.w3.org/2000/svg"', $svg_tag_only, 1);
+        if (stripos($svg_content, 'xmlns=') === false) {
+            $svg_content = preg_replace('/<svg\b/i', '<svg xmlns="http://www.w3.org/2000/svg"', $svg_content, 1);
         }
 
         // Remove any existing class attributes from SVG tag
-        $svg_tag_only = preg_replace('/<svg([^>]*?)class=\"[^\"]*\"([^>]*?)>/', '<svg$1$2>', $svg_tag_only);
+        $svg_content = preg_replace('/<svg([^>]*?)class=\"[^\"]*\"([^>]*?)>/', '<svg$1$2>', $svg_content);
 
         // Add our custom class
-        $svg_tag_only = str_replace('<svg', '<svg class="fsc-logo-svg"', $svg_tag_only);
+        $svg_content = str_replace('<svg', '<svg class="fsc-logo-svg"', $svg_content);
 
-        // Add outline filter - create defs section if it doesn't exist
-        if (strpos($svg_tag_only, 'id="fsc-outline"') === false) {
-            if (strpos($svg_tag_only, '<defs>') !== false) {
-                // Add to existing defs
-                $svg_tag_only = str_replace('<defs>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter>', $svg_tag_only);
-            } else if (strpos($svg_tag_only, '<defs/>') !== false) {
-                // Replace empty defs
-                $svg_tag_only = str_replace('<defs/>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>', $svg_tag_only);
-            } else {
-                // Create defs section after opening svg tag
-                $svg_tag_only = preg_replace(
-                    '/(<svg[^>]*>)/',
-                    '$1<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>',
-                    $svg_tag_only,
-                    1
-                );
-            }
+        // Add outline filter if not present
+        if (strpos($svg_content, 'id="fsc-outline"') === false) {
+            $svg_content = str_replace('<defs>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>', $svg_content);
         }
         
-        // Return complete SVG with XML prolog/DOCTYPE preserved (critical for CodeIDDraw)
-        $final_svg = $prefix . $svg_tag_only;
-        
-        error_log('APD: Processed SVG successfully, final size: ' . strlen($final_svg) . ' bytes');
-        error_log('APD: SVG starts with: ' . substr($final_svg, 0, 100));
+        error_log('APD: Processed SVG successfully, final size: ' . strlen($svg_content) . ' bytes');
 
-        return $final_svg ?: false;
+        return $svg_content ?: false;
     }
 
     public function get_logo_svg()
@@ -6694,15 +6664,6 @@ class AdvancedProductDesigner
     {
         $wp_filetype = wp_check_filetype($file['name'], null);
         if ($wp_filetype['type'] === 'image/svg+xml') {
-            // Validate SVG content for security and compatibility
-            $svg_content = file_get_contents($file['tmp_name']);
-            $validation_result = $this->validate_svg_content($svg_content);
-            
-            if ($validation_result !== true) {
-                $file['error'] = $validation_result;
-                return $file;
-            }
-            
             $file['type'] = $wp_filetype['type'];
             $file['ext'] = $wp_filetype['ext'];
             $file['name'] = $file['name'];
@@ -6710,73 +6671,6 @@ class AdvancedProductDesigner
             $file['error'] = 0;
         }
         return $file;
-    }
-    
-    /**
-     * Validate SVG content for security and compatibility
-     * Returns true if valid, error message string if invalid
-     */
-    private function validate_svg_content($svg_content)
-    {
-        if (empty($svg_content)) {
-            return 'SVG file is empty';
-        }
-        
-        // Normalize encoding to UTF-8 if file appears to be UTF-16
-        if (strpos($svg_content, "\x00") !== false || preg_match('/encoding=["\']utf-16["\']i/', $svg_content)) {
-            if (function_exists('mb_convert_encoding')) {
-                $converted = @mb_convert_encoding($svg_content, 'UTF-8', 'UTF-16,UTF-16LE,UTF-16BE,UTF-8');
-                if ($converted !== false) {
-                    $svg_content = $converted;
-                }
-            }
-        }
-        
-        // Check for malicious content
-        $dangerous_tags = array('script', 'embed', 'object', 'iframe', 'link');
-        foreach ($dangerous_tags as $tag) {
-            if (preg_match('/<' . $tag . '\b/i', $svg_content)) {
-                return 'SVG contains potentially dangerous content: ' . $tag . ' tags are not allowed';
-            }
-        }
-        
-        // Check for external references that might not load
-        if (preg_match('/xlink:href=["\']http/i', $svg_content)) {
-            return 'SVG contains external links. Please embed all resources within the SVG file';
-        }
-        
-        // Check if SVG uses <text> elements (which may have font issues)
-        if (preg_match('/<text[\s>]/i', $svg_content)) {
-            // Count text elements
-            preg_match_all('/<text[\s>]/i', $svg_content, $text_matches);
-            $text_count = count($text_matches[0]);
-            
-            // Check if there are also path elements (converted text)
-            preg_match_all('/<path[\s>]/i', $svg_content, $path_matches);
-            $path_count = count($path_matches[0]);
-            
-            // If there are ANY text elements, reject it (fonts may not be available)
-            if ($text_count > 0) {
-                return 'SVG contains ' . $text_count . ' text element(s) that may not display correctly. Please convert all text to paths in your SVG editor (Object to Path in Inkscape, or Create Outlines in Illustrator)';
-            }
-        }
-        
-        // Check for required SVG structure
-        if (!preg_match('/<svg[\s>]/i', $svg_content)) {
-            return 'Invalid SVG: Missing <svg> root element';
-        }
-        
-        if (!preg_match('/<\/svg>/i', $svg_content)) {
-            return 'Invalid SVG: Unclosed <svg> tag';
-        }
-        
-        // Check viewBox or width/height attributes
-        if (!preg_match('/viewBox=["\'][^"\']+["\']/i', $svg_content) && 
-            !preg_match('/width=["\'][^"\']+["\']/i', $svg_content)) {
-            return 'SVG missing viewBox or width/height attributes. Please ensure your SVG has proper dimensions defined';
-        }
-        
-        return true;
     }
 
     public function svg_upload_notice()

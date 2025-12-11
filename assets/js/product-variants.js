@@ -8,19 +8,11 @@ jQuery(document).ready(function($) {
     let selectedSize = null;
     let productId = null;
     
-    // Only run on product pages, not checkout/cart
-    if ($('body').hasClass('woocommerce-checkout') || $('body').hasClass('woocommerce-cart')) {
-        return; // Exit silently on checkout/cart pages
-    }
-    
     // Wait a bit for page to fully render
     setTimeout(function() {
         // Check if we're on a product detail page with variants
         if (typeof apdCombinations === 'undefined' || !apdCombinations || apdCombinations.length === 0) {
-            // Only log if we're actually on a product page
-            if ($('.apd-product-gallery').length > 0 || $('.apd-product-info').length > 0) {
-                console.log('[APD Variants] No variant combinations found for this product');
-            }
+            console.log('[APD Variants] No variant combinations found');
             return;
         }
         
