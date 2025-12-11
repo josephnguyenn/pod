@@ -8,11 +8,19 @@ jQuery(document).ready(function($) {
     let selectedSize = null;
     let productId = null;
     
+    // Only run on product pages, not checkout/cart
+    if ($('body').hasClass('woocommerce-checkout') || $('body').hasClass('woocommerce-cart')) {
+        return; // Exit silently on checkout/cart pages
+    }
+    
     // Wait a bit for page to fully render
     setTimeout(function() {
         // Check if we're on a product detail page with variants
         if (typeof apdCombinations === 'undefined' || !apdCombinations || apdCombinations.length === 0) {
-            console.log('[APD Variants] No variant combinations found');
+            // Only log if we're actually on a product page
+            if ($('.apd-product-gallery').length > 0 || $('.apd-product-info').length > 0) {
+                console.log('[APD Variants] No variant combinations found for this product');
+            }
             return;
         }
         
@@ -106,10 +114,36 @@ jQuery(document).ready(function($) {
         console.log('[APD Variants] All combinations:', apdCombinations);
         console.log('[APD Variants] Looking for combo:', {size: selectedSize, material: selectedMaterial});
         
+        // Helper function to normalize size values for comparison (handles "24" vs "24\"w x 12\"h")
+        function normalizeSizeValue(value) {
+            if (!value) return '';
+            // Extract just the numeric/alphanumeric part before any special characters or quotes
+            const normalized = String(value).trim();
+            // If the selected value contains the combo value at the start, or vice versa, it's a match
+            return normalized;
+        }
+        
         // Find matching combination - handle empty strings for size-only or material-only
         const combo = apdCombinations.find(c => {
-            const sizeMatch = String(c.size || '') === String(selectedSize || '');
-            const materialMatch = String(c.material || '') === String(selectedMaterial || '');
+            const comboSize = String(c.size || '').trim();
+            const comboMaterial = String(c.material || '').trim();
+            const selSize = String(selectedSize || '').trim();
+            const selMaterial = String(selectedMaterial || '').trim();
+            
+            // For size: check exact match OR if one value starts with the other (handles "24" vs "24\"w x 12\"h")
+            let sizeMatch = false;
+            if (!comboSize && !selSize) {
+                sizeMatch = true; // Both empty
+            } else if (comboSize && selSize) {
+                // Check if they're equal or if one starts with the other
+                sizeMatch = comboSize === selSize || 
+                           selSize.startsWith(comboSize) || 
+                           comboSize.startsWith(selSize);
+            }
+            
+            // For material: exact match
+            const materialMatch = comboMaterial === selMaterial;
+            
             console.log('[APD Variants] Checking combo:', c, 'size match:', sizeMatch, 'material match:', materialMatch);
             return sizeMatch && materialMatch;
         });
