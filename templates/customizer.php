@@ -224,24 +224,22 @@ window.fscDefaults = {
             preview_image_svg: null
         };
 
-        // Try to capture preview image if available (but limit size to avoid localStorage issues)
+        // Try to capture production-ready SVG using FSC_SVGExport
         try{
-            var previewArea = document.querySelector('.fsc-preview-content');
-            if (previewArea && window.htmlElementToImage) {
-                window.htmlElementToImage(previewArea, 2).then(function(previewImage){
-                // Only include preview if it's not too large (max 100KB to avoid localStorage issues)
-                    if (previewImage && previewImage.length < 100000) {
-                        payload.preview_image_svg = previewImage;
-                        console.log('✅ Buy Now: Preview image captured, size:', previewImage.length, 'bytes');
-                    } else if (previewImage) {
-                        console.warn('⚠️ Buy Now: Preview image too large (' + previewImage.length + ' bytes), skipping to avoid localStorage issues');
-                    }
-                }).catch(function(){}); 
+            if (window.FSC_SVGExport && typeof FSC_SVGExport.getSVGDataURL === 'function') {
+                var svgDataURL = FSC_SVGExport.getSVGDataURL();
+                // Only include SVG if it's not too large (max 500KB to avoid localStorage issues)
+                if (svgDataURL && svgDataURL.length < 500000) {
+                    payload.preview_image_svg = svgDataURL;
+                    console.log('✅ Buy Now: Production SVG captured, size:', svgDataURL.length, 'bytes');
+                } else if (svgDataURL) {
+                    console.warn('⚠️ Buy Now: SVG too large (' + svgDataURL.length + ' bytes), skipping to avoid localStorage issues');
+                }
             } else {
-                console.log('ℹ️ Buy Now: Preview area or htmlElementToImage not available, skipping preview capture');
+                console.log('ℹ️ Buy Now: FSC_SVGExport not available, skipping SVG capture');
             }
         }catch(err){ 
-            console.warn('⚠️ Buy Now: failed to capture preview:', err);
+            console.warn('⚠️ Buy Now: failed to capture SVG:', err);
             // Continue without preview image - it's not critical
         }
 

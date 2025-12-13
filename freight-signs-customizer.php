@@ -44,6 +44,7 @@ class AdvancedProductDesigner
         add_action('wp_ajax_upload_svg', array($this, 'handle_svg_upload'));
         add_action('wp_ajax_save_design', array($this, 'save_design'));
         add_action('wp_ajax_save_template_design', array($this, 'save_template_design'));
+        add_action('wp_ajax_download_order_svg', array($this, 'download_order_svg'));
         add_action('wp_ajax_apd_get_product_data', array($this, 'get_product_data_ajax'));
         add_action('wp_ajax_nopriv_apd_get_product_data', array($this, 'get_product_data_ajax'));
         add_action('wp_ajax_apd_get_products_ajax', array($this, 'get_products_ajax'));
@@ -3188,6 +3189,16 @@ class AdvancedProductDesigner
         if (empty($svg_download_url) && is_string($image_to_display) && preg_match('/^data:image(?:\\+svg|\\/svg(?:\\+xml|\\-xml)?);/i', $image_to_display)) {
             $svg_download_url = $image_to_display;
         }
+        
+        // Add download SVG button for admin
+        if (current_user_can('manage_options') && !empty($svg_download_url)) {
+            echo '<div class="order-svg-download-section" style="margin: 20px 0;">';
+            echo '<button type="button" class="button button-primary" onclick="downloadOrderSVG(' . $order_id . ')">';
+            echo '<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Download Production SVG';
+            echo '</button>';
+            echo '<p class="description">Download the production-ready SVG file for this order</p>';
+            echo '</div>';
+        }
 
         // Debug output for admin
         if (current_user_can('manage_options')) {
@@ -3618,6 +3629,59 @@ class AdvancedProductDesigner
                 });
             });
         })();
+
+        // Download validated SVG from order
+        function downloadOrderSVG(orderId) {
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
+
+            // Add spinner animation
+            const style = document.createElement('style');
+            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'download_order_svg',
+                    order_id: orderId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Create download link for SVG file
+                        const blob = new Blob([response.data.svg_content], { type: 'image/svg+xml' });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 5000);
+                    } else {
+                        alert('Error: ' + (response.data.message || 'Failed to download SVG'));
+                    }
+                },
+                error: function() {
+                    alert('Network error occurred while downloading SVG');
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
         </script>
         <?php
         echo '</div>';
@@ -7078,6 +7142,129 @@ class AdvancedProductDesigner
         } else {
             wp_send_json_error(array('message' => 'Failed to save design'));
         }
+    }
+
+    /**
+     * Download validated SVG from order
+     * Admin-only endpoint to retrieve production-ready SVG with validation
+     */
+    public function download_order_svg()
+    {
+        // Check admin permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+        if (!$order_id) {
+            wp_send_json_error(array('message' => 'Invalid order ID'));
+            return;
+        }
+
+        // Get SVG from order metadata
+        $svg_data_url = get_post_meta($order_id, 'preview_image_svg', true);
+        
+        // Also check cart items
+        if (empty($svg_data_url)) {
+            $cart_items = get_post_meta($order_id, '_cart_items', true);
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first = $cart_items[0];
+                $svg_data_url = $first['preview_image_svg'] ?? '';
+                
+                if (empty($svg_data_url) && !empty($first['customization_data'])) {
+                    $cd = is_array($first['customization_data']) ? 
+                          $first['customization_data'] : 
+                          json_decode($first['customization_data'], true);
+                    $svg_data_url = $cd['preview_image_svg'] ?? '';
+                }
+            }
+        }
+
+        if (empty($svg_data_url)) {
+            wp_send_json_error(array('message' => 'No SVG found for this order'));
+            return;
+        }
+
+        // Validate SVG format
+        if (!preg_match('/^data:image\\/svg\\+xml;base64,/', $svg_data_url)) {
+            wp_send_json_error(array('message' => 'Invalid SVG format'));
+            return;
+        }
+
+        // Extract base64 data
+        $svg_content = substr($svg_data_url, strlen('data:image/svg+xml;base64,'));
+        $svg_content = base64_decode($svg_content);
+
+        if (!$svg_content) {
+            wp_send_json_error(array('message' => 'Failed to decode SVG'));
+            return;
+        }
+
+        // Validate it's actually SVG XML
+        if (!preg_match('/<svg[\\s\\S]*<\\/svg>/i', $svg_content)) {
+            wp_send_json_error(array('message' => 'Invalid SVG structure'));
+            return;
+        }
+
+        // Additional security validation
+        $validation_result = $this->validate_svg_content($svg_content);
+        if (!$validation_result['valid']) {
+            wp_send_json_error(array(
+                'message' => 'SVG validation failed: ' . $validation_result['error']
+            ));
+            return;
+        }
+
+        // Return validated SVG
+        wp_send_json_success(array(
+            'svg_content' => $svg_content,
+            'filename' => 'order-' . $order_id . '-design.svg',
+            'message' => 'SVG validated and ready for download'
+        ));
+    }
+
+    /**
+     * Validate SVG content for security and compatibility
+     */
+    private function validate_svg_content($svg_content)
+    {
+        // Check for dangerous elements
+        $dangerous_patterns = array(
+            '/<script/i',
+            '/on\\w+\\s*=/i', // event handlers like onclick, onload
+            '/javascript:/i',
+            '/<iframe/i',
+            '/<object/i',
+            '/<embed/i'
+        );
+
+        foreach ($dangerous_patterns as $pattern) {
+            if (preg_match($pattern, $svg_content)) {
+                return array(
+                    'valid' => false,
+                    'error' => 'SVG contains potentially dangerous content'
+                );
+            }
+        }
+
+        // Check minimum requirements
+        if (strlen($svg_content) < 50) {
+            return array(
+                'valid' => false,
+                'error' => 'SVG content too small'
+            );
+        }
+
+        // Check maximum size (10MB limit)
+        if (strlen($svg_content) > 10 * 1024 * 1024) {
+            return array(
+                'valid' => false,
+                'error' => 'SVG content exceeds maximum size (10MB)'
+            );
+        }
+
+        return array('valid' => true);
     }
 
     /**
