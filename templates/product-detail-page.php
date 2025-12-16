@@ -178,7 +178,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                             <div class="apd-variant-price-wrapper">
                                 <span class="apd-variant-price-label">Price:</span>
                                 <span class="apd-variant-price">$<span id="apd-price-display">--</span></span>
-                                <span class="apd-variant-regular-price" style="display:none;"></span>
+                                <span class="apd-variant-regular-price"></span>
                             </div>
                             <div id="apd-stock-status" class="apd-stock-status in-stock">In Stock</div>
                         </div>
@@ -789,10 +789,16 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 }
 
 .apd-variant-regular-price {
-    font-size: 1.5rem;
+    display: none;
+    font-size: 1rem;
     text-decoration: line-through;
-    color: var(--color-secondary);
+    color: #999;
     margin-left: 10px;
+    font-weight: 400;
+}
+
+.apd-variant-price.has-sale + .apd-variant-regular-price {
+    display: inline;
 }
 
 .apd-stock-status {

@@ -153,9 +153,10 @@ jQuery(document).ready(function($) {
             // Show/hide sale price styling
             if (combo.sale_price && parseFloat(combo.sale_price) > 0) {
                 $('.apd-variant-price').addClass('has-sale');
-                $('.apd-variant-regular-price').text('$' + parseFloat(combo.price).toFixed(2));
+                $('.apd-variant-regular-price').text('$' + parseFloat(combo.price).toFixed(2)).show();
             } else {
                 $('.apd-variant-price').removeClass('has-sale');
+                $('.apd-variant-regular-price').hide();
             }
             
             // Enable/disable button based on stock
