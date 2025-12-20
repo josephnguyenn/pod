@@ -90,12 +90,75 @@
 
 ---
 
+### Phase 2: Order & Email Services - COMPLETED ✅
+
+#### 5. OrderService Extraction ✅
+**File:** `includes/class-order-service.php`
+
+**Improvements:**
+- ✅ Extracted 300+ lines of order placement logic
+- ✅ Centralized order creation and validation
+- ✅ Implemented automatic base64 image processing
+- ✅ Added order data normalization
+- ✅ Created manufacturing notes generation
+- ✅ Separated order management from presentation
+
+**Key Features:**
+- `create_order()` - Complete order creation with validation
+- `validate_customer_data()` - Input validation
+- `process_cart_items()` - Cart normalization and totals
+- `convert_base64_to_file()` - Image processing
+- `get_order()` - Retrieve order with normalized data
+- `update_order_status()` - Status management
+- `get_thank_you_url()` - Redirect URL logic
+- `generate_manufacturing_notes()` - Production documentation
+
+**Lines of Code:** 600+ lines of order logic
+
+**Refactoring Impact:**
+- `apd_place_order()`: 306 lines → 58 lines (81% reduction)
+- `apd_get_order_details()`: 62 lines → 18 lines (71% reduction)
+
+---
+
+#### 6. EmailService Extraction ✅
+**File:** `includes/class-email-service.php`
+
+**Improvements:**
+- ✅ Centralized all email operations
+- ✅ Created professional HTML email templates
+- ✅ Implemented SMTP configuration support
+- ✅ Added email template building methods
+- ✅ Separated email logic from order logic
+
+**Key Features:**
+- `send_order_confirmation()` - Customer order confirmation
+- `send_admin_notification()` - Admin new order alerts
+- `send_status_update()` - Order status change emails
+- `build_order_confirmation_email()` - HTML template generation
+- `build_admin_notification_email()` - Admin template
+- `build_status_update_email()` - Status update template
+- `configure_smtp()` - SMTP setup
+- `get_email_header()` / `get_email_footer()` - Reusable components
+
+**Email Templates Include:**
+- Responsive HTML layout
+- Order details table
+- Customer information
+- Payment details
+- Admin action links
+- Professional styling
+
+**Lines of Code:** 400+ lines of email logic
+
+---
+
 ### Main Plugin Updates ✅
 
 **File:** `freight-signs-customizer.php`
 
-**Changes Made:**
-- ✅ Added service properties to class
+**Phase 1 Changes:**
+- ✅ Added CartService and TemplateService properties
 - ✅ Integrated CartService into all cart AJAX handlers
 - ✅ Replaced hardcoded nonces with APD_Config constants
 - ✅ Added wp_login hook for cart merging
@@ -103,14 +166,17 @@
 - ✅ Refactored 5 cart methods to use CartService
 - ✅ Removed 200+ lines of session-based cart code
 
-**Refactored Methods:**
-- `ajax_add_to_cart()` - Now uses CartService
-- `ajax_get_cart()` - Delegates to CartService
-- `ajax_update_cart_item()` - Uses CartService
-- `ajax_remove_cart_item()` - Uses CartService
-- `ajax_clear_cart()` - Uses CartService
-- `get_cart()` - Delegates to CartService
-- `save_cart()` - Delegates to CartService
+**Phase 2 Changes:**
+- ✅ Added OrderService and EmailService properties
+- ✅ Refactored `apd_place_order()` from 306 to 58 lines
+- ✅ Refactored `apd_get_order_details()` from 62 to 18 lines
+- ✅ Removed 250+ lines of order processing code
+- ✅ Integrated email notifications via EmailService
+- ✅ Eliminated duplicate image processing code
+
+**Total Lines Removed from Main File:** 450+ lines
+**Services Created:** 6 classes
+**Architecture Improvement:** Monolith → Service-Oriented
 
 ---
 
