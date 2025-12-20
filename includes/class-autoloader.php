@@ -63,6 +63,8 @@ class APD_Autoloader
         $services = array(
             'config',
             'cart-service',
+            'order-service',
+            'email-service',
             'template-service',
             'apd-debug-logger',
             'apd-health-check'

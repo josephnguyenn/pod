@@ -35,11 +35,25 @@ class AdvancedProductDesigner
      */
     private $template_service;
 
+    /**
+     * Order service instance
+     * @var APD_Order_Service
+     */
+    private $order_service;
+
+    /**
+     * Email service instance
+     * @var APD_Email_Service
+     */
+    private $email_service;
+
     public function __construct()
     {
         // Initialize services
         $this->cart_service = new APD_Cart_Service();
         $this->template_service = new APD_Template_Service();
+        $this->email_service = new APD_Email_Service($this->template_service);
+        $this->order_service = new APD_Order_Service($this->cart_service, $this->email_service);
         
         // Start session early
         add_action('init', array($this, 'start_session'), 1);
@@ -2529,309 +2543,67 @@ class AdvancedProductDesigner
     // AJAX: place order from checkout
     public function apd_place_order()
     {
-        // Turn off all error reporting and output buffering for clean JSON response
+        // Turn off error reporting for clean JSON response
         $error_reporting = error_reporting(0);
         $display_errors = ini_get('display_errors');
         ini_set('display_errors', 0);
         
+        // Verify nonce
         $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : (isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : '');
-        // Soft-verify
-        if ($nonce && !(wp_verify_nonce($nonce, 'apd_ajax_nonce') || wp_verify_nonce($nonce, 'fsc_nonce'))) {
+        if ($nonce && !(wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_AJAX) || wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_FSC))) {
             error_reporting($error_reporting);
             ini_set('display_errors', $display_errors);
             wp_send_json_error('Security check failed');
+            return;
         }
 
-        // Guest checkout allowed: user_id=0 when not logged in
-        $user_id = get_current_user_id();
-        if (!$user_id) {
-            $user_id = 0;
-        }
-        // Cart will be resolved from POST/SESSION below; don't fail early here
-        $name = sanitize_text_field($_POST['customer_name'] ?? '');
-        $email = sanitize_email($_POST['customer_email'] ?? '');
-        $phone = sanitize_text_field($_POST['customer_phone'] ?? '');
-        $address = sanitize_textarea_field($_POST['customer_address'] ?? '');
-        $payment_method = sanitize_text_field($_POST['payment_method'] ?? 'paypal');
+        // Prepare customer data
+        $customer_data = array(
+            'customer_name' => sanitize_text_field($_POST['customer_name'] ?? ''),
+            'customer_email' => sanitize_email($_POST['customer_email'] ?? ''),
+            'customer_phone' => sanitize_text_field($_POST['customer_phone'] ?? ''),
+            'customer_address' => sanitize_textarea_field($_POST['customer_address'] ?? '')
+        );
 
-        // Handle mock payments
-        if ($payment_method === 'mock_paypal') {
-            $paypal_order_id = sanitize_text_field($_POST['paypal_order_id'] ?? '');
-            $paypal_transaction_id = sanitize_text_field($_POST['paypal_transaction_id'] ?? '');
-            $paypal_payer_id = sanitize_text_field($_POST['paypal_payer_id'] ?? '');
-            $payment_status = 'completed';  // Mock payments are always successful
+        // Prepare payment data
+        $payment_method = sanitize_text_field($_POST['payment_method'] ?? APD_Config::PAYMENT_METHOD_PAYPAL);
+        $payment_data = array(
+            'payment_method' => $payment_method,
+            'paypal_order_id' => sanitize_text_field($_POST['paypal_order_id'] ?? ''),
+            'paypal_transaction_id' => sanitize_text_field($_POST['paypal_transaction_id'] ?? ''),
+            'paypal_payer_id' => sanitize_text_field($_POST['paypal_payer_id'] ?? ''),
+            'payment_status' => ($payment_method === APD_Config::PAYMENT_METHOD_MOCK_PAYPAL) ? 'completed' : sanitize_text_field($_POST['payment_status'] ?? 'completed')
+        );
 
-            // Log mock payment for debugging (commented out to prevent output interference)
-            // error_log('Mock PayPal Payment: Order ID = ' . $paypal_order_id . ', Transaction ID = ' . $paypal_transaction_id);
-        } else {
-            // Handle real PayPal payments
-            $paypal_order_id = sanitize_text_field($_POST['paypal_order_id'] ?? '');
-            $paypal_transaction_id = sanitize_text_field($_POST['paypal_transaction_id'] ?? '');
-            $paypal_payer_id = sanitize_text_field($_POST['paypal_payer_id'] ?? '');
-            $payment_status = sanitize_text_field($_POST['payment_status'] ?? 'completed');
-        }
-
-        // Build cart (prefer posted JSON, then session/user meta)
-        $cart_items = array();
+        // Get cart items (prefer POST, then service cart)
+        $cart_items = null;
         if (isset($_POST['cart'])) {
             $posted_cart = json_decode(stripslashes($_POST['cart']), true);
             if (is_array($posted_cart)) {
                 $cart_items = $posted_cart;
             }
         }
-        if (empty($cart_items)) {
-            if (!session_id()) {
-                session_start();
-            }
-            if (!empty($_SESSION['apd_cart']) && is_array($_SESSION['apd_cart'])) {
-                $cart_items = $_SESSION['apd_cart'];
-            }
-        }
-        if (empty($cart_items) && $user_id) {
-            $user_cart = get_user_meta($user_id, 'apd_cart', true);
-            if (is_array($user_cart)) {
-                $cart_items = $user_cart;
-            }
-        }
 
-        // Debug: Log cart items
-        error_log('APD Place Order - Cart Items Count: ' . count($cart_items));
-        foreach ($cart_items as $idx => $ci) {
-            error_log("  Cart Item #$idx - Keys: " . implode(', ', array_keys($ci)));
-            error_log("    print_color: " . ($ci['print_color'] ?? 'NOT SET'));
-            error_log("    vinyl_material: " . ($ci['vinyl_material'] ?? 'NOT SET'));
-        }
+        // Create order using OrderService
+        $order_id = $this->order_service->create_order($customer_data, $payment_data, $cart_items);
 
-        // Compute order totals from cart (if present)
-        $order_total = 0.0;
-        if (!empty($cart_items) && is_array($cart_items)) {
-            foreach ($cart_items as &$ci) {
-                $price = isset($ci['price']) ? floatval($ci['price']) : floatval($ci['product_price'] ?? 0);
-                $qty = max(1, intval($ci['quantity'] ?? 1));
-                $ci['total'] = $price * $qty;
-                $order_total += $ci['total'];
-            }
-            unset($ci);
-        }
-
-        // Get customization data from session
-        if (!session_id()) {
-            session_start();
-        }
-        $customization_data = $_SESSION['fsc_customization'] ?? array();
-
-        // Also try to get data from POST if available (for cases where session isn't working)
-        if (isset($_POST['customization_data'])) {
-            $posted_data = json_decode(stripslashes($_POST['customization_data']), true);
-            if (is_array($posted_data)) {
-                $customization_data = array_merge($customization_data, $posted_data);
-            }
-        }
-
-        // Debug: Log what we received
-        error_log('APD Place Order - Customization Data: ' . print_r($customization_data, true));
-        error_log('APD Place Order - $_POST keys: ' . implode(', ', array_keys($_POST)));
-        if (isset($_POST['customization_data'])) {
-            error_log('APD Place Order - Posted customization_data (raw): ' . $_POST['customization_data']);
-        }
-
-        // Convert base64 image data to actual file URLs before saving
-        $image_fields = array('image_url', 'preview_image_url', 'preview_image_png', 'customization_image_url');
-        foreach ($image_fields as $field) {
-            if (!empty($customization_data[$field])) {
-                // error_log("APD Place Order - Checking field '$field': " . substr($customization_data[$field], 0, 100));
-
-                if (strpos($customization_data[$field], 'data:image/png;base64,') === 0) {
-                    // This is a base64 data URL, convert it to a file
-                    // error_log("APD Place Order - Converting base64 for field '$field'");
-                    $raw = base64_decode(substr($customization_data[$field], strlen('data:image/png;base64,')));
-                    if ($raw !== false && strlen($raw) <= 8 * 1024 * 1024) {
-                        $upload = wp_upload_bits('order-preview-' . time() . '-' . wp_generate_password(6, false, false) . '.png', null, $raw);
-                        if (empty($upload['error'])) {
-                            $customization_data[$field] = $upload['url'];
-                            // error_log('APD Place Order - Successfully saved image to: ' . $upload['url']);
-                        } else {
-                            // error_log("APD Place Order - Upload error for '$field': " . $upload['error']);
-                        }
-                    } else {
-                        // error_log("APD Place Order - Failed to decode or image too large for '$field'");
-                    }
-                }
-            }
-        }
-
-        // Also convert base64 images present inside each cart item (and nested customization_data) so previews are real URLs
-        if (!empty($cart_items) && is_array($cart_items)) {
-            foreach ($cart_items as &$ci) {
-                // If customization_data is a JSON string, decode it to an array for processing
-                if (!empty($ci['customization_data']) && is_string($ci['customization_data'])) {
-                    $maybe = json_decode($ci['customization_data'], true);
-                    if (json_last_error() === JSON_ERROR_NONE && is_array($maybe)) {
-                        $ci['customization_data'] = $maybe;
-                    }
-                }
-
-                // Process nested customization_data images first
-                if (!empty($ci['customization_data']) && is_array($ci['customization_data'])) {
-                    foreach ($image_fields as $field) {
-                        if (!empty($ci['customization_data'][$field]) && strpos($ci['customization_data'][$field], 'data:image') === 0) {
-                            $raw = preg_replace('#^data:image/[^;]+;base64,#', '', $ci['customization_data'][$field]);
-                            $decoded = base64_decode($raw);
-                            if ($decoded !== false && strlen($decoded) <= 8 * 1024 * 1024) {
-                                $upload = wp_upload_bits('order-item-preview-' . time() . '-' . wp_generate_password(6, false, false) . '.png', null, $decoded);
-                                if (empty($upload['error'])) {
-                                    $ci['customization_data'][$field] = $upload['url'];
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Process top-level image fields on the cart item
-                foreach ($image_fields as $field) {
-                    if (!empty($ci[$field]) && strpos($ci[$field], 'data:image') === 0) {
-                        $raw = preg_replace('#^data:image/[^;]+;base64,#', '', $ci[$field]);
-                        $decoded = base64_decode($raw);
-                        if ($decoded !== false && strlen($decoded) <= 8 * 1024 * 1024) {
-                            $upload = wp_upload_bits('order-item-preview-' . time() . '-' . wp_generate_password(6, false, false) . '.png', null, $decoded);
-                            if (empty($upload['error'])) {
-                                $ci[$field] = $upload['url'];
-                            }
-                        }
-                    }
-                }
-            }
-            unset($ci);
-        }
-
-        // Comprehensive order data for manufacturing
-        // Ensure cart_items is a sequential array; normalize associative maps
-        if (is_array($cart_items)) {
-            $keys = array_keys($cart_items);
-            $is_assoc = array_filter($keys, 'is_string') ? true : false;
-            if ($is_assoc) {
-                $cart_items = array_values($cart_items);
-            }
-        } else {
-            $cart_items = array();
-        }
-
-        // Compute cart total (already computed above into $order_total)
-        $cart_total = floatval($order_total);
-
-        // Keep single-item summary fields for backward compatibility (use first item if present)
-        $first_item = !empty($cart_items) ? $cart_items[0] : array();
-        $single_product_price = isset($first_item['price']) ? floatval($first_item['price']) : floatval($customization_data['product_price'] ?? 29.99);
-        $single_quantity = isset($first_item['quantity']) ? intval($first_item['quantity']) : intval($customization_data['quantity'] ?? 1);
-
-        // Debug: Log what we have for material and color
-        error_log('APD Place Order - Debug Info:');
-        error_log('  customization_data keys: ' . implode(', ', array_keys($customization_data)));
-        error_log('  first_item keys: ' . (!empty($first_item) ? implode(', ', array_keys($first_item)) : 'EMPTY'));
-        error_log('  print_color from customization_data: ' . ($customization_data['print_color'] ?? 'EMPTY'));
-        error_log('  vinyl_material from customization_data: ' . ($customization_data['vinyl_material'] ?? 'EMPTY'));
-        error_log('  print_color from first_item: ' . ($first_item['print_color'] ?? 'EMPTY'));
-        error_log('  vinyl_material from first_item: ' . ($first_item['vinyl_material'] ?? 'EMPTY'));
-        
-        // Extract variant data if present (for non-customizable products)
-        $variant_material = '';
-        $variant_size = '';
-        if (!empty($first_item['customization_data']['variants'])) {
-            $variants = $first_item['customization_data']['variants'];
-            $variant_material = $variants['material'] ?? '';
-            $variant_size = $variants['size'] ?? '';
-            error_log('  variant_material: ' . ($variant_material ?: 'EMPTY'));
-            error_log('  variant_size: ' . ($variant_size ?: 'EMPTY'));
-        }
-
-        $meta = array(
-            // Product Information (summary for legacy admin views)
-            'product_id' => $first_item['product_id'] ?? ($customization_data['product_id'] ?? ''),
-            'product_name' => $first_item['product_name'] ?? ($customization_data['product_name'] ?? 'Custom Freight Sign'),
-            'product_price' => $single_product_price,
-            'quantity' => $single_quantity,
-            'total_amount' => $cart_total,
-            // Design Specifications (from customization_data OR variants)
-            'print_color' => $customization_data['print_color'] ?? ($first_item['print_color'] ?? ''),
-            'vinyl_material' => $customization_data['vinyl_material'] ?? ($first_item['vinyl_material'] ?? $variant_material),
-            'material_texture_url' => $customization_data['material_texture_url'] ?? ($first_item['material_texture_url'] ?? ''),
-            // User Input Fields (All template text fields)
-            'text_fields' => $customization_data['text_fields'] ?? ($first_item['text_fields'] ?? array()),
-            'template_data' => $customization_data['template_data'] ?? ($first_item['template_data'] ?? array()),
-            'fields_display' => $customization_data['fields_display'] ?? ($first_item['fields_display'] ?? array()),
-            'template_fields_array' => $customization_data['template_fields_array'] ?? ($first_item['template_fields_array'] ?? array()),
-            // Visual Reference (Preview Images)
-            'customization_image_url' => $customization_data['image_url'] ?? ($customization_data['customization_image_url'] ?? ($first_item['customization_image_url'] ?? '')),
-            'preview_image_url' => $customization_data['preview_image_url'] ?? ($first_item['preview_image_url'] ?? ''),
-            'preview_image_png' => $customization_data['preview_image_png'] ?? ($first_item['preview_image_png'] ?? ''),
-            'preview_image_svg' => $customization_data['preview_image_svg'] ?? ($first_item['preview_image_svg'] ?? ''),
-            // Customer Information
-            'customer_name' => $name,
-            'customer_email' => $email,
-            'customer_phone' => $phone,
-            'customer_address' => $address,
-            // Order Details
-            'payment_method' => $payment_method,
-            'order_date' => current_time('Y-m-d H:i:s'),
-            'order_status' => 'apd_pending',
-            // Cart Summary (store as JSON string to keep storage consistent)
-            'cart_items' => wp_json_encode($cart_items),
-            'cart_total' => $cart_total,
-            // Payment Details
-            'paypal_order_id' => $paypal_order_id ?? '',
-            'paypal_transaction_id' => $paypal_transaction_id ?? '',
-            'paypal_payer_id' => $paypal_payer_id ?? '',
-            'payment_status' => $payment_status ?? 'completed',
-            // Manufacturing Notes
-            'manufacturing_notes' => $this->generateManufacturingNotes($customization_data),
-            'production_ready' => true,
-        );
-        $order_id = wp_insert_post(array(
-            'post_type' => 'apd_order',
-            'post_title' => 'Order ' . date('Y-m-d H:i:s'),
-            'post_status' => 'apd_pending'
-        ));
-        if (is_wp_error($order_id) || !$order_id) {
-            wp_send_json_error(array('message' => 'Unable to create order'), 500);
-        }
-        foreach ($meta as $k => $v) {
-            update_post_meta($order_id, $k, $v);
-        }
-
-        // Clear cart after placing order (session + user meta if available)
-        if (!session_id()) {
-            session_start();
-        }
-        unset($_SESSION['apd_cart']);
-        if ($user_id) {
-            delete_user_meta($user_id, 'apd_cart');
-        }
-        
-        // Send email notifications
-        $this->send_order_confirmation_email($order_id, $meta);
-        $this->send_admin_notification_email($order_id, $meta);
-        
-        // Restore error reporting before sending JSON
+        // Restore error reporting
         error_reporting($error_reporting);
         ini_set('display_errors', $display_errors);
-        
-        // Get thank you page URL - prefer slug-based option over page ID
-        $thankyou = home_url(get_option('apd_thank_you_url', '/thank-you/'));
-        
-        // Fallback to page ID if slug option is not set
-        if (!get_option('apd_thank_you_url')) {
-            $page_id = intval(get_option('apd_thankyou'));
-            if ($page_id) {
-                $thankyou = get_permalink($page_id);
-            }
+
+        // Handle errors
+        if (is_wp_error($order_id)) {
+            wp_send_json_error(array('message' => $order_id->get_error_message()));
+            return;
         }
-        
-        // Final fallback - avoid ?page_id= format
-        if (!$thankyou || strpos($thankyou, '?page_id=') !== false) {
-            $thankyou = home_url('/thank-you/');
-        }
-        
-        wp_send_json_success(array('order_id' => $order_id, 'redirect' => esc_url($thankyou)));
+
+        // Get thank you page URL
+        $thankyou_url = $this->order_service->get_thank_you_url();
+
+        wp_send_json_success(array(
+            'order_id' => $order_id,
+            'redirect' => esc_url($thankyou_url)
+        ));
     }
 
     public function apd_get_order_details()
@@ -2848,65 +2620,13 @@ class AdvancedProductDesigner
             return;
         }
 
-        // Get order post
-        $order = get_post($order_id);
-        if (!$order || $order->post_type !== 'apd_order') {
-            wp_send_json_error('Order not found');
+        // Get order using OrderService
+        $order_data = $this->order_service->get_order($order_id);
+
+        if (is_wp_error($order_data)) {
+            wp_send_json_error($order_data->get_error_message());
             return;
         }
-
-        // Get order meta
-        $order_meta = get_post_meta($order_id);
-
-        // cart_items may be stored as JSON string or array; normalize to array
-        $raw_cart = get_post_meta($order_id, 'cart_items', true);
-        $cart_items = $raw_cart;
-        if (is_string($raw_cart)) {
-            $decoded = json_decode($raw_cart, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                $cart_items = $decoded;
-            }
-        }
-        if (!is_array($cart_items)) {
-            $cart_items = array();
-        }
-        // Normalize shapes
-        if (isset($cart_items['items']) && is_array($cart_items['items'])) {
-            $cart_items = $cart_items['items'];
-        }
-        $keys = array_keys($cart_items);
-        $is_assoc = array_filter($keys, 'is_string') ? true : false;
-        if ($is_assoc) {
-            $cart_items = array_values($cart_items);
-        }
-
-        $cart_total = get_post_meta($order_id, 'cart_total', true);
-        if (!is_numeric($cart_total)) {
-            $cart_total = 0;
-            foreach ($cart_items as $ci) {
-                $cart_total += isset($ci['total']) ? (float) $ci['total'] : ((float) ($ci['price'] ?? $ci['product_price'] ?? 0) * (int) ($ci['quantity'] ?? 1));
-            }
-        }
-
-        // Prepare order data
-        $order_data = array(
-            'id' => $order_id,
-            'date' => $order->post_date,
-            'status' => $order->post_status,
-            'total' => number_format((float) $cart_total, 2),
-            'cart_total' => (float) $cart_total,
-            'cart_items' => $cart_items,
-            'customer_name' => $order_meta['customer_name'][0] ?? $order_meta['_customer_name'][0] ?? '',
-            'customer_email' => $order_meta['customer_email'][0] ?? $order_meta['_customer_email'][0] ?? '',
-            'customer_phone' => $order_meta['customer_phone'][0] ?? $order_meta['_customer_phone'][0] ?? '',
-            'customer_address' => $order_meta['customer_address'][0] ?? $order_meta['_customer_address'][0] ?? '',
-            'payment_method' => $order_meta['payment_method'][0] ?? $order_meta['_payment_method'][0] ?? '',
-            'payment_status' => $order_meta['payment_status'][0] ?? $order_meta['_payment_status'][0] ?? '',
-            'customization_data' => $order_meta['customization_data'][0] ?? $order_meta['_customization_data'][0] ?? '',
-            'preview_image_url' => $order_meta['preview_image_url'][0] ?? $order_meta['_preview_image_url'][0] ?? '',
-            'preview_image_png' => $order_meta['preview_image_png'][0] ?? $order_meta['_preview_image_png'][0] ?? '',
-            'preview_image_svg' => $order_meta['preview_image_svg'][0] ?? $order_meta['_preview_image_svg'][0] ?? ''
-        );
 
         wp_send_json_success($order_data);
     }
