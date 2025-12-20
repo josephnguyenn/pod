@@ -17,12 +17,28 @@ define('APD_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('APD_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('APD_VERSION', '2.0.0');
 
+// Include service classes
+require_once APD_PLUGIN_PATH . 'includes/class-config.php';
+require_once APD_PLUGIN_PATH . 'includes/class-cart-service.php';
+
 class AdvancedProductDesigner
 {
+    /**
+     * Cart service instance
+     * @var APD_Cart_Service
+     */
+    private $cart_service;
+
     public function __construct()
     {
+        // Initialize services
+        $this->cart_service = new APD_Cart_Service();
+        
         // Start session early
         add_action('init', array($this, 'start_session'), 1);
+        
+        // Merge guest cart on user login
+        add_action('wp_login', array($this, 'merge_guest_cart_on_login'), 10, 2);
         
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
@@ -169,6 +185,17 @@ class AdvancedProductDesigner
         if (!session_id() && !headers_sent()) {
             session_start();
         }
+    }
+
+    /**
+     * Merge guest cart with user cart on login
+     *
+     * @param string $user_login Username
+     * @param WP_User $user User object
+     */
+    public function merge_guest_cart_on_login($user_login, $user)
+    {
+        $this->cart_service->merge_guest_cart_on_login($user->ID);
     }
 
     public function init()
@@ -2063,24 +2090,16 @@ class AdvancedProductDesigner
 
     public function ajax_add_to_cart()
     {
-        // Start session if not already started
-        if (!session_id()) {
-            session_start();
-        }
-        
         // Log for debugging
         error_log('APD Add to Cart: Started');
         error_log('APD Add to Cart POST data: ' . print_r($_POST, true));
-        error_log('APD Add to Cart: Session ID: ' . session_id());
-        error_log('APD Add to Cart: Current cart before adding: ' . print_r($_SESSION['apd_cart'] ?? 'empty', true));
         
         // Verify nonce (allow both nonce types for compatibility)
         // Make nonce optional to support guest checkout
         $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : '';
         if ($nonce && !empty($nonce)) {
-            if (!wp_verify_nonce($nonce, 'apd_ajax_nonce') && !wp_verify_nonce($nonce, 'fsc_nonce')) {
+            if (!wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_AJAX) && !wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_FSC)) {
                 error_log('APD Add to Cart: Nonce verification failed');
-                error_log('APD Add to Cart: Nonce value: ' . $nonce);
                 wp_send_json_error('Security check failed');
                 return;
             }
@@ -2096,123 +2115,49 @@ class AdvancedProductDesigner
         // Debug: Log what we received
         error_log('APD Add to Cart: product_id = ' . $product_id);
         error_log('APD Add to Cart: quantity = ' . $quantity);
-        error_log('APD Add to Cart: customization_data keys = ' . implode(', ', array_keys($customization_data)));
         error_log('APD Add to Cart: print_color = ' . ($customization_data['print_color'] ?? 'NOT SET'));
         error_log('APD Add to Cart: vinyl_material = ' . ($customization_data['vinyl_material'] ?? 'NOT SET'));
 
-        // Get product data
-        $product = get_post($product_id);
-        if (!$product || $product->post_type !== 'apd_product') {
-            wp_send_json_error('Product not found');
+        // Use cart service to add item
+        $result = $this->cart_service->add_to_cart($product_id, $quantity, $customization_data);
+        
+        if (is_wp_error($result)) {
+            error_log('APD Add to Cart: Error - ' . $result->get_error_message());
+            wp_send_json_error($result->get_error_message());
+            return;
         }
 
-        // Get base price and sale price
-        $base_price = floatval(get_post_meta($product_id, '_fsc_price', true));
-        if (!$base_price) {
-            $base_price = 29.99;  // Default price
-        }
+        $cart_totals = $this->cart_service->get_cart_totals();
         
-        $sale_price = get_post_meta($product_id, '_fsc_sale_price', true);
-        $sale_price = !empty($sale_price) ? floatval($sale_price) : null;
-        
-        // Use sale_price if available, otherwise use base_price
-        $product_base_price = ($sale_price && $sale_price > 0) ? $sale_price : $base_price;
-        
-        // Get material price from customization_data
-        $material_price = 0;
-        if (isset($customization_data['vinyl_material']) && !empty($customization_data['vinyl_material'])) {
-            $material_name = $customization_data['vinyl_material'];
-            $materials = $this->get_materials();
-            if (isset($materials[$material_name])) {
-                $material_data = $materials[$material_name];
-                if (is_array($material_data) && isset($material_data['price'])) {
-                    $material_price = floatval($material_data['price']);
-                }
-            }
-        }
-        
-        // Check if this is a variant product with its own price
-        // Priority: variants.price > product_price > calculated price
-        if (isset($customization_data['variants']) && isset($customization_data['variants']['price'])) {
-            // For variant products, use the variant's specific price (already complete)
-            $price = floatval($customization_data['variants']['price']);
-        } elseif (isset($customization_data['product_price'])) {
-            // Use frontend-provided price (may include material price already)
-            $price = floatval($customization_data['product_price']);
-        } else {
-            // Fallback: Calculate from base/sale price + material price
-            $price = $product_base_price + $material_price;
-        }
-
-        // Generate unique cart item ID
-        $cart_item_id = 'item_' . $product_id . '_' . time() . '_' . wp_rand(1000, 9999);
-
-        $cart_item = array(
-            'id' => $cart_item_id,
-            'product_id' => $product_id,
-            'product_name' => $product->post_title,
-            'price' => $price,
-            'base_price' => $base_price,
-            'sale_price' => $sale_price,
-            'material_price' => $material_price,
-            'quantity' => $quantity,
-            'total' => $price * $quantity,
-            'customization_data' => $customization_data,
-            'added_at' => current_time('Y-m-d H:i:s'),
-            // Extract print_color and vinyl_material to top level for easy access
-            'print_color' => $customization_data['print_color'] ?? '',
-            'vinyl_material' => $customization_data['vinyl_material'] ?? ''
-        );
-
-        // Get current cart
-        $cart = $this->get_cart();
-        $cart[$cart_item_id] = $cart_item;
-
-        // Save cart
-        $this->save_cart($cart);
-        
-        // Log success
-        error_log('APD Add to Cart: Item added successfully. Cart now has ' . count($cart) . ' items');
-        error_log('APD Add to Cart: Session ID: ' . session_id());
-        error_log('APD Add to Cart: Cart contents: ' . print_r($cart, true));
+        error_log('APD Add to Cart: Item added successfully. Cart now has ' . $cart_totals['items'] . ' items');
 
         wp_send_json_success(array(
             'message' => 'Product added to cart',
-            'cart_item' => $cart_item,
-            'cart_count' => count($cart)
+            'cart_item' => $result,
+            'cart_count' => $cart_totals['items']
         ));
     }
 
     public function ajax_get_cart()
     {
         error_log('APD Get Cart: Started');
-        error_log('APD Get Cart: Session ID: ' . session_id());
         
-        $cart = $this->get_cart();
+        $cart = $this->cart_service->get_cart();
+        $totals = $this->cart_service->get_cart_totals();
         
-        error_log('APD Get Cart: Retrieved cart: ' . print_r($cart, true));
-        error_log('APD Get Cart: Cart count: ' . count($cart));
-        
-        $total = 0;
-        $count = 0;
-
-        foreach ($cart as $item) {
-            $total += $item['total'];
-            $count += $item['quantity'];
-        }
-        
-        error_log('APD Get Cart: Total: ' . $total . ', Count: ' . $count);
+        error_log('APD Get Cart: Cart count: ' . $totals['items']);
+        error_log('APD Get Cart: Total: ' . $totals['subtotal']);
 
         wp_send_json_success(array(
             'cart' => $cart,
-            'total' => $total,
-            'count' => $count
+            'total' => $totals['subtotal'],
+            'count' => $totals['count']
         ));
     }
 
     public function ajax_update_cart_item()
     {
-        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
             wp_send_json_error('Security check failed');
         }
 
@@ -2223,34 +2168,29 @@ class AdvancedProductDesigner
             wp_send_json_error('Invalid quantity');
         }
 
-        $cart = $this->get_cart();
-        if (!isset($cart[$cart_item_id])) {
-            wp_send_json_error('Cart item not found');
+        $result = $this->cart_service->update_cart_item($cart_item_id, $quantity);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+            return;
         }
-
-        $cart[$cart_item_id]['quantity'] = $quantity;
-        $cart[$cart_item_id]['total'] = $cart[$cart_item_id]['price'] * $quantity;
-
-        $this->save_cart($cart);
 
         wp_send_json_success(array(
             'message' => 'Cart updated',
-            'cart_item' => $cart[$cart_item_id]
+            'cart_item' => $result
         ));
     }
 
     public function ajax_remove_cart_item()
     {
-        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
             wp_send_json_error('Security check failed');
         }
 
         $cart_item_id = sanitize_text_field($_POST['cart_item_id']);
-        $cart = $this->get_cart();
+        $result = $this->cart_service->remove_cart_item($cart_item_id);
 
-        if (isset($cart[$cart_item_id])) {
-            unset($cart[$cart_item_id]);
-            $this->save_cart($cart);
+        if ($result) {
             wp_send_json_success(array('message' => 'Item removed from cart'));
         } else {
             wp_send_json_error('Cart item not found');
@@ -2259,41 +2199,24 @@ class AdvancedProductDesigner
 
     public function ajax_clear_cart()
     {
-        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
             wp_send_json_error('Security check failed');
         }
 
-        $this->save_cart(array());
+        $this->cart_service->clear_cart();
         wp_send_json_success(array('message' => 'Cart cleared'));
     }
 
     private function get_cart()
     {
-        if (!session_id()) {
-            session_start();
-        }
-        
-        error_log('APD get_cart(): Session ID: ' . session_id());
-        error_log('APD get_cart(): SESSION data: ' . print_r($_SESSION, true));
-        
-        $cart = isset($_SESSION['apd_cart']) ? $_SESSION['apd_cart'] : array();
-        
-        error_log('APD get_cart(): Returning cart with ' . count($cart) . ' items');
-        
-        return $cart;
+        // Delegate to cart service
+        return $this->cart_service->get_cart();
     }
 
     private function save_cart($cart)
     {
-        if (!session_id()) {
-            session_start();
-        }
-        
-        error_log('APD save_cart(): Session ID: ' . session_id());
-        error_log('APD save_cart(): Saving cart with ' . count($cart) . ' items');
-        error_log('APD save_cart(): Cart data: ' . print_r($cart, true));
-        
-        $_SESSION['apd_cart'] = $cart;
+        // Delegate to cart service
+        return $this->cart_service->save_cart($cart);
         
         error_log('APD save_cart(): Verification - SESSION apd_cart now has ' . count($_SESSION['apd_cart']) . ' items');
     }
