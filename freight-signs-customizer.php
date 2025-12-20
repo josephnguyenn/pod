@@ -17,9 +17,9 @@ define('APD_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('APD_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('APD_VERSION', '2.0.0');
 
-// Include service classes
-require_once APD_PLUGIN_PATH . 'includes/class-config.php';
-require_once APD_PLUGIN_PATH . 'includes/class-cart-service.php';
+// Load autoloader
+require_once APD_PLUGIN_PATH . 'includes/class-autoloader.php';
+APD_Autoloader::load_services();
 
 class AdvancedProductDesigner
 {
@@ -29,16 +29,29 @@ class AdvancedProductDesigner
      */
     private $cart_service;
 
+    /**
+     * Template service instance
+     * @var APD_Template_Service
+     */
+    private $template_service;
+
     public function __construct()
     {
         // Initialize services
         $this->cart_service = new APD_Cart_Service();
+        $this->template_service = new APD_Template_Service();
         
         // Start session early
         add_action('init', array($this, 'start_session'), 1);
         
         // Merge guest cart on user login
         add_action('wp_login', array($this, 'merge_guest_cart_on_login'), 10, 2);
+        
+        // Schedule cart cleanup cron job
+        add_action('apd_cleanup_carts', array('APD_Cart_Service', 'cleanup_expired_carts'));
+        if (!wp_next_scheduled('apd_cleanup_carts')) {
+            wp_schedule_event(time(), 'daily', 'apd_cleanup_carts');
+        }
         
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
