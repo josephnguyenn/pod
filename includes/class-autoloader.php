@@ -66,6 +66,7 @@ class APD_Autoloader
             'order-service',
             'email-service',
             'template-service',
+            'pricing-service',
             'apd-debug-logger',
             'apd-health-check'
         );

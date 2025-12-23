@@ -575,6 +575,15 @@ class AdvancedProductDesigner
             'normal',
             'default'
         );
+
+        add_meta_box(
+            'apd_pricing_tiers',
+            'Volume Pricing Tiers',
+            array($this, 'pricing_tiers_meta_box'),
+            'apd_product',
+            'normal',
+            'default'
+        );
     }
 
     public function product_details_meta_box($post)
@@ -1197,6 +1206,34 @@ class AdvancedProductDesigner
                 'combinations' => array()
             );
             update_post_meta($post_id, '_apd_variants', $variants_data);
+        }
+
+        // Save pricing tiers
+        if (isset($_POST['apd_pricing_tiers_nonce']) && wp_verify_nonce($_POST['apd_pricing_tiers_nonce'], 'apd_pricing_tiers_meta')) {
+            $pricing_service = new APD_Pricing_Service();
+            
+            $tiers = array();
+            if (isset($_POST['apd_tier_min_qty']) && is_array($_POST['apd_tier_min_qty'])) {
+                $min_qtys = $_POST['apd_tier_min_qty'];
+                $discounts = isset($_POST['apd_tier_discount']) ? $_POST['apd_tier_discount'] : array();
+                $names = isset($_POST['apd_tier_name']) ? $_POST['apd_tier_name'] : array();
+                
+                foreach ($min_qtys as $index => $min_qty) {
+                    if (!empty($min_qty) && isset($discounts[$index]) && $discounts[$index] !== '') {
+                        $tiers[] = array(
+                            'min_qty' => intval($min_qty),
+                            'discount_percent' => floatval($discounts[$index]),
+                            'name' => isset($names[$index]) ? sanitize_text_field($names[$index]) : ''
+                        );
+                    }
+                }
+            }
+            
+            if (!empty($tiers)) {
+                $pricing_service->save_price_tiers($post_id, $tiers);
+            } else {
+                $pricing_service->delete_price_tiers($post_id);
+            }
         }
     }
 
@@ -7114,6 +7151,142 @@ class AdvancedProductDesigner
 
         // Only return materials from database, no legacy materials
         return $materials;
+    }
+
+    /**
+     * Pricing Tiers Meta Box
+     */
+    public function pricing_tiers_meta_box($post)
+    {
+        wp_nonce_field('apd_pricing_tiers_meta', 'apd_pricing_tiers_nonce');
+        
+        $pricing_service = new APD_Pricing_Service();
+        $tiers = $pricing_service->get_price_tiers($post->ID);
+        
+        $base_price = floatval(get_post_meta($post->ID, '_fsc_price', true));
+        if (!$base_price) {
+            $base_price = 29.99;
+        }
+        
+        ?>
+        <div class="apd-pricing-tiers-wrapper">
+            <p class="description">Set up quantity-based discounts. When customers order in bulk, they automatically receive the discount.</p>
+            
+            <table class="widefat" id="apd-pricing-tiers-table">
+                <thead>
+                    <tr>
+                        <th style="width: 150px;">Minimum Quantity</th>
+                        <th style="width: 150px;">Discount (%)</th>
+                        <th style="width: 200px;">Tier Name (optional)</th>
+                        <th style="width: 150px;">Price per Unit</th>
+                        <th style="width: 80px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="apd-pricing-tiers-body">
+                    <?php if (!empty($tiers)): ?>
+                        <?php foreach ($tiers as $index => $tier): ?>
+                            <?php 
+                            $discounted_price = $base_price - (($base_price * floatval($tier['discount_percent'])) / 100);
+                            ?>
+                            <tr>
+                                <td><input type="number" name="apd_tier_min_qty[]" value="<?php echo esc_attr($tier['min_qty']); ?>" min="1" class="small-text" required></td>
+                                <td><input type="number" name="apd_tier_discount[]" value="<?php echo esc_attr($tier['discount_percent']); ?>" min="0" max="100" step="0.01" class="small-text apd-tier-discount" required></td>
+                                <td><input type="text" name="apd_tier_name[]" value="<?php echo esc_attr($tier['name']); ?>" class="regular-text" placeholder="e.g., Bulk Order"></td>
+                                <td><span class="apd-calculated-price">$<?php echo number_format($discounted_price, 2); ?></span></td>
+                                <td><button type="button" class="button apd-remove-tier-btn">Remove</button></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr class="apd-no-tiers-row">
+                            <td colspan="5" style="text-align: center; padding: 20px;">
+                                <em>No pricing tiers configured. Click "Add Tier" to create volume discounts.</em>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            
+            <button type="button" class="button apd-add-tier-btn" style="margin-top: 10px;">Add Tier</button>
+            
+            <div style="margin-top: 20px; padding: 15px; background: #f0f0f1; border-left: 4px solid #2271b1;">
+                <h4 style="margin-top: 0;">Preview</h4>
+                <p class="description">How your volume pricing will appear to customers:</p>
+                <div id="apd-pricing-preview">
+                    <?php if (!empty($tiers)): ?>
+                        <table class="widefat" style="max-width: 500px;">
+                            <thead>
+                                <tr>
+                                    <th>Quantity</th>
+                                    <th>Discount</th>
+                                    <th>Price/Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($tiers as $tier): ?>
+                                    <?php $discounted_price = $base_price - (($base_price * floatval($tier['discount_percent'])) / 100); ?>
+                                    <tr>
+                                        <td><?php echo esc_html($tier['min_qty']); ?>+</td>
+                                        <td><?php echo esc_html($tier['discount_percent']); ?>%</td>
+                                        <td>$<?php echo number_format($discounted_price, 2); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php else: ?>
+                        <p><em>No tiers to preview</em></p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            var basePrice = <?php echo $base_price; ?>;
+            
+            // Add new tier
+            $('.apd-add-tier-btn').on('click', function() {
+                $('.apd-no-tiers-row').remove();
+                var newRow = '<tr>' +
+                    '<td><input type="number" name="apd_tier_min_qty[]" value="" min="1" class="small-text" required></td>' +
+                    '<td><input type="number" name="apd_tier_discount[]" value="" min="0" max="100" step="0.01" class="small-text apd-tier-discount" required></td>' +
+                    '<td><input type="text" name="apd_tier_name[]" value="" class="regular-text" placeholder="e.g., Bulk Order"></td>' +
+                    '<td><span class="apd-calculated-price">$0.00</span></td>' +
+                    '<td><button type="button" class="button apd-remove-tier-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-pricing-tiers-body').append(newRow);
+            });
+            
+            // Remove tier
+            $(document).on('click', '.apd-remove-tier-btn', function() {
+                var $tbody = $('#apd-pricing-tiers-body');
+                $(this).closest('tr').remove();
+                
+                // If no tiers left, show placeholder
+                if ($tbody.find('tr').length === 0) {
+                    $tbody.html('<tr class="apd-no-tiers-row"><td colspan="5" style="text-align: center; padding: 20px;"><em>No pricing tiers configured. Click "Add Tier" to create volume discounts.</em></td></tr>');
+                }
+            });
+            
+            // Update calculated price on discount change
+            $(document).on('input', '.apd-tier-discount', function() {
+                var discount = parseFloat($(this).val()) || 0;
+                var discountedPrice = basePrice - ((basePrice * discount) / 100);
+                $(this).closest('tr').find('.apd-calculated-price').text('$' + discountedPrice.toFixed(2));
+            });
+        });
+        </script>
+        
+        <style>
+        .apd-pricing-tiers-wrapper table input[type="number"],
+        .apd-pricing-tiers-wrapper table input[type="text"] {
+            width: 100%;
+        }
+        .apd-calculated-price {
+            font-weight: bold;
+            color: #2271b1;
+        }
+        </style>
+        <?php
     }
 
     /**

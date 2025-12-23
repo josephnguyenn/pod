@@ -203,6 +203,42 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                     </div>
                 <?php endif; ?>
 
+                <!-- Volume Pricing Tiers -->
+                <?php
+                $pricing_service = new APD_Pricing_Service();
+                if ($pricing_service->has_tiered_pricing($product_id)):
+                    $tiers = $pricing_service->get_price_tiers($product_id);
+                    $base_price = floatval($display_price);
+                ?>
+                    <div class="apd-volume-pricing">
+                        <h3>💰 Buy More, Save More!</h3>
+                        <p class="apd-volume-description">Order in bulk and save with our volume discounts:</p>
+                        <table class="apd-pricing-tier-table">
+                            <thead>
+                                <tr>
+                                    <th>Quantity</th>
+                                    <th>Discount</th>
+                                    <th>Price per Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($tiers as $tier): ?>
+                                    <?php 
+                                    $discount_percent = floatval($tier['discount_percent']);
+                                    $discounted_price = $base_price - (($base_price * $discount_percent) / 100);
+                                    ?>
+                                    <tr>
+                                        <td><strong><?php echo esc_html($tier['min_qty']); ?>+</strong></td>
+                                        <td><span class="apd-discount-badge"><?php echo esc_html($discount_percent); ?>% OFF</span></td>
+                                        <td><strong class="apd-tier-price">$<?php echo number_format($discounted_price, 2); ?></strong></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <div id="apd-pricing-message" class="apd-pricing-message"></div>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Material Info -->
                 <?php if ($material): ?>
                     <div class="apd-product-material">
@@ -502,6 +538,118 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     background: var(--color-background);
     border-radius: 6px;
     font-size: 0.95rem;
+}
+
+/* Volume Pricing Styles */
+.apd-volume-pricing {
+    margin-top: 30px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.apd-volume-pricing h3 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0 0 10px 0;
+    color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.apd-volume-description {
+    color: rgba(255,255,255,0.9);
+    margin-bottom: 20px;
+    font-size: 0.95rem;
+}
+
+.apd-pricing-tier-table {
+    width: 100%;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.apd-pricing-tier-table thead {
+    background: #f8f9fa;
+}
+
+.apd-pricing-tier-table th {
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    color: #444;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.apd-pricing-tier-table td {
+    padding: 12px;
+    color: #333;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.apd-pricing-tier-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.apd-pricing-tier-table tbody tr:hover {
+    background: #f8f9fa;
+}
+
+.apd-discount-badge {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: inline-block;
+    box-shadow: 0 2px 5px rgba(245, 87, 108, 0.3);
+}
+
+.apd-tier-price {
+    color: #667eea;
+    font-size: 1.1rem;
+}
+
+.apd-pricing-message {
+    margin-top: 15px;
+    padding: 12px 15px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.apd-pricing-message.apd-discount-active {
+    background: rgba(76, 175, 80, 0.2);
+    border-left: 4px solid #4caf50;
+    color: white;
+}
+
+.apd-pricing-message.apd-next-tier {
+    background: rgba(255, 193, 7, 0.2);
+    border-left: 4px solid #ffc107;
+    color: white;
+}
+
+@media (max-width: 768px) {
+    .apd-pricing-tier-table {
+        font-size: 0.85rem;
+    }
+    
+    .apd-pricing-tier-table th,
+    .apd-pricing-tier-table td {
+        padding: 8px;
+    }
+    
+    .apd-discount-badge {
+        font-size: 0.75rem;
+        padding: 3px 8px;
+    }
 }
 
 /* Quantity Section */
@@ -894,6 +1042,7 @@ jQuery(document).ready(function($) {
         var value = parseInt($input.val()) || 1;
         if (value > 1) {
             $input.val(value - 1);
+            updatePricingMessage();
         }
     });
 
@@ -902,8 +1051,61 @@ jQuery(document).ready(function($) {
         var value = parseInt($input.val()) || 1;
         if (value < 100) {
             $input.val(value + 1);
+            updatePricingMessage();
         }
     });
+
+    // Update pricing message when quantity changes manually
+    $('#product-quantity').on('change input', function() {
+        updatePricingMessage();
+    });
+
+    // Function to update pricing message based on quantity
+    function updatePricingMessage() {
+        var quantity = parseInt($('#product-quantity').val()) || 1;
+        var $message = $('#apd-pricing-message');
+        
+        <?php if ($pricing_service->has_tiered_pricing($product_id)): ?>
+        // Get pricing tiers from PHP
+        var tiers = <?php echo json_encode($pricing_service->get_price_tiers($product_id)); ?>;
+        var basePrice = <?php echo floatval($display_price); ?>;
+        
+        // Find applicable tier
+        var applicableTier = null;
+        for (var i = 0; i < tiers.length; i++) {
+            if (quantity >= parseInt(tiers[i].min_qty)) {
+                applicableTier = tiers[i];
+            }
+        }
+        
+        if (applicableTier) {
+            var discount = parseFloat(applicableTier.discount_percent);
+            var savings = (basePrice * discount / 100) * quantity;
+            $message.removeClass('apd-next-tier').addClass('apd-discount-active');
+            $message.html('<strong>🎉 Volume Discount Applied!</strong> You save ' + discount + '% ($' + savings.toFixed(2) + ' total savings)');
+        } else {
+            // Show next tier incentive
+            var nextTier = null;
+            for (var i = 0; i < tiers.length; i++) {
+                if (quantity < parseInt(tiers[i].min_qty)) {
+                    nextTier = tiers[i];
+                    break;
+                }
+            }
+            
+            if (nextTier) {
+                var moreNeeded = parseInt(nextTier.min_qty) - quantity;
+                $message.removeClass('apd-discount-active').addClass('apd-next-tier');
+                $message.html('💡 Order ' + moreNeeded + ' more to save ' + nextTier.discount_percent + '%!');
+            } else {
+                $message.removeClass('apd-discount-active apd-next-tier').html('');
+            }
+        }
+        <?php endif; ?>
+    }
+    
+    // Initialize pricing message on page load
+    updatePricingMessage();
 
     // Helper function to get variant data
     function getVariantData() {

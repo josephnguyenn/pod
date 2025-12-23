@@ -26,6 +26,19 @@ class APD_Cart_Service
     const CART_KEY_PREFIX = 'apd_cart_';
 
     /**
+     * Pricing service instance
+     * @var APD_Pricing_Service
+     */
+    private $pricing_service;
+
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        $this->pricing_service = new APD_Pricing_Service();
+    }
+
+    /**
      * Get unique cart identifier for current user/session
      *
      * @return string Cart identifier
@@ -106,8 +119,8 @@ class APD_Cart_Service
             return new WP_Error('invalid_product', 'Product not found');
         }
 
-        // Get pricing
-        $pricing = $this->calculate_item_price($product_id, $customization_data);
+        // Get pricing with quantity-based discounts
+        $pricing = $this->calculate_item_price($product_id, $customization_data, max(1, intval($quantity)));
         if (is_wp_error($pricing)) {
             return $pricing;
         }
@@ -142,13 +155,14 @@ class APD_Cart_Service
     }
 
     /**
-     * Calculate item price with materials
+     * Calculate item price with materials and quantity-based discounts
      *
      * @param int $product_id Product ID
      * @param array $customization_data Customization data
+     * @param int $quantity Quantity (default 1)
      * @return array|WP_Error Pricing data or error
      */
-    private function calculate_item_price($product_id, $customization_data)
+    private function calculate_item_price($product_id, $customization_data, $quantity = 1)
     {
         // Get base price
         $base_price = floatval(get_post_meta($product_id, '_fsc_price', true));
@@ -176,7 +190,7 @@ class APD_Cart_Service
             }
         }
 
-        // Determine final price
+        // Determine final base price per unit
         if (isset($customization_data['variants']) && isset($customization_data['variants']['price'])) {
             // Variant-specific price
             $price = floatval($customization_data['variants']['price']);
@@ -187,6 +201,10 @@ class APD_Cart_Service
             // Calculate from base + material
             $price = $product_base_price + $material_price;
         }
+
+        // Apply tiered pricing based on quantity
+        $pricing_result = $this->pricing_service->calculate_tiered_price($product_id, $quantity, $price);
+        $price = $pricing_result['price']; // Use discounted price per unit
 
         return array(
             'price' => $price,
@@ -225,6 +243,15 @@ class APD_Cart_Service
 
         if (!isset($cart[$cart_item_id])) {
             return new WP_Error('item_not_found', 'Cart item not found');
+        }
+
+        // Recalculate price with new quantity (for tiered pricing)
+        $product_id = $cart[$cart_item_id]['product_id'];
+        $customization_data = $cart[$cart_item_id]['customization_data'];
+        $price_data = $this->calculate_item_price($product_id, $customization_data, $quantity);
+        
+        if (!is_wp_error($price_data)) {
+            $cart[$cart_item_id]['price'] = $price_data['price'];
         }
 
         $cart[$cart_item_id]['quantity'] = $quantity;
