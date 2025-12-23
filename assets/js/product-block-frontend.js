@@ -95,7 +95,7 @@
                 '<div class="apd-customization-panel">' +
                     '<div class="apd-product-info">' +
                         '<div class="apd-product-name">' + (product.title || '') + '</div>' +
-                        '<div class="apd-product-price">$' + (product.price || '') + ' Heavy Metal Chrome with Color</div>' +
+                        '<div class="apd-product-price">$' + (product.price || '') + '</div>' +
                     '</div>' +
                     '<div class="apd-form-group">' +
                         '<h4 style="margin-bottom:10px;color:#333">Print Color</h4>' +
