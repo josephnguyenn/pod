@@ -197,7 +197,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         <h3>Features & Benefits</h3>
                         <ul class="apd-feature-list">
                             <?php foreach ($features as $feature): ?>
-                                <li>✓ <?php echo esc_html($feature); ?></li>
+                                <li><?php echo esc_html($feature); ?></li>
                             <?php endforeach; ?>
                         </ul>
                     </div>
