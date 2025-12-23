@@ -297,7 +297,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 }
 
 .apd-container {
-    max-width: 1140px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 0 20px;
 }
