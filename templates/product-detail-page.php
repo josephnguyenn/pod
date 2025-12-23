@@ -211,14 +211,14 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                     $base_price = floatval($display_price);
                 ?>
                     <div class="apd-volume-pricing">
-                        <h3>💰 Buy More, Save More!</h3>
-                        <p class="apd-volume-description">Order in bulk and save with our volume discounts:</p>
+                        <h3>Volume Discounts Available</h3>
+                        <p class="apd-volume-description">Save more when you order in larger quantities</p>
                         <table class="apd-pricing-tier-table">
                             <thead>
                                 <tr>
                                     <th>Quantity</th>
                                     <th>Discount</th>
-                                    <th>Price per Unit</th>
+                                    <th>Price Each</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -228,9 +228,9 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                                     $discounted_price = $base_price - (($base_price * $discount_percent) / 100);
                                     ?>
                                     <tr>
-                                        <td><strong><?php echo esc_html($tier['min_qty']); ?>+</strong></td>
-                                        <td><span class="apd-discount-badge"><?php echo esc_html($discount_percent); ?>% OFF</span></td>
-                                        <td><strong class="apd-tier-price">$<?php echo number_format($discounted_price, 2); ?></strong></td>
+                                        <td><?php echo esc_html($tier['min_qty']); ?>+</td>
+                                        <td><span class="apd-discount-badge"><?php echo esc_html($discount_percent); ?>% off</span></td>
+                                        <td class="apd-tier-price">$<?php echo number_format($discounted_price, 2); ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -543,53 +543,50 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 /* Volume Pricing Styles */
 .apd-volume-pricing {
     margin-top: 30px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #f8f9fa;
     padding: 25px;
-    border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
 }
 
 .apd-volume-pricing h3 {
-    font-size: 1.3rem;
-    font-weight: 700;
-    margin: 0 0 10px 0;
-    color: #ffffff;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+    color: #333;
 }
 
 .apd-volume-description {
-    color: rgba(255,255,255,0.9);
+    color: #666;
     margin-bottom: 20px;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .apd-pricing-tier-table {
     width: 100%;
     background: white;
-    border-radius: 8px;
+    border-radius: 6px;
     overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid #e0e0e0;
 }
 
 .apd-pricing-tier-table thead {
-    background: #f8f9fa;
+    background: #f5f5f5;
 }
 
 .apd-pricing-tier-table th {
-    padding: 12px;
+    padding: 12px 15px;
     text-align: left;
     font-weight: 600;
-    color: #444;
+    color: #555;
     font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 2px solid #e9ecef;
+    border-bottom: 1px solid #e0e0e0;
 }
 
 .apd-pricing-tier-table td {
-    padding: 12px;
+    padding: 12px 15px;
     color: #333;
-    border-bottom: 1px solid #f1f3f5;
+    border-bottom: 1px solid #f0f0f0;
 }
 
 .apd-pricing-tier-table tbody tr:last-child td {
@@ -597,23 +594,23 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 }
 
 .apd-pricing-tier-table tbody tr:hover {
-    background: #f8f9fa;
+    background: #fafafa;
 }
 
 .apd-discount-badge {
-    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    background: #28a745;
     color: white;
     padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 0.85rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
     font-weight: 600;
     display: inline-block;
-    box-shadow: 0 2px 5px rgba(245, 87, 108, 0.3);
 }
 
 .apd-tier-price {
-    color: #667eea;
-    font-size: 1.1rem;
+    color: #28a745;
+    font-weight: 600;
+    font-size: 1rem;
 }
 
 .apd-pricing-message {
@@ -621,19 +618,20 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     padding: 12px 15px;
     border-radius: 6px;
     font-size: 0.9rem;
-    font-weight: 500;
+    background: white;
+    border: 1px solid #e0e0e0;
 }
 
 .apd-pricing-message.apd-discount-active {
-    background: rgba(76, 175, 80, 0.2);
-    border-left: 4px solid #4caf50;
-    color: white;
+    background: #e8f5e9;
+    border-left: 3px solid #28a745;
+    color: #2d5016;
 }
 
 .apd-pricing-message.apd-next-tier {
-    background: rgba(255, 193, 7, 0.2);
-    border-left: 4px solid #ffc107;
-    color: white;
+    background: #fff9e6;
+    border-left: 3px solid #ffa000;
+    color: #663c00;
 }
 
 @media (max-width: 768px) {
@@ -643,7 +641,7 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
     
     .apd-pricing-tier-table th,
     .apd-pricing-tier-table td {
-        padding: 8px;
+        padding: 10px;
     }
     
     .apd-discount-badge {
@@ -1082,7 +1080,7 @@ jQuery(document).ready(function($) {
             var discount = parseFloat(applicableTier.discount_percent);
             var savings = (basePrice * discount / 100) * quantity;
             $message.removeClass('apd-next-tier').addClass('apd-discount-active');
-            $message.html('<strong>🎉 Volume Discount Applied!</strong> You save ' + discount + '% ($' + savings.toFixed(2) + ' total savings)');
+            $message.html('<strong>Discount applied:</strong> ' + discount + '% off (Save $' + savings.toFixed(2) + ')');
         } else {
             // Show next tier incentive
             var nextTier = null;
@@ -1096,7 +1094,7 @@ jQuery(document).ready(function($) {
             if (nextTier) {
                 var moreNeeded = parseInt(nextTier.min_qty) - quantity;
                 $message.removeClass('apd-discount-active').addClass('apd-next-tier');
-                $message.html('💡 Order ' + moreNeeded + ' more to save ' + nextTier.discount_percent + '%!');
+                $message.html('Order ' + moreNeeded + ' more to get ' + nextTier.discount_percent + '% off');
             } else {
                 $message.removeClass('apd-discount-active apd-next-tier').html('');
             }
