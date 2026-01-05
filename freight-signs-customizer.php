@@ -6743,6 +6743,15 @@ class AdvancedProductDesigner
             return;
         }
 
+        // Handle category management
+        if (isset($_POST['add_material_category']) && wp_verify_nonce($_POST['category_nonce'], 'manage_material_category')) {
+            $this->handle_add_material_category();
+        }
+
+        if (isset($_POST['delete_material_category']) && wp_verify_nonce($_POST['category_nonce'], 'manage_material_category')) {
+            $this->handle_delete_material_category();
+        }
+
         // Handle material upload
         if (isset($_POST['upload_material']) && wp_verify_nonce($_POST['material_nonce'], 'upload_material')) {
             $this->handle_material_upload();
@@ -6760,6 +6769,16 @@ class AdvancedProductDesigner
             echo '<script type="text/javascript">window.location.href = "' . admin_url('admin.php?page=freight-signs-materials') . '";</script>';
             exit;
         }
+
+        // Handle material category update
+        if (isset($_POST['update_material_category']) && wp_verify_nonce($_POST['material_category_nonce'], 'update_material_category')) {
+            $this->handle_material_category_update();
+            echo '<script type="text/javascript">window.location.href = "' . admin_url('admin.php?page=freight-signs-materials') . '";</script>';
+            exit;
+        }
+
+        // Get material categories
+        $categories = $this->get_material_categories();
 
         // Get current materials
         $materials = $this->get_materials_list();
@@ -7001,6 +7020,7 @@ class AdvancedProductDesigner
         if ($material_price < 0) {
             $material_price = 0;
         }
+        $material_category = isset($_POST['material_category']) ? sanitize_text_field($_POST['material_category']) : 'Uncategorized';
 
         $materials = get_option('apd_materials', array());
         
@@ -7017,7 +7037,8 @@ class AdvancedProductDesigner
                     'type' => 'media',
                     'date' => current_time('mysql'),
                     'price' => $material_price,
-                    'media_id' => $media_id
+                    'media_id' => $media_id,
+                    'category' => $material_category
                 );
                 update_option('apd_materials', $materials);
                 
@@ -7067,7 +7088,8 @@ class AdvancedProductDesigner
                 'url' => APD_PLUGIN_URL . 'uploads/material/' . $filename,
                 'type' => 'uploaded',
                 'date' => current_time('mysql'),
-                'price' => $material_price
+                'price' => $material_price,
+                'category' => $material_category
             );
             update_option('apd_materials', $materials);
 
@@ -7138,6 +7160,91 @@ class AdvancedProductDesigner
 
             add_action('admin_notices', function () {
                 echo '<div class="notice notice-success"><p>✅ Material deleted successfully!</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Get material categories
+     */
+    public function get_material_categories()
+    {
+        $categories = get_option('apd_material_categories', array(
+            'Vinyl',
+            'Metal',
+            'Specialty',
+            'Texture'
+        ));
+        return $categories;
+    }
+
+    /**
+     * Handle add material category
+     */
+    public function handle_add_material_category()
+    {
+        $category_name = sanitize_text_field($_POST['category_name']);
+        
+        if (empty($category_name)) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Category name cannot be empty.</p></div>';
+            });
+            return;
+        }
+
+        $categories = $this->get_material_categories();
+        
+        if (in_array($category_name, $categories)) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Category already exists.</p></div>';
+            });
+            return;
+        }
+
+        $categories[] = $category_name;
+        update_option('apd_material_categories', $categories);
+
+        add_action('admin_notices', function () {
+            echo '<div class="notice notice-success"><p>✅ Category added successfully!</p></div>';
+        });
+    }
+
+    /**
+     * Handle delete material category
+     */
+    public function handle_delete_material_category()
+    {
+        $category_name = sanitize_text_field($_POST['category_name']);
+        $categories = $this->get_material_categories();
+        
+        $key = array_search($category_name, $categories);
+        if ($key !== false) {
+            unset($categories[$key]);
+            $categories = array_values($categories);
+            update_option('apd_material_categories', $categories);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Category deleted successfully!</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Handle material category update
+     */
+    public function handle_material_category_update()
+    {
+        $material_index = intval($_POST['material_index']);
+        $material_category = sanitize_text_field($_POST['material_category']);
+
+        $materials = get_option('apd_materials', array());
+
+        if (isset($materials[$material_index])) {
+            $materials[$material_index]['category'] = $material_category;
+            update_option('apd_materials', $materials);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Material category updated!</p></div>';
             });
         }
     }

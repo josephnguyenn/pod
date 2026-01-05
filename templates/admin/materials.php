@@ -13,6 +13,40 @@ if (!defined('ABSPATH')) {
     <h1>Materials Management</h1>
     
     <div class="apd-materials-container">
+        <!-- Category Management Section -->
+        <div class="apd-materials-section">
+            <h2>Manage Categories</h2>
+            <div style="display: flex; gap: 20px; align-items: flex-start;">
+                <div style="flex: 1;">
+                    <h4>Add New Category</h4>
+                    <form method="post" style="display: flex; gap: 10px; align-items: center;">
+                        <?php wp_nonce_field('manage_material_category', 'category_nonce'); ?>
+                        <input type="text" name="category_name" placeholder="Category name" class="regular-text" required>
+                        <input type="submit" name="add_material_category" class="button" value="Add Category">
+                    </form>
+                </div>
+                <div style="flex: 1;">
+                    <h4>Existing Categories</h4>
+                    <div class="apd-categories-list">
+                        <?php if (!empty($categories)): ?>
+                            <?php foreach ($categories as $category): ?>
+                                <div class="apd-category-item">
+                                    <span class="category-name"><?php echo esc_html($category); ?></span>
+                                    <form method="post" style="display: inline;" onsubmit="return confirm('Delete category \'<?php echo esc_js($category); ?>\'? Materials in this category will be set to Uncategorized.');">
+                                        <?php wp_nonce_field('manage_material_category', 'category_nonce'); ?>
+                                        <input type="hidden" name="category_name" value="<?php echo esc_attr($category); ?>">
+                                        <button type="submit" name="delete_material_category" class="button button-small button-link-delete">×</button>
+                                    </form>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <p style="color: #666; font-style: italic;">No categories yet</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Upload New Material Section -->
         <div class="apd-materials-section">
             <h2>Upload New Material</h2>
@@ -55,6 +89,20 @@ if (!defined('ABSPATH')) {
                             <p class="description">Set the price for this material. This will be added to the base product price when selected.</p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="material_category">Category</label>
+                        </th>
+                        <td>
+                            <select id="material_category" name="material_category" class="regular-text">
+                                <option value="Uncategorized">Uncategorized</option>
+                                <?php foreach ($categories as $category): ?>
+                                    <option value="<?php echo esc_attr($category); ?>"><?php echo esc_html($category); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">Assign this material to a category for better organization.</p>
+                        </td>
+                    </tr>
                 </table>
                 <p class="submit">
                     <input type="submit" name="upload_material" class="button-primary" value="Upload Material">
@@ -65,16 +113,34 @@ if (!defined('ABSPATH')) {
         
         <!-- Current Materials List -->
         <div class="apd-materials-section">
-            <h2>Current Materials</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Current Materials</h2>
+                <div>
+                    <label for="category-filter" style="margin-right: 8px;">Filter by Category:</label>
+                    <select id="category-filter" class="regular-text" style="width: 200px;">
+                        <option value="all">All Categories</option>
+                        <option value="Uncategorized">Uncategorized</option>
+                        <?php foreach ($categories as $category): ?>
+                            <option value="<?php echo esc_attr($category); ?>"><?php echo esc_html($category); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
             <?php if (!empty($materials)): ?>
                 <div class="apd-materials-grid">
                     <?php foreach ($materials as $index => $material): ?>
-                        <div class="apd-material-item">
+                        <?php $mat_category = isset($material['category']) ? $material['category'] : 'Uncategorized'; ?>
+                        <div class="apd-material-item" data-category="<?php echo esc_attr($mat_category); ?>">
                             <div class="material-preview">
                                 <img src="<?php echo esc_url($material['url']); ?>" alt="<?php echo esc_attr($material['name']); ?>" loading="lazy">
                             </div>
                             <div class="material-info">
                                 <h4><?php echo esc_html($material['name']); ?></h4>
+                                <p class="material-category">
+                                    <span class="category-badge">
+                                        <?php echo esc_html($mat_category); ?>
+                                    </span>
+                                </p>
                                 <p class="material-type">
                                     <span class="type-badge type-<?php echo esc_attr($material['type']); ?>">
                                         <?php echo esc_html(ucfirst($material['type'])); ?>
@@ -86,6 +152,20 @@ if (!defined('ABSPATH')) {
                                 <p class="material-date">Added: <?php echo esc_html($material['date']); ?></p>
                             </div>
                             <div class="material-actions">
+                                <form method="post" class="material-category-form" style="margin-bottom: 8px;">
+                                    <?php wp_nonce_field('update_material_category', 'material_category_nonce'); ?>
+                                    <input type="hidden" name="material_index" value="<?php echo $index; ?>">
+                                    <label style="display: block; margin-bottom: 4px; font-size: 12px;">Change Category:</label>
+                                    <div style="display: flex; gap: 4px;">
+                                        <select name="material_category" style="width: 120px; padding: 4px;">
+                                            <option value="Uncategorized" <?php selected($mat_category, 'Uncategorized'); ?>>Uncategorized</option>
+                                            <?php foreach ($categories as $category): ?>
+                                                <option value="<?php echo esc_attr($category); ?>" <?php selected($mat_category, $category); ?>><?php echo esc_html($category); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <input type="submit" name="update_material_category" class="button button-small" value="Update">
+                                    </div>
+                                </form>
                                 <form method="post" class="material-price-form" style="margin-bottom: 8px;">
                                     <?php wp_nonce_field('update_material_price', 'material_price_nonce'); ?>
                                     <input type="hidden" name="material_index" value="<?php echo $index; ?>">
@@ -259,6 +339,53 @@ if (!defined('ABSPATH')) {
     padding-top: 10px;
 }
 
+.category-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #28a745;
+    color: white;
+    text-transform: uppercase;
+}
+
+.material-category {
+    margin: 5px 0;
+}
+
+.apd-categories-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.apd-category-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+}
+
+.apd-category-item .category-name {
+    font-weight: 500;
+    color: #333;
+}
+
+.apd-category-item button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    line-height: 1;
+    font-size: 18px;
+    border-radius: 50%;
+}
+
 @media (max-width: 768px) {
     .apd-materials-grid {
         grid-template-columns: 1fr;
@@ -268,6 +395,24 @@ if (!defined('ABSPATH')) {
 
 <script>
 jQuery(document).ready(function($) {
+    // Category filter functionality
+    $('#category-filter').on('change', function() {
+        var selectedCategory = $(this).val();
+        
+        if (selectedCategory === 'all') {
+            $('.apd-material-item').show();
+        } else {
+            $('.apd-material-item').each(function() {
+                var itemCategory = $(this).data('category');
+                if (itemCategory === selectedCategory) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+    });
+
     let mediaFrame;
     let selectedMedia = [];
     
