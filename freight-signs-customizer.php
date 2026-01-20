@@ -3860,6 +3860,7 @@ class AdvancedProductDesigner
         // 11. Clean up ONLY malformed empty attributes (keep all valid attributes 100% identical)
         // This prevents "attributes construct error" but preserves all valid attributes exactly
         // Only remove attributes with malformed empty values like: attr="" or attr="="
+        // CRITICAL: XML specification requires attributes to have values, so empty attributes must be removed
         $allElements = $xpath->query('//*');
         foreach ($allElements as $element) {
             // Get all attributes
@@ -3869,8 +3870,15 @@ class AdvancedProductDesigner
                 $attrValue = $attr->nodeValue;
                 
                 // ONLY remove attributes with malformed empty values (not valid empty attributes)
+                // XML spec requires attributes to have values - empty attributes cause parser errors
                 // This preserves all valid attributes exactly as in Original SVG
                 if ($attrValue === '' || $attrValue === '=' || $attrValue === '=""' || $attrValue === '="') {
+                    $attributesToRemove[] = $attrName;
+                }
+                
+                // Also check for attributes that might be missing values entirely
+                // Some attributes like url, href, xlink:href must have values or be removed
+                if (in_array($attrName, array('url', 'href', 'xlink:href')) && empty($attrValue)) {
                     $attributesToRemove[] = $attrName;
                 }
             }
@@ -3971,7 +3979,21 @@ class AdvancedProductDesigner
         $clean_svg = preg_replace('/\s+square=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+butt=""/', '', $clean_svg);
         
-        // Pattern 7: Generic cleanup - remove ANY attribute with malformed empty value
+        // Pattern 7: url="" or url= (empty url attribute - XML requires a value)
+        $clean_svg = preg_replace('/\s+url="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+url="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+url=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+url=(?=\s|>)/', '', $clean_svg); // url= without quotes
+        
+        // Pattern 8: xlink:href="" or href="" (empty href attributes)
+        $clean_svg = preg_replace('/\s+xlink:href="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+xlink:href="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+xlink:href=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+href="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+href="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+href=""/', '', $clean_svg);
+        
+        // Pattern 9: Generic cleanup - remove ANY attribute with malformed empty value
         // This catches any other similar patterns we might have missed
         $clean_svg = preg_replace('/\s+[a-zA-Z-]+="=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+[a-zA-Z-]+="="/', '', $clean_svg);
