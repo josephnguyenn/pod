@@ -3616,15 +3616,27 @@ class AdvancedProductDesigner
         $originalStyle = $svgRoot->getAttribute('style'); // Preserve inline style attribute
         $originalPreserveAspectRatio = $svgRoot->getAttribute('preserveAspectRatio');
         
+        // CRITICAL: Preserve ALL inline style attributes from ALL elements
+        // Store original styles before any processing to ensure they're not lost
+        $originalStyles = array();
+        $allElements = $xpath->query('//*');
+        foreach ($allElements as $element) {
+            if ($element->hasAttribute('style')) {
+                $elementId = $element->getNodePath(); // Use node path as unique identifier
+                $originalStyles[$elementId] = $element->getAttribute('style');
+            }
+        }
+        
         // Log original attributes for debugging
         error_log(sprintf(
-            'APD Cut-Ready SVG - Order #%d: Original attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s"',
+            'APD Cut-Ready SVG - Order #%d: Original attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s", total elements with styles: %d',
             $order_id,
             $originalViewBox,
             $originalWidth,
             $originalHeight,
             $originalStyle,
-            $originalPreserveAspectRatio
+            $originalPreserveAspectRatio,
+            count($originalStyles)
         ));
 
         // 1. Keep <image> elements for visual consistency (only remove if they cause issues)
@@ -3868,15 +3880,31 @@ class AdvancedProductDesigner
             $svgRoot->setAttribute('preserveAspectRatio', $originalPreserveAspectRatio);
         }
         
+        // CRITICAL: Restore ALL inline style attributes on ALL elements
+        // This ensures visual consistency - all styles from Original SVG are preserved
+        $restoredCount = 0;
+        $allElementsAfter = $xpath->query('//*');
+        foreach ($allElementsAfter as $element) {
+            $elementId = $element->getNodePath();
+            if (isset($originalStyles[$elementId]) && $originalStyles[$elementId]) {
+                // Restore the original style if it was lost during processing
+                if (!$element->hasAttribute('style') || $element->getAttribute('style') !== $originalStyles[$elementId]) {
+                    $element->setAttribute('style', $originalStyles[$elementId]);
+                    $restoredCount++;
+                }
+            }
+        }
+        
         // Log final attributes for debugging
         error_log(sprintf(
-            'APD Cut-Ready SVG - Order #%d: Final attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s"',
+            'APD Cut-Ready SVG - Order #%d: Final attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s", restored %d inline styles',
             $order_id,
             $svgRoot->getAttribute('viewBox'),
             $svgRoot->getAttribute('width'),
             $svgRoot->getAttribute('height'),
             $svgRoot->getAttribute('style'),
-            $svgRoot->getAttribute('preserveAspectRatio')
+            $svgRoot->getAttribute('preserveAspectRatio'),
+            $restoredCount
         ));
 
         // 9. Clean up and return with UTF-8 encoding (browsers require UTF-8)
