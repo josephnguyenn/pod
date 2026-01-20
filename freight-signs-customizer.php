@@ -3759,6 +3759,28 @@ class AdvancedProductDesigner
         );
         $dom->documentElement->insertBefore($metadata, $dom->documentElement->firstChild);
 
+        // 7.5. CRITICAL: Clean up malformed attributes from ALL elements before saving
+        // This prevents "attributes construct error" in browsers
+        $allElements = $xpath->query('//*');
+        foreach ($allElements as $element) {
+            // Get all attributes
+            $attributesToRemove = array();
+            foreach ($element->attributes as $attr) {
+                $attrName = $attr->nodeName;
+                $attrValue = $attr->nodeValue;
+                
+                // Remove attributes with malformed empty values
+                if ($attrValue === '' || $attrValue === '=' || $attrValue === '=""' || $attrValue === '="') {
+                    $attributesToRemove[] = $attrName;
+                }
+            }
+            
+            // Remove the malformed attributes
+            foreach ($attributesToRemove as $attrName) {
+                $element->removeAttribute($attrName);
+            }
+        }
+
         // 8. Restore and ensure proper dimensions for the root SVG element
         // This prevents the cut-ready SVG from being scaled differently than the original
         if ($originalViewBox && !$svgRoot->getAttribute('viewBox')) {
@@ -3794,19 +3816,39 @@ class AdvancedProductDesigner
         
         // CRITICAL: Fix malformed empty attributes that cause browser errors
         // These patterns MUST be removed to prevent "attributes construct error"
+        // Match the exact patterns found in the corrupted SVG files
+        
+        // Pattern 1: stroke-width="="" (with equals inside quotes)
         $clean_svg = preg_replace('/\s+stroke-width="=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+stroke-width="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke-width=""/', '', $clean_svg);
+        
+        // Pattern 2: vector-effect=""
         $clean_svg = preg_replace('/\s+vector-effect=""/', '', $clean_svg);
+        
+        // Pattern 3: stroke-linejoin=""
         $clean_svg = preg_replace('/\s+stroke-linejoin=""/', '', $clean_svg);
+        
+        // Pattern 4: stroke-linecap=""
         $clean_svg = preg_replace('/\s+stroke-linecap=""/', '', $clean_svg);
+        
+        // Pattern 5: fill="="" (with equals inside quotes)
         $clean_svg = preg_replace('/\s+fill="=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+fill="="/', '', $clean_svg);
-        // Remove orphaned attribute values that became separate attributes
+        $clean_svg = preg_replace('/\s+fill=""/', '', $clean_svg);
+        
+        // Pattern 6: Remove orphaned attribute values that became separate attributes
         $clean_svg = preg_replace('/\s+round=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+miter=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+bevel=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+square=""/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+butt=""/', '', $clean_svg);
+        
+        // Pattern 7: Generic cleanup - remove ANY attribute with malformed empty value
+        // This catches any other similar patterns we might have missed
+        $clean_svg = preg_replace('/\s+[a-zA-Z-]+="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+[a-zA-Z-]+="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+[a-zA-Z-]+=""/', '', $clean_svg);
         
         // Fix any remaining malformed attributes (like stroke-width: becoming an invalid QName)
         // These can happen when style properties get incorrectly parsed
