@@ -3792,6 +3792,22 @@ class AdvancedProductDesigner
         // This catches any corruption that happened during DOMDocument processing
         $clean_svg = $this->fix_common_xml_issues($clean_svg);
         
+        // CRITICAL: Fix malformed empty attributes that cause browser errors
+        // These patterns MUST be removed to prevent "attributes construct error"
+        $clean_svg = preg_replace('/\s+stroke-width="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke-width="="/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+vector-effect=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke-linejoin=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke-linecap=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+fill="=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+fill="="/', '', $clean_svg);
+        // Remove orphaned attribute values that became separate attributes
+        $clean_svg = preg_replace('/\s+round=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+miter=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+bevel=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+square=""/', '', $clean_svg);
+        $clean_svg = preg_replace('/\s+butt=""/', '', $clean_svg);
+        
         // Fix any remaining malformed attributes (like stroke-width: becoming an invalid QName)
         // These can happen when style properties get incorrectly parsed
         $clean_svg = preg_replace('/\s+stroke-width:(?=[^"]*(?:"|$))/', ' stroke-width="', $clean_svg);
