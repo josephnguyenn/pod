@@ -82,6 +82,24 @@
 
     // ===== Customizer Layout (like image 2) =====
     function renderCustomizerLayout(product, $block, templateDataImmediate) {
+        // Check if outline selection is enabled
+        var enableOutline = window.apd_ajax && (window.apd_ajax.enable_outline_selection === 1 || window.apd_ajax.enable_outline_selection === '1');
+        
+        // Material outline section HTML (only if enabled)
+        var materialOutlineHtml = '';
+        if (enableOutline) {
+            materialOutlineHtml = 
+                '<div class="apd-form-group" style="background:white;padding:15px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);margin-bottom:15px;">' +
+                    '<h4 style="margin-bottom:10px;color:#333;font-size:14px;font-weight:600;">Material Outline</h4>' +
+                    '<div class="apd-material-grid" style="display:grid;grid-template-columns:repeat(4,32px);gap:8px;margin-bottom:15px;"></div>' +
+                    '<div class="apd-outline-width" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+                        '<label style="min-width:90px">Outline width</label>' +
+                        '<input id="apd-outline-width" type="range" min="0" max="60" step="1" value="24" style="flex:1">' +
+                        '<span id="apd-outline-width-value">24</span>' +
+                    '</div>' +
+                '</div>';
+        }
+        
         // Skeleton layout
         var layoutHtml = '' +
             '<div class="apd-customizer-container">' +
@@ -101,15 +119,7 @@
                         '<h4 style="margin-bottom:10px;color:#333">Print Color</h4>' +
                         '<div class="apd-color-grid" style="display:grid;grid-template-columns:repeat(6,28px);gap:10px;margin-bottom:10px"></div>' +
                     '</div>' +
-                    '<div class="apd-form-group" style="background:white;padding:15px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);margin-bottom:15px;">' +
-                        '<h4 style="margin-bottom:10px;color:#333;font-size:14px;font-weight:600;">Material Outline</h4>' +
-                        '<div class="apd-material-grid" style="display:grid;grid-template-columns:repeat(4,32px);gap:8px;margin-bottom:15px;"></div>' +
-                        '<div class="apd-outline-width" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
-                            '<label style="min-width:90px">Outline width</label>' +
-                            '<input id="apd-outline-width" type="range" min="0" max="60" step="1" value="24" style="flex:1">' +
-                            '<span id="apd-outline-width-value">24</span>' +
-                        '</div>' +
-                    '</div>' +
+                    materialOutlineHtml +
                     '<div class="apd-dynamic-fields"></div>' +
                     '<div class="apd-form-group apd-features" style="margin-top:8px;">' +
                         '<h4 style="margin-bottom:10px;color:#333;font-size:14px;font-weight:600;">Benefits</h4>' +

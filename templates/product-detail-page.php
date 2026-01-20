@@ -6,6 +6,29 @@
 
 get_header();
 
+// Inject @font-face rules for uploaded fonts
+$uploaded_fonts = get_option('apd_uploaded_fonts', array());
+if (!empty($uploaded_fonts)) {
+    echo '<style id="apd-product-detail-fonts">';
+    foreach ($uploaded_fonts as $font) {
+        if (!empty($font['family']) && !empty($font['url'])) {
+            $family_css = esc_attr($font['family']);
+            $url_css = esc_url($font['url']);
+            $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+            $format = 'truetype';
+            if (strpos($url_css, '.woff2') !== false) {
+                $format = 'woff2';
+            } elseif (strpos($url_css, '.woff') !== false) {
+                $format = 'woff';
+            } elseif (strpos($url_css, '.otf') !== false) {
+                $format = 'opentype';
+            }
+            echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
+        }
+    }
+    echo '</style>';
+}
+
 // Get product ID from URL parameter
 $product_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
@@ -45,6 +68,9 @@ if ($is_customizable === '') {
 // Get variant data
 $variants = get_post_meta($product_id, '_apd_variants', true);
 $variants_enabled = is_array($variants) && isset($variants['enabled']) && $variants['enabled'];
+
+// Initialize pricing service
+$pricing_service = new APD_Pricing_Service();
 
 // Get all materials for swatches
 $all_materials = get_option('apd_materials', array());
@@ -187,7 +213,42 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
                         <script>
                         var apdCombinations = <?php echo json_encode($variants['combinations']); ?>;
                         var apdProductId = <?php echo intval($product_id); ?>;
+                        // Pass product-level prices as fallback
+                        var apdProductBasePrice = <?php echo floatval($price); ?>;
+                        var apdProductSalePrice = <?php echo !empty($sale_price) ? floatval($sale_price) : 0; ?>;
+                        <?php 
+                        // Pass variant-specific tiers to JavaScript
+                        $variant_tiers_all = get_post_meta($product_id, '_apd_variant_price_tiers', true);
+                        if (!is_array($variant_tiers_all)) {
+                            $variant_tiers_all = array();
+                        }
+                        ?>
+                        var apdVariantTiers = <?php echo json_encode($variant_tiers_all); ?>;
+                        <?php
+                        // Also pass product-level tiers for fallback
+                        $product_tiers = $pricing_service->get_price_tiers($product_id);
+                        ?>
+                        var apdProductTiers = <?php echo json_encode($product_tiers); ?>;
                         </script>
+                        
+                        <!-- Dynamic Volume Pricing for Variants (will be populated by JS) -->
+                        <div id="apd-variant-volume-pricing" class="apd-volume-pricing" style="display: none;">
+                            <h3>Volume Discounts Available</h3>
+                            <p class="apd-volume-description">Save more when you order in larger quantities</p>
+                            <table class="apd-pricing-tier-table">
+                                <thead>
+                                    <tr>
+                                        <th>Quantity</th>
+                                        <th>Discount</th>
+                                        <th>Price Each</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="apd-variant-tiers-body">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                            <div id="apd-pricing-message" class="apd-pricing-message"></div>
+                        </div>
                     </div>
                 <?php endif; ?>
 
@@ -205,8 +266,10 @@ $has_sale = !empty($sale_price) && floatval($sale_price) < floatval($price);
 
                 <!-- Volume Pricing Tiers -->
                 <?php
-                $pricing_service = new APD_Pricing_Service();
-                if ($pricing_service->has_tiered_pricing($product_id)):
+                // Only show product-level tiers if variants are NOT enabled
+                $show_product_tiers = !$variants_enabled && $pricing_service->has_tiered_pricing($product_id);
+                
+                if ($show_product_tiers):
                     $tiers = $pricing_service->get_price_tiers($product_id);
                     $base_price = floatval($display_price);
                 ?>

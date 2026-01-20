@@ -10,10 +10,210 @@ if (!defined('ABSPATH')) {
 ?>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <script type="module">
-window.htmlElementToImage=function(e){return new Promise(function(t,n){try{if(!e||"svg"!==e.tagName.toLowerCase())return n(new Error("Element is not a valid SVG element."));var r=e.cloneNode(!0);r.hasAttribute("xmlns")||r.setAttribute("xmlns","http://www.w3.org/2000/svg"),r.hasAttribute("xmlns:xlink")||r.setAttribute("xmlns:xlink","http://www.w3.org/1999/xlink"),!r.hasAttribute("viewBox")&&r.hasAttribute("width")&&r.hasAttribute("height")&&r.setAttribute("viewBox","0 0 "+r.getAttribute("width")+" "+r.getAttribute("height"));var a=new XMLSerializer().serializeToString(r),o=String.fromCharCode(60,63)+'xml version="1.0" encoding="UTF-8" standalone="no"'+String.fromCharCode(63,62)+"\n"+a,i="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(o)));t(i)}catch(err){console.error("Error converting SVG to data URL:",err);try{var s=new XMLSerializer().serializeToString(e),c=encodeURIComponent(s),u="data:image/svg+xml;charset=utf-8,"+c;t(u)}catch(fallbackErr){n(fallbackErr)}}})};
+/**
+ * Convert SVG element to data URL with embedded fonts
+ * Preserves inline styles needed for SVG rendering
+ * Embeds custom fonts as base64 data URLs for portability
+ */
+window.htmlElementToImage = function(element) {
+    return new Promise(async function(resolve, reject) {
+        try {
+            // Validate element
+            if (!element || element.tagName.toLowerCase() !== 'svg') {
+                return reject(new Error("Element is not a valid SVG element."));
+            }
+            
+            // Clone the SVG element
+            var clone = element.cloneNode(true);
+            
+            // Collect all font-family values used in the SVG
+            var usedFonts = new Set();
+            function collectFonts(el) {
+                // Check font-family attribute
+                if (el.getAttribute && el.getAttribute('font-family')) {
+                    usedFonts.add(el.getAttribute('font-family').replace(/['"]/g, '').trim());
+                }
+                // Check style attribute for font-family
+                if (el.getAttribute && el.getAttribute('style')) {
+                    var styleMatch = el.getAttribute('style').match(/font-family:\s*['"]?([^;'"]+)/i);
+                    if (styleMatch) {
+                        usedFonts.add(styleMatch[1].trim());
+                    }
+                }
+                // Process children
+                if (el.children) {
+                    for (var i = 0; i < el.children.length; i++) {
+                        collectFonts(el.children[i]);
+                    }
+                }
+            }
+            collectFonts(clone);
+            console.log('[SVG Export] Fonts used:', Array.from(usedFonts));
+            
+            // Get uploaded fonts from global variable
+            var uploadedFonts = window.apdUploadedFonts || [];
+            
+            // Build font embedding promises
+            var fontStyleRules = [];
+            var fontPromises = [];
+            
+            uploadedFonts.forEach(function(font) {
+                if (!font.family || !font.url) return;
+                
+                // Check if this font is used
+                var isUsed = false;
+                usedFonts.forEach(function(usedFont) {
+                    if (usedFont.toLowerCase().indexOf(font.family.toLowerCase()) !== -1 ||
+                        font.family.toLowerCase().indexOf(usedFont.toLowerCase()) !== -1) {
+                        isUsed = true;
+                    }
+                });
+                
+                if (isUsed) {
+                    console.log('[SVG Export] Embedding font:', font.family, font.url);
+                    var promise = fetch(font.url)
+                        .then(function(response) {
+                            if (!response.ok) throw new Error('Font fetch failed');
+                            return response.blob();
+                        })
+                        .then(function(blob) {
+                            return new Promise(function(res) {
+                                var reader = new FileReader();
+                                reader.onloadend = function() {
+                                    var base64 = reader.result;
+                                    var weight = font.weight || '400';
+                                    var format = 'truetype';
+                                    if (font.url.indexOf('.woff2') !== -1) format = 'woff2';
+                                    else if (font.url.indexOf('.woff') !== -1) format = 'woff';
+                                    else if (font.url.indexOf('.otf') !== -1) format = 'opentype';
+                                    
+                                    // Escape font family name for CSS (remove quotes and special chars)
+                                    var safeFontFamily = font.family.replace(/['"\\]/g, '');
+                                    
+                                    fontStyleRules.push(
+                                        "@font-face{font-family:'" + safeFontFamily + "';src:url(" + base64 + ") format('" + format + "');font-weight:" + weight + ";}"
+                                    );
+                                    res();
+                                };
+                                reader.onerror = function() { res(); };
+                                reader.readAsDataURL(blob);
+                            });
+                        })
+                        .catch(function(err) {
+                            console.warn('[SVG Export] Failed to embed font:', font.family, err);
+                        });
+                    fontPromises.push(promise);
+                }
+            });
+            
+            // Wait for all fonts to be converted
+            await Promise.all(fontPromises);
+            
+            // Remove only class attributes (keep style for visual properties)
+            function cleanElement(el) {
+                if (el.hasAttribute && el.hasAttribute('class')) {
+                    el.removeAttribute('class');
+                }
+                if (el.children) {
+                    for (var i = 0; i < el.children.length; i++) {
+                        cleanElement(el.children[i]);
+                    }
+                }
+            }
+            cleanElement(clone);
+            
+            // Add required SVG attributes
+            if (!clone.hasAttribute('xmlns')) {
+                clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+            }
+            if (!clone.hasAttribute('xmlns:xlink')) {
+                clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+            }
+            if (!clone.hasAttribute('viewBox') && clone.hasAttribute('width') && clone.hasAttribute('height')) {
+                clone.setAttribute('viewBox', '0 0 ' + clone.getAttribute('width') + ' ' + clone.getAttribute('height'));
+            }
+            
+            // Remove any existing style elements with @font-face to avoid duplicates
+            var existingStyles = clone.querySelectorAll('style');
+            existingStyles.forEach(function(styleEl) {
+                var styleText = styleEl.textContent || styleEl.innerHTML || '';
+                if (styleText.indexOf('@font-face') !== -1 || styleText.indexOf('CDATA') !== -1) {
+                    console.log('[SVG Export] Removing existing font style element');
+                    styleEl.parentNode.removeChild(styleEl);
+                }
+            });
+            
+            // Inject embedded fonts as <style> element inside SVG
+            if (fontStyleRules.length > 0) {
+                var defsEl = clone.querySelector('defs');
+                if (!defsEl) {
+                    defsEl = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                    clone.insertBefore(defsEl, clone.firstChild);
+                }
+                var styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+                styleEl.setAttribute('type', 'text/css');
+                // Set CSS content directly - XMLSerializer will handle escaping
+                var cssContent = fontStyleRules.join('\n');
+                styleEl.textContent = cssContent;
+                defsEl.insertBefore(styleEl, defsEl.firstChild);
+                console.log('[SVG Export] Embedded', fontStyleRules.length, 'font rules');
+            }
+            
+            // Serialize to string
+            var serializer = new XMLSerializer();
+            var svgString = serializer.serializeToString(clone);
+            
+            // Wrap style content in CDATA if not already wrapped
+            // This ensures XML parsers don't choke on special chars in base64 data URLs
+            // Use a more comprehensive regex that matches style content (including special chars)
+            svgString = svgString.replace(/<style\s+type="text\/css">([\s\S]*?)<\/style>/g, function(match, content) {
+                // Check if already CDATA wrapped (avoid double-wrapping)
+                if (content.indexOf('<![CDATA[') !== -1) {
+                    return match; // Already wrapped, return as-is
+                }
+                return '<style type="text/css"><![CDATA[' + content + ']]></style>';
+            });
+            
+            var xmlDeclaration = '<' + '?xml version="1.0" encoding="UTF-8" standalone="no"?' + '>\n';
+            var fullSvg = xmlDeclaration + svgString;
+            
+            // Convert to data URL
+            var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(fullSvg)));
+            resolve(dataUrl);
+            
+        } catch (err) {
+            console.error("Error converting SVG to data URL:", err);
+            reject(err);
+        }
+    });
+};
 </script>
 <?php 
 // Resume PHP processing
+
+// Inject @font-face rules for uploaded fonts
+$uploaded_fonts = get_option('apd_uploaded_fonts', array());
+if (!empty($uploaded_fonts)) {
+    echo '<style id="apd-customizer-fonts">';
+    foreach ($uploaded_fonts as $font) {
+        if (!empty($font['family']) && !empty($font['url'])) {
+            $family_css = esc_attr($font['family']);
+            $url_css = esc_url($font['url']);
+            $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+            // Determine font format based on URL extension
+            $format = 'truetype';
+            if (strpos($url_css, '.woff2') !== false) {
+                $format = 'woff2';
+            } elseif (strpos($url_css, '.woff') !== false) {
+                $format = 'woff';
+            } elseif (strpos($url_css, '.otf') !== false) {
+                $format = 'opentype';
+            }
+            echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
+        }
+    }
+    echo '</style>';
+}
 ?>
 
 <div class="fsc-container">
@@ -58,6 +258,7 @@ window.htmlElementToImage=function(e){return new Promise(function(t,n){try{if(!e
             </div>
             
             <!-- Color Selection -->
+            <?php if ($enable_color_selection == '1'): ?>
             <div class="fsc-form-group">
                 <h4>Print Color</h4>
                 <div class="fsc-selected-color" style="margin-bottom:8px;font-size:13px;color:#444;">
@@ -78,6 +279,7 @@ window.htmlElementToImage=function(e){return new Promise(function(t,n){try{if(!e
                     <?php endforeach; ?>
                 </div>
             </div>
+            <?php endif; ?>
         
             
             <!-- Text Fields -->
@@ -167,10 +369,11 @@ window.fscDefaults = {
 <script>
 // Simple Buy Now handler for customizer
 (function(){
-    function buyNowHandler(e){
+    async function buyNowHandler(e){
         e.preventDefault();
         var btn = e.currentTarget;
         btn.disabled = true;
+        btn.textContent = 'Preparing...';
         var quantity = parseInt(document.getElementById('fsc-quantity').value || '1',10);
         
         // Get price information from FSC object if available, otherwise use defaults
@@ -224,24 +427,75 @@ window.fscDefaults = {
             preview_image_svg: null
         };
 
-        // Try to capture production-ready SVG using FSC_SVGExport
-        try{
-            if (window.FSC_SVGExport && typeof FSC_SVGExport.getSVGDataURL === 'function') {
-                var svgDataURL = FSC_SVGExport.getSVGDataURL();
-                // Only include SVG if it's not too large (max 500KB to avoid localStorage issues)
-                if (svgDataURL && svgDataURL.length < 500000) {
+        // Try to capture production-ready SVG with embedded fonts
+        try {
+            console.log('📷 Buy Now: Starting SVG capture...');
+            
+            // Find all potential SVG elements
+            var allSvgs = document.querySelectorAll('.fsc-preview-content svg, .fsc-logo-container svg, .apd-template-preview svg, .apd-logo-box svg');
+            console.log('📷 Buy Now: Found', allSvgs.length, 'SVG elements');
+            
+            var logoSvg = null;
+            // Prefer the largest/main SVG element
+            for (var i = 0; i < allSvgs.length; i++) {
+                var svg = allSvgs[i];
+                console.log('📷 SVG #' + i + ':', svg.tagName, 'width:', svg.getAttribute('width'), 'height:', svg.getAttribute('height'), 'viewBox:', svg.getAttribute('viewBox'));
+                if (!logoSvg || (svg.getBBox && svg.getBBox().width > (logoSvg.getBBox ? logoSvg.getBBox().width : 0))) {
+                    logoSvg = svg;
+                }
+            }
+            
+            if (logoSvg && typeof window.htmlElementToImage === 'function') {
+                console.log('📷 Buy Now: Capturing SVG with embedded fonts...');
+                console.log('📷 Selected SVG:', logoSvg.outerHTML.substring(0, 200) + '...');
+                var svgDataURL = await window.htmlElementToImage(logoSvg);
+                if (svgDataURL && svgDataURL.length > 100 && svgDataURL.length < 500000) {
+                    payload.preview_image_svg = svgDataURL;
+                    console.log('✅ Buy Now: SVG captured with fonts, size:', svgDataURL.length, 'bytes');
+                } else if (svgDataURL && svgDataURL.length >= 500000) {
+                    console.warn('⚠️ Buy Now: SVG too large (' + svgDataURL.length + ' bytes), skipping');
+                } else {
+                    console.warn('⚠️ Buy Now: SVG capture returned empty or very small result');
+                }
+            }
+            // Method 2: Fallback to FSC_SVGExport (async)
+            if (!payload.preview_image_svg && window.FSC_SVGExport && typeof FSC_SVGExport.getSVGDataURL === 'function') {
+                console.log('📷 Buy Now: Using FSC_SVGExport as fallback...');
+                var svgDataURL = await FSC_SVGExport.getSVGDataURL();
+                if (svgDataURL && svgDataURL.length > 100 && svgDataURL.length < 500000) {
                     payload.preview_image_svg = svgDataURL;
                     console.log('✅ Buy Now: Production SVG captured, size:', svgDataURL.length, 'bytes');
-                } else if (svgDataURL) {
-                    console.warn('⚠️ Buy Now: SVG too large (' + svgDataURL.length + ' bytes), skipping to avoid localStorage issues');
+                } else if (svgDataURL && svgDataURL.length >= 500000) {
+                    console.warn('⚠️ Buy Now: SVG too large (' + svgDataURL.length + ' bytes), skipping');
                 }
-            } else {
-                console.log('ℹ️ Buy Now: FSC_SVGExport not available, skipping SVG capture');
             }
-        }catch(err){ 
+            // Method 3: Simple serialization without font embedding as last resort
+            if (!payload.preview_image_svg && logoSvg) {
+                console.log('📷 Buy Now: Using simple SVG serialization as last resort...');
+                try {
+                    var serializer = new XMLSerializer();
+                    var svgString = serializer.serializeToString(logoSvg);
+                    var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+                    if (dataUrl.length < 500000) {
+                        payload.preview_image_svg = dataUrl;
+                        console.log('✅ Buy Now: Simple SVG serialization, size:', dataUrl.length, 'bytes');
+                    }
+                } catch(serErr) {
+                    console.warn('⚠️ Buy Now: Simple serialization failed:', serErr);
+                }
+            }
+            
+            if (!payload.preview_image_svg) {
+                console.log('ℹ️ Buy Now: No SVG capture method succeeded');
+            }
+        } catch(err) { 
             console.warn('⚠️ Buy Now: failed to capture SVG:', err);
+            console.warn('⚠️ Stack:', err.stack);
             // Continue without preview image - it's not critical
         }
+
+        // Log preview status
+        console.log('🖼️ Buy Now: preview_image_svg is ' + (payload.preview_image_svg ? 'SET (' + payload.preview_image_svg.substring(0, 50) + '...)' : 'NULL'));
 
         // Persist checkout payload locally and redirect to checkout page
         try {

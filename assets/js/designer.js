@@ -939,7 +939,8 @@ jQuery(document).ready(function($) {
                 window.apdUploadedFonts.forEach(font => {
                     if (font.family && font.name) {
                         const selected = (currentFont === font.family) ? ' selected' : '';
-                        html += `<option value="${font.family}"${selected}>${font.name}</option>`;
+                        const weightLabel = font.weight ? ` (${font.weight})` : '';
+                        html += `<option value="${font.family}"${selected}>${font.name}${weightLabel}</option>`;
                     }
                 });
             }

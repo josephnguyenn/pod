@@ -190,6 +190,32 @@ foreach ($shop_us_states as $code => $name) {
 
     </script>
 
+    <?php
+    // Inject @font-face rules for uploaded fonts on checkout page
+    $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+    if (!empty($uploaded_fonts)) {
+        echo '<style id="apd-checkout-fonts">';
+        foreach ($uploaded_fonts as $font) {
+            if (!empty($font['family']) && !empty($font['url'])) {
+                $family_css = esc_attr($font['family']);
+                $url_css = esc_url($font['url']);
+                $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+                // Determine font format based on URL extension
+                $format = 'truetype';
+                if (strpos($url_css, '.woff2') !== false) {
+                    $format = 'woff2';
+                } elseif (strpos($url_css, '.woff') !== false) {
+                    $format = 'woff';
+                } elseif (strpos($url_css, '.otf') !== false) {
+                    $format = 'opentype';
+                }
+                echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
+            }
+        }
+        echo '</style>';
+    }
+    ?>
+
     <style>
 
         * {
@@ -1507,6 +1533,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         let url = it.preview_image_svg || it.preview_image_png || it.preview_image_url || it.customization_image_url || it.image_url;
 
+        console.debug('[APD] getPreviewUrl - checking item:', Object.keys(it || {}));
+        console.debug('[APD] getPreviewUrl - preview_image_svg:', it.preview_image_svg ? '(' + it.preview_image_svg.substring(0, 50) + '...)' : 'null');
+
         if (!url && it.customization_data) {
 
             try {
@@ -1518,6 +1547,8 @@ document.addEventListener('DOMContentLoaded', function() {
             } catch(_) {}
 
         }
+
+        console.debug('[APD] getPreviewUrl - final URL:', url ? '(' + url.substring(0, 50) + '...)' : 'empty');
 
         return url || '';
 
@@ -2299,53 +2330,55 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Render item - SIMPLE, no complex retry logic
         buildSummary([instantItem], true);
-        return; // Done - don't load cart
-    }
-    
-    // Normal checkout - load from cart
-    console.log('[APD] ✅ CART CHECKOUT - Loading from cart');
-    
-    // Try localStorage first (fast)
-    const localItems = loadCartFromLocal();
-    if (localItems && localItems.length > 0) {
-        console.log('[APD] ✅ Found', localItems.length, 'items in localStorage');
-        buildSummary(localItems, true);
-        return; // Done
-    }
-    
-    // If no local items, try server
-    console.log('[APD] ⚠️ No items in localStorage, trying server...');
+        console.log('[APD] ✅ Instant checkout item rendered, continuing to button setup...');
+        // DON'T return here - continue to set up button handlers below
+    } else {
+        // Normal checkout - load from cart
+        console.log('[APD] ✅ CART CHECKOUT - Loading from cart');
+        
+        // Try localStorage first (fast)
+        const localItems = loadCartFromLocal();
+        if (localItems && localItems.length > 0) {
+            console.log('[APD] ✅ Found', localItems.length, 'items in localStorage');
+            buildSummary(localItems, true);
+            console.log('[APD] ✅ Cart items rendered, continuing to button setup...');
+            // DON'T return here - continue to set up button handlers below
+        } else {
+            // If no local items, try server
+            console.log('[APD] ⚠️ No items in localStorage, trying server...');
 
-    // Load from server
-    const ajaxObj = (typeof window !== 'undefined' && window.apd_ajax) || (typeof apd_ajax !== 'undefined' ? apd_ajax : null);
-    
-    if (ajaxObj && ajaxObj.ajax_url) {
-        loadCartFromServer().then(function(serverItems) {
-            if (serverItems && serverItems.length > 0) {
-                console.log('[APD] ✅ Loaded', serverItems.length, 'items from server');
-                buildSummary(serverItems, true);
+            // Load from server
+            const ajaxObj = (typeof window !== 'undefined' && window.apd_ajax) || (typeof apd_ajax !== 'undefined' ? apd_ajax : null);
+            
+            if (ajaxObj && ajaxObj.ajax_url) {
+                loadCartFromServer().then(function(serverItems) {
+                    if (serverItems && serverItems.length > 0) {
+                        console.log('[APD] ✅ Loaded', serverItems.length, 'items from server');
+                        buildSummary(serverItems, true);
+                    } else {
+                        console.warn('[APD] ⚠️ No items from server');
+                        // Show empty message
+                        const itemsWrap = document.getElementById('apd-order-items');
+                        if (itemsWrap) {
+                            itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>No items in cart</p></div>';
+                        }
+                    }
+                }).catch(function(error) {
+                    console.error('[APD] ❌ Error loading from server:', error);
+                    // Show error message
+                    const itemsWrap = document.getElementById('apd-order-items');
+                    if (itemsWrap) {
+                        itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>Error loading cart. Please refresh the page.</p></div>';
+                    }
+                });
             } else {
-                console.warn('[APD] ⚠️ No items from server');
-                // Show empty message
+                console.warn('[APD] ⚠️ apd_ajax not available');
+                // Show error message
                 const itemsWrap = document.getElementById('apd-order-items');
                 if (itemsWrap) {
-                    itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>No items in cart</p></div>';
+                    itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>Error: Cannot load cart. Please refresh the page.</p></div>';
                 }
             }
-        }).catch(function(error) {
-            console.error('[APD] ❌ Error loading from server:', error);
-            // Show error message
-            const itemsWrap = document.getElementById('apd-order-items');
-            if (itemsWrap) {
-                itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>Error loading cart. Please refresh the page.</p></div>';
-            }
-        });
-    } else {
-        console.warn('[APD] ⚠️ apd_ajax not available');
-        // Show error message
-        const itemsWrap = document.getElementById('apd-order-items');
-        if (itemsWrap) {
-            itemsWrap.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;"><p>Error: Cannot load cart. Please refresh the page.</p></div>';
         }
     }
     
@@ -2412,6 +2445,8 @@ document.addEventListener('DOMContentLoaded', function() {
             console.debug('[APD] =========================================');
         }
     }, 2000); // Check after 2 seconds
+    
+    console.log('[APD] 📍 CHECKPOINT A: Cart loading logic complete, continuing to button setup...');
 
     // Form validation
 
@@ -2505,86 +2540,134 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
 
+    console.log('[APD] 📍 CHECKPOINT: About to search for Complete Order button...');
+    console.log('[APD] 📍 All buttons on page:', document.querySelectorAll('button').length);
+    console.log('[APD] 📍 Buttons with "complete" class:', document.querySelectorAll('.checkout-complete-btn, button[class*="complete"]').length);
+
     // New UI: Complete Order button handler
 
     const completeBtn = document.querySelector('.checkout-complete-btn');
+    
+    console.log('[APD] 🔘 Complete Order button element:', completeBtn);
+    console.log('[APD] 🔘 Button exists:', completeBtn ? 'YES' : 'NO');
 
-    if (completeBtn) completeBtn.addEventListener('click', function(e) {
-
-        e.preventDefault();
-        
-        // Form validation
-        const form = document.querySelector('.checkout-forms');
-        const requiredFields = form ? form.querySelectorAll('input[required], textarea[required], select[required]') : [];
-        let isValid = true;
-        
-        requiredFields.forEach(field => {
-            if (!field.value.trim()) {
-                field.classList.add('error');
-                // Add error message if not exists
-                if (!field.nextElementSibling || !field.nextElementSibling.classList.contains('error-message')) {
-                    const errorMsg = document.createElement('div');
-                    errorMsg.className = 'error-message';
-                    errorMsg.textContent = 'This field is required';
-                    field.parentNode.insertBefore(errorMsg, field.nextSibling);
+    if (completeBtn) {
+        console.log('[APD] ✅ Attaching click handler to Complete Order button');
+        completeBtn.addEventListener('click', function(e) {
+            console.log('[APD] 🔥🔥🔥 COMPLETE ORDER BUTTON CLICKED! 🔥🔥🔥');
+            e.preventDefault();
+            
+            console.log('[APD] 📋 Starting form validation...');
+            
+            // Form validation
+            const form = document.querySelector('.checkout-forms');
+            console.log('[APD] Form element found:', form ? 'YES' : 'NO');
+            
+            const requiredFields = form ? form.querySelectorAll('input[required], textarea[required], select[required]') : [];
+            console.log('[APD] Required fields count:', requiredFields.length);
+            
+            let isValid = true;
+            
+            requiredFields.forEach((field, index) => {
+                const fieldValue = field.value.trim();
+                const fieldName = field.name || field.id || 'field_' + index;
+                console.log('[APD] Validating field', index + 1, ':', fieldName, '- Value:', fieldValue ? 'HAS_VALUE' : 'EMPTY');
+                
+                if (!fieldValue) {
+                    field.classList.add('error');
+                    // Add error message if not exists
+                    if (!field.nextElementSibling || !field.nextElementSibling.classList.contains('error-message')) {
+                        const errorMsg = document.createElement('div');
+                        errorMsg.className = 'error-message';
+                        errorMsg.textContent = 'This field is required';
+                        field.parentNode.insertBefore(errorMsg, field.nextSibling);
+                    }
+                    isValid = false;
+                    console.log('[APD] ❌ Field', fieldName, 'is INVALID');
+                } else {
+                    field.classList.remove('error');
+                    // Remove error message
+                    const errorMsg = field.nextElementSibling;
+                    if (errorMsg && errorMsg.classList.contains('error-message')) {
+                        errorMsg.remove();
+                    }
+                    console.log('[APD] ✅ Field', fieldName, 'is VALID');
                 }
-                isValid = false;
-            } else {
-                field.classList.remove('error');
-                // Remove error message
-                const errorMsg = field.nextElementSibling;
-                if (errorMsg && errorMsg.classList.contains('error-message')) {
-                    errorMsg.remove();
-                }
+            });
+            
+            console.log('[APD] 📋 Form validation result:', isValid ? 'VALID' : 'INVALID');
+            
+            if (!isValid) {
+                console.log('[APD] ❌ Form validation failed, showing alert');
+                alert('Please fill in all required fields.');
+                return;
             }
-        });
-        
-        if (!isValid) {
-            alert('Please fill in all required fields.');
-            return;
-        }
 
-        // Show loading animation
-        const originalBtnText = completeBtn.textContent;
-        completeBtn.disabled = true;
-        completeBtn.style.cursor = 'not-allowed';
-        completeBtn.style.opacity = '0.6';
-        completeBtn.innerHTML = '<span style="display:inline-block;animation:spin 1s linear infinite;">⏳</span> Processing...';
+            console.log('[APD] ✅ Form validation passed, proceeding with order...');
 
-        try {
+            // Show loading animation
+            const originalBtnText = completeBtn.textContent;
+            completeBtn.disabled = true;
+            completeBtn.style.cursor = 'not-allowed';
+            completeBtn.style.opacity = '0.6';
+            completeBtn.innerHTML = '<span style="display:inline-block;animation:spin 1s linear infinite;">⏳</span> Processing...';
 
-            // Use CURRENT_CART if we already rendered it; otherwise rebuild from localStorage
+            try {
 
-            let cart = Array.isArray(CURRENT_CART) && CURRENT_CART.length ? CURRENT_CART.slice() : [];
+                // Use CURRENT_CART if we already rendered it; otherwise rebuild from localStorage
+                let cart = Array.isArray(CURRENT_CART) && CURRENT_CART.length ? CURRENT_CART.slice() : [];
+                
+                console.log('[APD] 🔍 Complete Order - Initial cart length:', cart.length);
+                console.log('[APD] 🔍 CURRENT_CART length:', CURRENT_CART ? CURRENT_CART.length : 0);
+            console.log('[APD] 🔍 Instant mode (_apd_instant):', _apd_instant);
 
             if (!cart.length) {
-
-                try { cart = JSON.parse(localStorage.getItem('apd_cart') || '[]'); } catch(_) {}
-
-                if (!cart.length) {
-
-                    const p = apd_getCheckoutPayload();
-
-                    if (p) {
-
-                        cart.push({ 
-                            product_id:p.product_id, 
-                            product_name:p.product_name, 
-                            price:parseFloat(p.product_price||0), 
-                            base_price:parseFloat(p.base_price||0),
-                            sale_price:p.sale_price ? parseFloat(p.sale_price) : null,
-                            material_price:parseFloat(p.material_price||0),
-                            quantity:parseInt(p.quantity||1,10), 
-                            print_color:p.print_color,
-                            vinyl_material:p.vinyl_material,
-                            customization_data:p 
-                        });
-
-                    }
-
+                console.log('[APD] ⚠️ Cart empty, attempting to rebuild...');
+                
+                // Priority 1: Check for instant checkout payload (direct checkout)
+                const payloadOne = apd_getCheckoutPayload();
+                if (payloadOne && _apd_instant) {
+                    console.log('[APD] ✅ Found instant checkout payload');
+                    const basePrice = Number(payloadOne.base_price || payloadOne.product_price || payloadOne.price || 29.99);
+                    const salePrice = payloadOne.sale_price ? Number(payloadOne.sale_price) : null;
+                    const materialPrice = Number(payloadOne.material_price || 0);
+                    const unitPrice = (salePrice || basePrice) + materialPrice;
+                    
+                    cart.push({ 
+                        id: 'instant_' + Date.now(),
+                        cart_item_id: 'instant_' + Date.now(),
+                        product_id: payloadOne.product_id, 
+                        product_name: payloadOne.product_name, 
+                        price: unitPrice,
+                        base_price: basePrice,
+                        sale_price: salePrice,
+                        material_price: materialPrice,
+                        quantity: parseInt(payloadOne.quantity||1,10), 
+                        print_color: payloadOne.print_color,
+                        vinyl_material: payloadOne.vinyl_material,
+                        text_fields: payloadOne.text_fields || {},
+                        preview_image_svg: payloadOne.preview_image_svg || payloadOne.preview_image_png || '',
+                        customization_data: payloadOne 
+                    });
+                    console.log('[APD] ✅ Built cart from instant checkout payload');
                 }
 
+                // Priority 2: Try localStorage cart (normal checkout)
+                if (!cart.length) {
+                    console.log('[APD] 🔍 No instant payload, trying localStorage cart...');
+                    try { 
+                        const localCart = JSON.parse(localStorage.getItem('apd_cart') || '[]');
+                        if (localCart && localCart.length > 0) {
+                            cart = localCart;
+                            console.log('[APD] ✅ Loaded', cart.length, 'items from localStorage cart');
+                        }
+                    } catch(e) {
+                        console.error('[APD] Error loading localStorage cart:', e);
+                    }
+                }
             }
+            
+            console.log('[APD] 📦 Final cart for order:', cart.length, 'items');
 
             if (!cart.length) { 
                 // Restore button on error
@@ -2722,6 +2805,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
     });
+    } else {
+        console.error('[APD] ❌❌❌ CRITICAL: Complete Order button NOT FOUND! ❌❌❌');
+        console.error('[APD] Available buttons on page:');
+        document.querySelectorAll('button').forEach((btn, i) => {
+            console.error('[APD] Button', i + 1, ':', btn.className, '-', btn.textContent.substring(0, 30));
+        });
+    }
 
     
 

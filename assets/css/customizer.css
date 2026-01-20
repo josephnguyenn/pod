@@ -32,7 +32,7 @@ input.error:focus {
 
 .fsc-main-content {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 3fr 1fr;
     gap: 24px;
     align-items: start;
 }
@@ -75,6 +75,17 @@ input.error:focus {
     max-width: 100%;
 }
 
+/* Improve SVG rendering quality */
+.fsc-preview-content svg {
+    shape-rendering: geometricPrecision;
+    text-rendering: geometricPrecision;
+}
+
+.fsc-preview-content text {
+    shape-rendering: crispEdges;
+    text-rendering: optimizeLegibility;
+}
+
 /* APD Template Preview - Responsive scaling with aspect ratio */
 .apd-template-preview {
     max-width: 100% !important;
@@ -106,7 +117,10 @@ input.error:focus {
 .fsc-logo-container {
     margin-bottom: 10px;
     text-align: center;
-    position: relative
+    position: relative;
+    transform: translateZ(0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 .fsc-logo-svg {
@@ -117,6 +131,8 @@ input.error:focus {
     color: #8B0000; /* Default dark-red color */
     color: var(--logo-color, #8B0000); /* Use CSS custom property for dynamic color */
     fill: var(--logo-color, #8B0000); /* Use CSS custom property for dynamic fill */
+    shape-rendering: geometricPrecision;
+    text-rendering: geometricPrecision;
 }
 
 /* Force logo color updates */
@@ -234,7 +250,7 @@ input.error:focus {
 }
 
 .fsc-preview-section {
-    flex: 1;
+    flex: 2;
     width: 100%;
     background: #f8f9fa;
     border-right: 1px solid #e9ecef;
@@ -286,6 +302,9 @@ input.error:focus {
     overflow-y: auto;
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* Internet Explorer 10+ */
+    flex: 1;
+    min-width: 300px;
+    max-width: 450px;
 }
 
 .fsc-customization-panel::-webkit-scrollbar {
@@ -421,8 +440,8 @@ input.error:focus {
 
 /* Material Outline Grid - Show all materials */
 .fsc-material-outline-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     margin-top: 10px;
 }
@@ -437,6 +456,8 @@ input.error:focus {
     cursor: pointer;
     overflow: hidden;
     min-height: 80px;
+    width: 80px;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;

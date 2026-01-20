@@ -110,6 +110,7 @@ class AdvancedProductDesigner
         add_action('wp_ajax_nopriv_apd_place_order', array($this, 'apd_place_order'));
         add_action('wp_ajax_apd_get_order_details', array($this, 'apd_get_order_details'));
         add_action('wp_ajax_nopriv_apd_get_order_details', array($this, 'apd_get_order_details'));
+        add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
 
         // Test AJAX handler
         add_action('wp_ajax_apd_test_ajax', array($this, 'test_ajax_handler'));
@@ -702,6 +703,27 @@ class AdvancedProductDesigner
                     <p class="description">If unchecked, customers can only add to cart without customization</p>
                 </td>
             </tr>
+            <tr id="fsc_customization_options_row" style="<?php echo $is_customizable != '1' ? 'display:none;' : ''; ?>">
+                <th><label>Customization Options</label></th>
+                <td>
+                    <?php
+                    $enable_color_selection = get_post_meta($post->ID, '_fsc_enable_color_selection', true);
+                    $enable_outline_selection = get_post_meta($post->ID, '_fsc_enable_outline_selection', true);
+                    // Default both to enabled if not set
+                    if ($enable_color_selection === '') $enable_color_selection = '1';
+                    if ($enable_outline_selection === '') $enable_outline_selection = '1';
+                    ?>
+                    <label style="display: block; margin-bottom: 8px;">
+                        <input type="checkbox" name="fsc_enable_color_selection" value="1" <?php checked($enable_color_selection, '1'); ?>>
+                        Enable color selection in customizer
+                    </label>
+                    <label style="display: block;">
+                        <input type="checkbox" name="fsc_enable_outline_selection" value="1" <?php checked($enable_outline_selection, '1'); ?>>
+                        Enable outline color selection in customizer
+                    </label>
+                    <p class="description">Choose which customization options are available for this product. At least one should be enabled.</p>
+                </td>
+            </tr>
             <tr>
                 <th><label for="fsc_logo_file">Product Logo (SVG)</label></th>
                 <td>
@@ -771,6 +793,15 @@ class AdvancedProductDesigner
         
         <script>
         jQuery(document).ready(function($) {
+            // Toggle customization options visibility
+            $('#fsc_customizable').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#fsc_customization_options_row').show();
+                } else {
+                    $('#fsc_customization_options_row').hide();
+                }
+            });
+            
             $('.fsc-add-feature').on('click', function() {
                 var newRow = '<div class="fsc-feature-row"><input type="text" name="fsc_features[]" value="" class="regular-text" placeholder="Enter feature"><button type="button" class="button fsc-remove-feature">Remove</button></div>';
                 $('#fsc-features-container').append(newRow);
@@ -827,6 +858,15 @@ class AdvancedProductDesigner
             <p class="description">When enabled, customers select material and size on the product detail page, then enter customizer with those selections.</p>
             
             <div id="apd-variants-content" style="<?php echo !$variants['enabled'] ? 'display:none;' : ''; ?>">
+                
+                <div style="padding: 15px; background: #e7f3ff; border-left: 4px solid #2271b1; margin-bottom: 20px;">
+                    <h4 style="margin-top: 0; color: #2271b1;">💡 Price Inheritance</h4>
+                    <p style="margin-bottom: 0; color: #2c3338;">
+                        Variants automatically inherit the <strong>Price</strong> and <strong>Sale Price</strong> from the "Product Details" section above.<br>
+                        Only fill in variant-specific prices when they differ from the base product price. Leave empty to use the default prices.
+                    </p>
+                </div>
+                
                 <hr>
                 
                 <!-- Size Options -->
@@ -889,28 +929,57 @@ class AdvancedProductDesigner
                 
                 <!-- Combinations Table -->
                 <h3>Variant Combinations</h3>
-                <p class="description">Each combination gets unique SKU, price, sale price, and stock status.</p>
+                <p class="description">Each combination gets unique SKU, price, sale price, stock status, and optional quantity discounts.</p>
                 
-                <div style="overflow-x: auto;">
-                    <table class="widefat" id="apd-combinations-table">
-                        <thead>
+                <div class="apd-variant-combinations">
+                    <?php 
+                    $pricing_service = new APD_Pricing_Service();
+                    $variant_tiers_all = get_post_meta($post->ID, '_apd_variant_price_tiers', true);
+                    if (!is_array($variant_tiers_all)) {
+                        $variant_tiers_all = array();
+                    }
+                    
+                    foreach ($variants['combinations'] as $idx => $combo): 
+                        $sku = isset($combo['sku']) ? $combo['sku'] : '';
+                        $variant_tiers = isset($variant_tiers_all[$sku]) ? $variant_tiers_all[$sku] : array();
+                    ?>
+                    <div class="apd-variant-item" style="margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; background: #fff;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <h4 style="margin: 0;">
+                                <?php echo esc_html($combo['size']); ?> 
+                                <?php if (!empty($combo['material'])): ?>
+                                    × <?php echo esc_html($combo['material']); ?>
+                                <?php endif; ?>
+                            </h4>
+                            <button type="button" class="button apd-toggle-variant-tiers" data-variant-idx="<?php echo esc_attr($idx); ?>" data-sku="<?php echo esc_attr($sku); ?>">
+                                <?php echo !empty($variant_tiers) ? 'Edit' : 'Add'; ?> Quantity Discounts
+                            </button>
+                        </div>
+                        
+                        <input type="hidden" name="apd_comb_size[]" value="<?php echo esc_attr($combo['size']); ?>">
+                        <input type="hidden" name="apd_comb_material[]" value="<?php echo esc_attr($combo['material']); ?>">
+                        
+                        <table class="form-table" style="margin: 0;">
                             <tr>
-                                <th>Size</th>
-                                <th>Material</th>
-                                <th style="width: 180px;">SKU</th>
-                                <th style="width: 100px;">Price ($)</th>
-                                <th style="width: 100px;">Sale Price ($)</th>
-                                <th style="width: 120px;">Stock Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="apd-combinations-body">
-                            <?php foreach ($variants['combinations'] as $combo): ?>
-                            <tr>
-                                <td><?php echo esc_html($combo['size']); ?><input type="hidden" name="apd_comb_size[]" value="<?php echo esc_attr($combo['size']); ?>"></td>
-                                <td><?php echo esc_html($combo['material']); ?><input type="hidden" name="apd_comb_material[]" value="<?php echo esc_attr($combo['material']); ?>"></td>
+                                <th style="padding-left: 0; width: 120px;">SKU</th>
                                 <td><input type="text" name="apd_comb_sku[]" value="<?php echo esc_attr($combo['sku']); ?>" class="regular-text" placeholder="VAR-12X6-GOLD"></td>
-                                <td><input type="number" name="apd_comb_price[]" value="<?php echo esc_attr($combo['price']); ?>" step="0.01" min="0" class="small-text"></td>
-                                <td><input type="number" name="apd_comb_sale_price[]" value="<?php echo esc_attr($combo['sale_price']); ?>" step="0.01" min="0" class="small-text"></td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Price ($)</th>
+                                <td>
+                                    <input type="number" name="apd_comb_price[]" value="<?php echo esc_attr($combo['price']); ?>" step="0.01" min="0" class="regular-text" placeholder="<?php echo esc_attr(get_post_meta($post->ID, '_fsc_price', true)); ?>">
+                                    <p class="description">Leave empty to use product base price ($<?php echo esc_html(get_post_meta($post->ID, '_fsc_price', true) ?: '0.00'); ?>)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Sale Price ($)</th>
+                                <td>
+                                    <input type="number" name="apd_comb_sale_price[]" value="<?php echo esc_attr($combo['sale_price']); ?>" step="0.01" min="0" class="regular-text" placeholder="<?php echo esc_attr(get_post_meta($post->ID, '_fsc_sale_price', true)); ?>">
+                                    <p class="description">Leave empty to use product sale price ($<?php echo esc_html(get_post_meta($post->ID, '_fsc_sale_price', true) ?: 'none'); ?>)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Stock</th>
                                 <td>
                                     <select name="apd_comb_stock[]">
                                         <option value="instock" <?php selected($combo['stock'], 'instock'); ?>>In Stock</option>
@@ -918,9 +987,39 @@ class AdvancedProductDesigner
                                     </select>
                                 </td>
                             </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                        </table>
+                        
+                        <!-- Variant-specific tier pricing -->
+                        <div class="apd-variant-tiers-section" data-variant-idx="<?php echo esc_attr($idx); ?>" data-sku="<?php echo esc_attr($sku); ?>" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                            <h4 style="margin-top: 0;">Quantity Discounts for this Variant</h4>
+                            <!-- Hidden field to map variant index to SKU -->
+                            <input type="hidden" name="apd_var_tier_sku_map[<?php echo esc_attr($idx); ?>]" value="<?php echo esc_attr($sku); ?>">
+                            <table class="widefat apd-variant-tiers-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 100px;">Min Qty</th>
+                                        <th style="width: 100px;">Discount %</th>
+                                        <th style="width: 150px;">Tier Name</th>
+                                        <th style="width: 80px;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="apd-variant-tiers-body">
+                                    <?php if (!empty($variant_tiers)): ?>
+                                        <?php foreach ($variant_tiers as $tier): ?>
+                                        <tr>
+                                            <td><input type="number" name="apd_var_tier_minqty[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['min_qty']); ?>" min="1" class="small-text"></td>
+                                            <td><input type="number" name="apd_var_tier_discount[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['discount_percent']); ?>" min="0" max="100" step="0.01" class="small-text"></td>
+                                            <td><input type="text" name="apd_var_tier_name[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['name']); ?>" class="regular-text" placeholder="Bulk"></td>
+                                            <td><button type="button" class="button apd-remove-variant-tier">Remove</button></td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                            <button type="button" class="button apd-add-variant-tier" data-variant-idx="<?php echo esc_attr($idx); ?>" style="margin-top: 10px;">Add Tier</button>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </div>
@@ -966,6 +1065,98 @@ class AdvancedProductDesigner
                 $(this).closest('tr').remove();
             });
             
+            // Toggle variant tiers section
+            $(document).on('click', '.apd-toggle-variant-tiers', function(e) {
+                e.preventDefault();
+                var variantIdx = $(this).data('variant-idx');
+                var $section = $('.apd-variant-tiers-section[data-variant-idx="' + variantIdx + '"]');
+                $section.slideToggle();
+            });
+            
+            // Add variant tier
+            $(document).on('click', '.apd-add-variant-tier', function(e) {
+                e.preventDefault();
+                var variantIdx = $(this).data('variant-idx');
+                var $tbody = $('.apd-variant-tiers-section[data-variant-idx="' + variantIdx + '"] .apd-variant-tiers-body');
+                var newRow = '<tr>' +
+                    '<td><input type="number" name="apd_var_tier_minqty[' + variantIdx + '][]" value="" min="1" class="small-text"></td>' +
+                    '<td><input type="number" name="apd_var_tier_discount[' + variantIdx + '][]" value="" min="0" max="100" step="0.01" class="small-text"></td>' +
+                    '<td><input type="text" name="apd_var_tier_name[' + variantIdx + '][]" value="" class="regular-text" placeholder="Bulk"></td>' +
+                    '<td><button type="button" class="button apd-remove-variant-tier">Remove</button></td>' +
+                    '</tr>';
+                $tbody.append(newRow);
+            });
+            
+            // Remove variant tier
+            $(document).on('click', '.apd-remove-variant-tier', function(e) {
+                e.preventDefault();
+                $(this).closest('tr').remove();
+            });
+            
+            // Helper function to generate variant card HTML
+            function generateVariantCard(idx, size, sizeLabel, material, materialLabel, sku) {
+                var title = sizeLabel;
+                if (materialLabel && materialLabel !== 'N/A') {
+                    title += ' × ' + materialLabel;
+                }
+                
+                var card = '<div class="apd-variant-item" style="margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; background: #fff;">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
+                        '<h4 style="margin: 0;">' + title + '</h4>' +
+                        '<button type="button" class="button apd-toggle-variant-tiers" data-variant-idx="' + idx + '" data-sku="' + sku + '">Add Quantity Discounts</button>' +
+                    '</div>' +
+                    '<input type="hidden" name="apd_comb_size[]" value="' + size + '">' +
+                    '<input type="hidden" name="apd_comb_material[]" value="' + material + '">' +
+                    '<table class="form-table" style="margin: 0;">' +
+                        '<tr>' +
+                            '<th style="padding-left: 0; width: 120px;">SKU</th>' +
+                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text" placeholder="VAR-12X6-GOLD"></td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Price ($)</th>' +
+                            '<td>' +
+                                '<input type="number" name="apd_comb_price[]" value="" step="0.01" min="0" class="regular-text">' +
+                                '<p class="description">Leave empty to use product base price</p>' +
+                            '</td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Sale Price ($)</th>' +
+                            '<td>' +
+                                '<input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="regular-text">' +
+                                '<p class="description">Leave empty to use product sale price</p>' +
+                            '</td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Stock</th>' +
+                            '<td>' +
+                                '<select name="apd_comb_stock[]">' +
+                                    '<option value="instock">In Stock</option>' +
+                                    '<option value="outofstock">Out of Stock</option>' +
+                                '</select>' +
+                            '</td>' +
+                        '</tr>' +
+                    '</table>' +
+                    '<div class="apd-variant-tiers-section" data-variant-idx="' + idx + '" data-sku="' + sku + '" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">' +
+                        '<h4 style="margin-top: 0;">Quantity Discounts for this Variant</h4>' +
+                        '<input type="hidden" name="apd_var_tier_sku_map[' + idx + ']" value="' + sku + '">' +
+                        '<table class="widefat apd-variant-tiers-table">' +
+                            '<thead>' +
+                                '<tr>' +
+                                    '<th style="width: 100px;">Min Qty</th>' +
+                                    '<th style="width: 100px;">Discount %</th>' +
+                                    '<th style="width: 150px;">Tier Name</th>' +
+                                    '<th style="width: 80px;">Actions</th>' +
+                                '</tr>' +
+                            '</thead>' +
+                            '<tbody class="apd-variant-tiers-body"></tbody>' +
+                        '</table>' +
+                        '<button type="button" class="button apd-add-variant-tier" data-variant-idx="' + idx + '" style="margin-top: 10px;">Add Tier</button>' +
+                    '</div>' +
+                '</div>';
+                
+                return card;
+            }
+            
             // Generate combinations
             $('#apd-generate-combinations').on('click', function() {
                 var sizes = [];
@@ -992,8 +1183,10 @@ class AdvancedProductDesigner
                     return;
                 }
                 
-                // Clear existing table
-                $('#apd-combinations-body').empty();
+                // Clear existing combinations
+                $('.apd-variant-combinations').empty();
+                
+                var idx = 0;
                 
                 // Generate combinations based on what's available
                 if (sizes.length > 0 && materials.length > 0) {
@@ -1001,44 +1194,26 @@ class AdvancedProductDesigner
                     sizes.forEach(function(size) {
                         materials.forEach(function(material) {
                             var sku = 'VAR-' + size.value.toUpperCase() + '-' + material.value.toUpperCase().replace(/\s+/g, '-');
-                            var row = '<tr>' +
-                                '<td>' + size.label + '<input type="hidden" name="apd_comb_size[]" value="' + size.value + '"></td>' +
-                                '<td>' + material.label + '<input type="hidden" name="apd_comb_material[]" value="' + material.value + '"></td>' +
-                                '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
-                                '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
-                                '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
-                                '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
-                                '</tr>';
-                            $('#apd-combinations-body').append(row);
+                            var card = generateVariantCard(idx, size.value, size.label, material.value, material.label, sku);
+                            $('.apd-variant-combinations').append(card);
+                            idx++;
                         });
                     });
                 } else if (sizes.length > 0) {
                     // Only sizes - create variants with empty material
                     sizes.forEach(function(size) {
                         var sku = 'VAR-' + size.value.toUpperCase();
-                        var row = '<tr>' +
-                            '<td>' + size.label + '<input type="hidden" name="apd_comb_size[]" value="' + size.value + '"></td>' +
-                            '<td>N/A<input type="hidden" name="apd_comb_material[]" value=""></td>' +
-                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
-                            '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
-                            '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
-                            '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
-                            '</tr>';
-                        $('#apd-combinations-body').append(row);
+                        var card = generateVariantCard(idx, size.value, size.label, '', 'N/A', sku);
+                        $('.apd-variant-combinations').append(card);
+                        idx++;
                     });
                 } else {
                     // Only materials - create variants with empty size
                     materials.forEach(function(material) {
                         var sku = 'VAR-' + material.value.toUpperCase().replace(/\s+/g, '-');
-                        var row = '<tr>' +
-                            '<td>N/A<input type="hidden" name="apd_comb_size[]" value=""></td>' +
-                            '<td>' + material.label + '<input type="hidden" name="apd_comb_material[]" value="' + material.value + '"></td>' +
-                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text"></td>' +
-                            '<td><input type="number" name="apd_comb_price[]" value="0" step="0.01" min="0" class="small-text"></td>' +
-                            '<td><input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="small-text"></td>' +
-                            '<td><select name="apd_comb_stock[]"><option value="instock">In Stock</option><option value="outofstock">Out of Stock</option></select></td>' +
-                            '</tr>';
-                        $('#apd-combinations-body').append(row);
+                        var card = generateVariantCard(idx, '', 'N/A', material.value, material.label, sku);
+                        $('.apd-variant-combinations').append(card);
+                        idx++;
                     });
                 }
                 
@@ -1105,6 +1280,19 @@ class AdvancedProductDesigner
             update_post_meta($post_id, '_fsc_customizable', '1');
         } else {
             update_post_meta($post_id, '_fsc_customizable', '0');
+        }
+        
+        // Save customization options
+        if (isset($_POST['fsc_enable_color_selection'])) {
+            update_post_meta($post_id, '_fsc_enable_color_selection', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_enable_color_selection', '0');
+        }
+        
+        if (isset($_POST['fsc_enable_outline_selection'])) {
+            update_post_meta($post_id, '_fsc_enable_outline_selection', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_enable_outline_selection', '0');
         }
 
         // Save features
@@ -1197,6 +1385,52 @@ class AdvancedProductDesigner
             }
             
             update_post_meta($post_id, '_apd_variants', $variants_data);
+            
+            // Save variant-specific pricing tiers using index-based approach
+            $pricing_service = new APD_Pricing_Service();
+            $all_variant_tiers = array();
+            
+            // Get the SKU mapping from the form
+            $sku_map = isset($_POST['apd_var_tier_sku_map']) ? $_POST['apd_var_tier_sku_map'] : array();
+            
+            foreach ($sku_map as $variant_idx => $sku) {
+                if (empty($sku)) {
+                    continue;
+                }
+                
+                // Check for tier data for this variant index
+                if (isset($_POST['apd_var_tier_minqty'][$variant_idx]) && is_array($_POST['apd_var_tier_minqty'][$variant_idx])) {
+                    $variant_tiers = array();
+                    $min_qtys = $_POST['apd_var_tier_minqty'][$variant_idx];
+                    $discounts = isset($_POST['apd_var_tier_discount'][$variant_idx]) ? $_POST['apd_var_tier_discount'][$variant_idx] : array();
+                    $names = isset($_POST['apd_var_tier_name'][$variant_idx]) ? $_POST['apd_var_tier_name'][$variant_idx] : array();
+                    
+                    foreach ($min_qtys as $tier_idx => $min_qty) {
+                        if (!empty($min_qty) && isset($discounts[$tier_idx]) && $discounts[$tier_idx] !== '') {
+                            $variant_tiers[] = array(
+                                'min_qty' => intval($min_qty),
+                                'discount_percent' => floatval($discounts[$tier_idx]),
+                                'name' => isset($names[$tier_idx]) ? sanitize_text_field($names[$tier_idx]) : ''
+                            );
+                        }
+                    }
+                    
+                    if (!empty($variant_tiers)) {
+                        // Sort tiers by min_qty ascending
+                        usort($variant_tiers, function($a, $b) {
+                            return $a['min_qty'] - $b['min_qty'];
+                        });
+                        $all_variant_tiers[$sku] = $variant_tiers;
+                    }
+                }
+            }
+            
+            // Save all variant tiers at once
+            if (!empty($all_variant_tiers)) {
+                update_post_meta($post_id, '_apd_variant_price_tiers', $all_variant_tiers);
+            } else {
+                delete_post_meta($post_id, '_apd_variant_price_tiers');
+            }
         } else {
             // Variants disabled
             $variants_data = array(
@@ -1248,6 +1482,23 @@ class AdvancedProductDesigner
 
             // Get product ID for customizer
             $product_id = get_query_var('customizer');
+            
+            // Get template ID and customization options if product is loaded
+            $template_id = 0;
+            $enable_color_selection = 1;  // Default enabled (use integers for JavaScript)
+            $enable_outline_selection = 1;  // Default enabled (use integers for JavaScript)
+            
+            if ($product_id) {
+                $template_id = get_post_meta($product_id, '_fsc_template', true);
+                
+                // Get customization options
+                $color_opt = get_post_meta($product_id, '_fsc_enable_color_selection', true);
+                $outline_opt = get_post_meta($product_id, '_fsc_enable_outline_selection', true);
+                
+                // Default to enabled if not set, convert to integer (1 or 0) for JavaScript
+                $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+                $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            }
 
             wp_localize_script('apd-customizer', 'apd_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
@@ -1256,11 +1507,18 @@ class AdvancedProductDesigner
                 'fsc_nonce' => wp_create_nonce('fsc_nonce'),
                 'plugin_url' => APD_PLUGIN_URL,
                 'site_url' => home_url(),
-                'product_id' => $product_id
+                'product_id' => $product_id,
+                'template_id' => $template_id,
+                'enable_color_selection' => $enable_color_selection,
+                'enable_outline_selection' => $enable_outline_selection
             ));
 
+            // Pass uploaded fonts to the customizer for font rendering
+            $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+            wp_localize_script('apd-customizer', 'apdUploadedFonts', $uploaded_fonts);
+
             // Provide materials directly to the page to avoid extra AJAX calls
-            $materials_map = $this->get_materials();
+            $materials_map = $this->get_materials($template_id);
             // Convert to format expected by frontend: name => {url, price}
             wp_localize_script('apd-customizer', 'fscDefaults', array(
                 'materials' => $materials_map
@@ -1275,6 +1533,25 @@ class AdvancedProductDesigner
     {
         wp_enqueue_style('apd-admin-styles', APD_PLUGIN_URL . 'assets/css/admin.css', array(), APD_VERSION);
         wp_enqueue_style('apd-admin-fixes', APD_PLUGIN_URL . 'assets/css/admin-fixes.css', array(), APD_VERSION);
+
+        // Fix for WordPress dismissible notices
+        add_action('admin_footer', function() {
+            ?>
+            <script>
+            // Fix for dismissible notices - ensure elements exist before adding listeners
+            (function() {
+                if (typeof jQuery !== 'undefined') {
+                    jQuery(document).ready(function($) {
+                        $('.notice-dismiss').off('click.wp-dismiss-notice').on('click.wp-dismiss-notice', function(e) {
+                            e.preventDefault();
+                            $(this).closest('.notice').fadeOut();
+                        });
+                    });
+                }
+            })();
+            </script>
+            <?php
+        });
 
         // Enqueue media uploader on product edit page
         $screen = get_current_screen();
@@ -1349,6 +1626,32 @@ class AdvancedProductDesigner
         wp_enqueue_script('apd-product-block-frontend', APD_PLUGIN_URL . 'assets/js/product-block-frontend.js', array('jquery'), APD_VERSION, true);
         wp_enqueue_style('apd-product-block', APD_PLUGIN_URL . 'assets/css/product-block.css', array(), APD_VERSION);
 
+        // Inject uploaded fonts as inline CSS for frontend rendering
+        $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+        if (!empty($uploaded_fonts)) {
+            $font_css = '';
+            foreach ($uploaded_fonts as $font) {
+                if (!empty($font['family']) && !empty($font['url'])) {
+                    $family_css = esc_attr($font['family']);
+                    $url_css = esc_url($font['url']);
+                    $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+                    // Determine font format based on URL extension
+                    $format = 'truetype';
+                    if (strpos($url_css, '.woff2') !== false) {
+                        $format = 'woff2';
+                    } elseif (strpos($url_css, '.woff') !== false) {
+                        $format = 'woff';
+                    } elseif (strpos($url_css, '.otf') !== false) {
+                        $format = 'opentype';
+                    }
+                    $font_css .= "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}";
+                }
+            }
+            if ($font_css) {
+                wp_add_inline_style('apd-product-block', $font_css);
+            }
+        }
+
         // Enqueue customizer scripts and styles
         wp_enqueue_script('apd-product-customizer', APD_PLUGIN_URL . 'assets/js/product-customizer.js', array('jquery'), APD_VERSION, true);
         wp_enqueue_style('apd-product-customizer', APD_PLUGIN_URL . 'assets/css/product-customizer.css', array(), APD_VERSION);
@@ -1388,6 +1691,28 @@ class AdvancedProductDesigner
             'customizer_url' => home_url(get_option('apd_customizer_url', '/customizer/')),
             'thank_you_url' => home_url(get_option('apd_thank_you_url', '/thank-you/'))
         );
+        
+        // Add customization options if on customizer page
+        if (get_query_var('customizer')) {
+            $product_id = get_query_var('customizer');
+            $template_id = 0;
+            $enable_color_selection = 1;
+            $enable_outline_selection = 1;
+            
+            if ($product_id) {
+                $template_id = get_post_meta($product_id, '_fsc_template', true);
+                $color_opt = get_post_meta($product_id, '_fsc_enable_color_selection', true);
+                $outline_opt = get_post_meta($product_id, '_fsc_enable_outline_selection', true);
+                
+                $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+                $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            }
+            
+            $apd_ajax_data['product_id'] = $product_id;
+            $apd_ajax_data['template_id'] = $template_id;
+            $apd_ajax_data['enable_color_selection'] = $enable_color_selection;
+            $apd_ajax_data['enable_outline_selection'] = $enable_outline_selection;
+        }
 
         wp_localize_script('apd-product-block-frontend', 'apd_ajax', $apd_ajax_data);
 
@@ -1446,7 +1771,8 @@ class AdvancedProductDesigner
             'show_price' => 'true',
             'show_sale' => 'true',
             'columns' => '3',
-            'items_per_page' => '12'
+            'items_per_page' => '12',
+            'hide_header' => 'false'
         ), $atts);
 
         // Enqueue frontend scripts when shortcode is used
@@ -1481,8 +1807,14 @@ class AdvancedProductDesigner
             'post_status' => 'publish'
         ));
 
-        // Get materials from uploads folder
-        $materials = $this->get_materials();
+        // Get template ID from product if available
+        $template_id = 0;
+        if ($product_data) {
+            $template_id = get_post_meta($product_data->ID, '_fsc_template', true);
+        }
+
+        // Get materials from uploads folder (filtered by template's allowed categories)
+        $materials = $this->get_materials($template_id);
 
         // Debug: Log materials for troubleshooting
         error_log('FSC Materials loaded: ' . print_r($materials, true));
@@ -1509,12 +1841,22 @@ class AdvancedProductDesigner
         $product_material = '';
         $product_features = array();
         $product_logo_content = '';
+        $enable_color_selection = 1; // Default enabled (integer)
+        $enable_outline_selection = 1; // Default enabled (integer)
 
         if ($product_data) {
             $product_price = get_post_meta($product_data->ID, '_fsc_price', true);
             $product_sale_price = get_post_meta($product_data->ID, '_fsc_sale_price', true);
             $product_material = get_post_meta($product_data->ID, '_fsc_material', true);
             $product_features = get_post_meta($product_data->ID, '_fsc_features', true);
+            
+            // Get customization options
+            $color_opt = get_post_meta($product_data->ID, '_fsc_enable_color_selection', true);
+            $outline_opt = get_post_meta($product_data->ID, '_fsc_enable_outline_selection', true);
+            // Default to enabled if not set, convert to integer for JavaScript
+            $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+            $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            
             // Get logo URL - prefer attachment ID over meta field
             $logo_id = get_post_meta($product_data->ID, '_fsc_logo_id', true);
             $product_logo_url = '';
@@ -1755,7 +2097,8 @@ class AdvancedProductDesigner
             'show_sale' => $atts['show_sale'] === 'true',
             'columns' => intval($atts['columns']),
             'items_per_page' => intval($atts['items_per_page']),
-            'company_name' => $company_name
+            'company_name' => $company_name,
+            'hide_header' => $atts['hide_header'] === 'true'
         );
 
         // Include the product list template
@@ -1805,20 +2148,41 @@ class AdvancedProductDesigner
         );
     }
 
-    public function get_materials()
+    public function get_materials($template_id = 0)
     {
         $materials = array();
+        $allowed_categories = array();
+        
+        // Get allowed categories for this template if template_id is provided
+        if ($template_id > 0) {
+            $allowed_categories = get_post_meta($template_id, '_apd_allowed_material_categories', true);
+            if (!is_array($allowed_categories)) {
+                $allowed_categories = array();
+            }
+        }
+        
+        // Check if we should filter by categories
+        $filter_by_category = !empty($allowed_categories) && !in_array('all', $allowed_categories);
 
         // Get materials from database first
         $db_materials = get_option('apd_materials', array());
 
         if (!empty($db_materials)) {
             foreach ($db_materials as $material) {
+                // Check if material should be included based on category filtering
+                if ($filter_by_category) {
+                    $material_category = isset($material['category']) ? $material['category'] : 'Uncategorized';
+                    if (!in_array($material_category, $allowed_categories)) {
+                        continue; // Skip this material
+                    }
+                }
+                
                 // Backward compatibility: ensure price exists
                 $price = isset($material['price']) ? floatval($material['price']) : 0;
                 $materials[$material['name']] = array(
                     'url' => $material['url'],
-                    'price' => $price
+                    'price' => $price,
+                    'category' => isset($material['category']) ? $material['category'] : 'Uncategorized'
                 );
             }
         } else {
@@ -2668,6 +3032,993 @@ class AdvancedProductDesigner
         wp_send_json_success($order_data);
     }
 
+    public function apd_process_cut_ready_svg()
+    {
+        // Verify admin access
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+
+        $order_id = intval($_POST['order_id'] ?? 0);
+        if (!$order_id) {
+            wp_send_json_error('Invalid order ID');
+            return;
+        }
+
+        // Get the original SVG - try multiple sources
+        $svg_content = '';
+        $source = '';
+        
+        // Try 1: Direct meta field
+        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+        if (!empty($svg_content)) {
+            $source = 'preview_image_svg meta';
+        }
+        
+        // Try 2: PNG meta (might be base64 SVG)
+        if (empty($svg_content)) {
+            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
+            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
+                $svg_content = $preview_png;
+                $source = 'preview_image_png meta (contains SVG)';
+            }
+        }
+        
+        // Try 3: URL meta
+        if (empty($svg_content)) {
+            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
+            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
+                $svg_content = $preview_url;
+                $source = 'preview_image_url meta (contains SVG)';
+            }
+        }
+        
+        // Try 4: Cart items
+        if (empty($svg_content)) {
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first_item = is_array($cart_items) && !empty($cart_items[0]) ? $cart_items[0] : null;
+                if ($first_item) {
+                    // Check multiple fields in cart item
+                    $svg_content = $first_item['preview_image_svg'] ?? '';
+                    if (!empty($svg_content)) {
+                        $source = 'cart_items[0].preview_image_svg';
+                    }
+                    
+                    if (empty($svg_content)) {
+                        $svg_content = $first_item['preview_image_png'] ?? '';
+                        if (!empty($svg_content) && strpos($svg_content, 'data:image/svg') !== false) {
+                            $source = 'cart_items[0].preview_image_png (contains SVG)';
+                        } else {
+                            $svg_content = '';
+                        }
+                    }
+                    
+                    if (empty($svg_content) && !empty($first_item['customization_data'])) {
+                        $cd = is_string($first_item['customization_data']) ? json_decode($first_item['customization_data'], true) : $first_item['customization_data'];
+                        if (is_array($cd)) {
+                            $svg_content = $cd['preview_image_svg'] ?? ($cd['preview_image_png'] ?? '');
+                            if (!empty($svg_content)) {
+                                $source = 'cart_items[0].customization_data.preview_image_svg/png';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Log what we found for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Source=%s, Content Length=%d, First 100 chars=%s',
+            $order_id,
+            $source ?: 'NONE',
+            strlen($svg_content),
+            substr($svg_content, 0, 100)
+        ));
+
+        // Check if svg_content is a URL instead of actual SVG content
+        if (!empty($svg_content) && (strpos($svg_content, 'http://') === 0 || strpos($svg_content, 'https://') === 0)) {
+            error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Content is a URL, fetching: ' . $svg_content);
+            $response = wp_remote_get($svg_content);
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $svg_content = wp_remote_retrieve_body($response);
+                $source .= ' (fetched from URL)';
+                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Fetched content length: ' . strlen($svg_content));
+            } else {
+                $error_msg = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
+                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Failed to fetch URL: ' . $error_msg);
+                wp_send_json_error('Failed to fetch SVG from URL: ' . $error_msg);
+                return;
+            }
+        }
+
+        if (empty($svg_content)) {
+            // Return detailed error with all meta keys for debugging
+            $all_meta = get_post_meta($order_id);
+            $available_keys = array_keys($all_meta);
+            
+            // Also check cart_items to see what's there
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            $debug_info = array();
+            $debug_info['available_meta_keys'] = $available_keys;
+            
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (is_array($cart_items) && !empty($cart_items)) {
+                $first_item = $cart_items[0] ?? null;
+                if ($first_item) {
+                    $debug_info['first_item_keys'] = array_keys($first_item);
+                    // Check if preview_image_svg exists and what it contains
+                    if (isset($first_item['preview_image_svg'])) {
+                        $svg_val = $first_item['preview_image_svg'];
+                        $debug_info['preview_image_svg_length'] = strlen($svg_val);
+                        $debug_info['preview_image_svg_start'] = substr($svg_val, 0, 100);
+                    }
+                    // Check customization_data too
+                    if (isset($first_item['customization_data'])) {
+                        $cd = is_string($first_item['customization_data']) ? json_decode($first_item['customization_data'], true) : $first_item['customization_data'];
+                        if (is_array($cd)) {
+                            $debug_info['customization_data_keys'] = array_keys($cd);
+                        }
+                    }
+                }
+            }
+            
+            error_log('APD Cut-Ready SVG Debug Info: ' . print_r($debug_info, true));
+            
+            wp_send_json_error(sprintf(
+                'No SVG found for this order. Available meta keys: %s. See error log for more details.',
+                implode(', ', $available_keys)
+            ));
+            return;
+        }
+
+        // Process the SVG to make it cut-ready
+        $clean_svg = $this->clean_svg_for_cutting($svg_content, $order_id);
+
+        if (is_wp_error($clean_svg)) {
+            wp_send_json_error($clean_svg->get_error_message());
+            return;
+        }
+
+        // Save the clean SVG as a file
+        $upload_dir = wp_upload_dir();
+        $filename = 'order-' . $order_id . '-cut-ready-' . time() . '.svg';
+        $filepath = $upload_dir['path'] . '/' . $filename;
+        
+        if (!file_put_contents($filepath, $clean_svg)) {
+            wp_send_json_error('Failed to save processed SVG file');
+            return;
+        }
+
+        $file_url = $upload_dir['url'] . '/' . $filename;
+        
+        // Save the URL to order meta for future reference
+        update_post_meta($order_id, 'cut_ready_svg_url', $file_url);
+        update_post_meta($order_id, 'cut_ready_svg_generated_at', current_time('mysql'));
+
+        wp_send_json_success(array(
+            'file_url' => $file_url,
+            'filename' => $filename,
+            'message' => 'Cut-ready SVG generated successfully'
+        ));
+    }
+
+    private function clean_svg_for_cutting($svg_content, $order_id = 0)
+    {
+        // Handle data URL format
+        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
+            // Check if it's base64 encoded
+            if (strpos($svg_content, 'base64,') !== false) {
+                $svg_content = preg_replace('/^data:image\/svg\+xml;base64,/', '', $svg_content);
+                $svg_content = base64_decode($svg_content);
+            } else {
+                // URL encoded
+                $svg_content = preg_replace('/^data:image\/svg\+xml[^,]*,/', '', $svg_content);
+                $svg_content = urldecode($svg_content);
+            }
+            
+            if ($svg_content === false || empty($svg_content)) {
+                return new WP_Error('decode_failed', 'Failed to decode SVG data URL');
+            }
+        }
+
+        // Clean up common issues before parsing
+        $svg_content = trim($svg_content);
+        
+        // Remove HTML entities that might break XML parsing
+        $svg_content = html_entity_decode($svg_content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        
+        // Log content type for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG Debug - Order #%d: After decode length=%d, starts with=%s, contains <svg=%s',
+            $order_id,
+            strlen($svg_content),
+            substr($svg_content, 0, 50),
+            strpos($svg_content, '<svg') !== false ? 'YES' : 'NO'
+        ));
+        
+        // Ensure we have an SVG element
+        if (strpos($svg_content, '<svg') === false) {
+            // Provide more detailed error for debugging
+            $preview = strlen($svg_content) > 200 ? substr($svg_content, 0, 200) . '...' : $svg_content;
+            error_log('APD Cut-Ready SVG Error - Content preview: ' . $preview);
+            return new WP_Error('not_svg', 'Content does not appear to be SVG. Content starts with: ' . substr($svg_content, 0, 100));
+        }
+
+        // Load SVG with DOMDocument
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument('1.0', 'UTF-8'); // Start with UTF-8, convert to UTF-16 at end
+        $dom->preserveWhiteSpace = false;
+        $dom->formatOutput = true;
+        
+        // Fix common XML issues BEFORE first parse attempt
+        $svg_content = $this->fix_common_xml_issues($svg_content);
+        
+        // Try to load with error suppression
+        $loaded = @$dom->loadXML($svg_content, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
+        
+        if (!$loaded) {
+            // Get libxml errors for debugging
+            $errors = libxml_get_errors();
+            $error_messages = array();
+            foreach ($errors as $error) {
+                $error_messages[] = trim($error->message);
+            }
+            libxml_clear_errors();
+            
+            error_log('APD SVG Processing Error (first attempt) - Order #' . $order_id . ': ' . implode('; ', $error_messages));
+            error_log('APD SVG Content (first 1000 chars): ' . substr($svg_content, 0, 1000));
+            
+            // Second attempt: Try wrapping in proper XML document and using HTML parser as fallback
+            // Strip any existing XML declaration first
+            $svg_content = preg_replace('/<\?xml[^?]*\?>/', '', $svg_content);
+            
+            // Try to use HTML5-style parsing which is more lenient
+            $wrapped_content = '<?xml version="1.0" encoding="UTF-8"?>' . 
+                              '<root xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">' . 
+                              $svg_content . 
+                              '</root>';
+            
+            $dom2 = new DOMDocument('1.0', 'UTF-8');
+            $dom2->preserveWhiteSpace = false;
+            
+            // Try with the wrapped content
+            $loaded = @$dom2->loadXML($wrapped_content, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE | LIBXML_NOCDATA);
+            
+            if ($loaded) {
+                // Extract the SVG from the root wrapper
+                $svgs = $dom2->getElementsByTagName('svg');
+                if ($svgs->length > 0) {
+                    $svgElement = $svgs->item(0);
+                    $dom = new DOMDocument('1.0', 'UTF-8');
+                    $dom->preserveWhiteSpace = false;
+                    $dom->formatOutput = true;
+                    $importedSvg = $dom->importNode($svgElement, true);
+                    $dom->appendChild($importedSvg);
+                    $loaded = true;
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Recovered using wrapped XML parsing');
+                }
+            }
+            
+            if (!$loaded) {
+                // Third attempt: Use regex to aggressively clean the SVG
+                error_log('APD SVG Processing - Order #' . $order_id . ': Attempting aggressive regex cleanup');
+                
+                // Remove all style attributes entirely as they're often the source of issues
+                $svg_content_cleaned = preg_replace('/\s+style="[^"]*"/', '', $svg_content);
+                
+                // Fix path d attributes with line breaks or special chars
+                $svg_content_cleaned = preg_replace_callback(
+                    '/(<path[^>]*\sd=")([^"]*)(")/s',
+                    function($matches) {
+                        $d = $matches[2];
+                        // Remove line breaks and normalize whitespace in path data
+                        $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                        $d = preg_replace('/\s+/', ' ', $d);
+                        $d = trim($d);
+                        return $matches[1] . $d . $matches[3];
+                    },
+                    $svg_content_cleaned
+                );
+                
+                // Try loading the cleaned version
+                $dom = new DOMDocument('1.0', 'UTF-8');
+                $dom->preserveWhiteSpace = false;
+                $dom->formatOutput = true;
+                
+                $svg_content_cleaned = '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . 
+                                       preg_replace('/<\?xml[^?]*\?>/', '', $svg_content_cleaned);
+                
+                $loaded = @$dom->loadXML($svg_content_cleaned, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
+                
+                if ($loaded) {
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Recovered by removing style attributes');
+                } else {
+                    // Fourth attempt: Use HTML parser which is more lenient
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Attempting HTML parser fallback');
+                    
+                    $dom = new DOMDocument('1.0', 'UTF-8');
+                    $dom->preserveWhiteSpace = false;
+                    
+                    // Wrap in HTML and try loadHTML which is more lenient
+                    $html_wrapped = '<html><body>' . $svg_content_cleaned . '</body></html>';
+                    $loaded = @$dom->loadHTML($html_wrapped, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_HTML_NOIMPLIED | LIBXML_PARSEHUGE);
+                    
+                    if ($loaded) {
+                        // Find the SVG element
+                        $svgs = $dom->getElementsByTagName('svg');
+                        if ($svgs->length > 0) {
+                            $svgElement = $svgs->item(0);
+                            $newDom = new DOMDocument('1.0', 'UTF-8');
+                            $newDom->preserveWhiteSpace = false;
+                            $newDom->formatOutput = true;
+                            $importedSvg = $newDom->importNode($svgElement, true);
+                            $newDom->appendChild($importedSvg);
+                            $dom = $newDom;
+                            $loaded = true;
+                            error_log('APD SVG Processing - Order #' . $order_id . ': Recovered using HTML parser');
+                        } else {
+                            $loaded = false;
+                        }
+                    }
+                    
+                    if (!$loaded) {
+                        // Final fallback: COMPLETELY rebuild the SVG from scratch
+                        // Extract only path/shape data and build a clean, valid SVG
+                        error_log('APD SVG Processing - Order #' . $order_id . ': All XML parsing failed, rebuilding SVG from scratch');
+                        
+                        // Start with the original content
+                        $raw_svg = $svg_content;
+                        
+                        // Extract viewBox and dimensions from the root SVG
+                        $viewBox = '0 0 800 600'; // Default
+                        $width = '800';
+                        $height = '600';
+                        
+                        if (preg_match('/<svg[^>]*\sviewBox="([^"]+)"/i', $raw_svg, $vb_match)) {
+                            $viewBox = preg_replace('/[\r\n\t]+/', ' ', $vb_match[1]);
+                            $viewBox = preg_replace('/\s+/', ' ', trim($viewBox));
+                        }
+                        if (preg_match('/<svg[^>]*\swidth="([^"]+)"/i', $raw_svg, $w_match)) {
+                            $width = $w_match[1];
+                        }
+                        if (preg_match('/<svg[^>]*\sheight="([^"]+)"/i', $raw_svg, $h_match)) {
+                            $height = $h_match[1];
+                        }
+                        
+                        // Extract all path elements with their d attributes
+                        $paths = array();
+                        if (preg_match_all('/<path[^>]+>/is', $raw_svg, $path_matches)) {
+                            foreach ($path_matches[0] as $path_tag) {
+                                // Extract just the d attribute
+                                if (preg_match('/\sd="([^"]*)"/s', $path_tag, $d_match)) {
+                                    $d = $d_match[1];
+                                    // Clean the d attribute
+                                    $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                                    $d = preg_replace('/\s+/', ' ', trim($d));
+                                    if (!empty($d)) {
+                                        // Extract fill and stroke if present
+                                        $fill = 'none';
+                                        $stroke = 'black';
+                                        $stroke_width = '1';
+                                        
+                                        if (preg_match('/\sfill="([^"]+)"/', $path_tag, $fill_match)) {
+                                            $fill = $fill_match[1];
+                                            // Skip pattern references
+                                            if (strpos($fill, 'url(') !== false) {
+                                                $fill = 'none';
+                                            }
+                                        }
+                                        if (preg_match('/\sstroke="([^"]+)"/', $path_tag, $stroke_match)) {
+                                            $stroke = $stroke_match[1];
+                                            if (strpos($stroke, 'url(') !== false) {
+                                                $stroke = 'black';
+                                            }
+                                        }
+                                        if (preg_match('/\sstroke-width="([^"]+)"/', $path_tag, $sw_match)) {
+                                            $stroke_width = $sw_match[1];
+                                        }
+                                        
+                                        $paths[] = sprintf(
+                                            '<path d="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                            htmlspecialchars($d, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($fill, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($stroke, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($stroke_width, ENT_XML1 | ENT_QUOTES, 'UTF-8')
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Extract rect elements
+                        if (preg_match_all('/<rect[^>]+\/?>/is', $raw_svg, $rect_matches)) {
+                            foreach ($rect_matches[0] as $rect_tag) {
+                                $x = '0'; $y = '0'; $w = '0'; $h = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\sx="([^"]+)"/', $rect_tag, $m)) $x = $m[1];
+                                if (preg_match('/\sy="([^"]+)"/', $rect_tag, $m)) $y = $m[1];
+                                if (preg_match('/\swidth="([^"]+)"/', $rect_tag, $m)) $w = $m[1];
+                                if (preg_match('/\sheight="([^"]+)"/', $rect_tag, $m)) $h = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $rect_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $rect_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $rect_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<rect x="%s" y="%s" width="%s" height="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $x, $y, $w, $h, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract circle elements
+                        if (preg_match_all('/<circle[^>]+\/?>/is', $raw_svg, $circle_matches)) {
+                            foreach ($circle_matches[0] as $circle_tag) {
+                                $cx = '0'; $cy = '0'; $r = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\scx="([^"]+)"/', $circle_tag, $m)) $cx = $m[1];
+                                if (preg_match('/\scy="([^"]+)"/', $circle_tag, $m)) $cy = $m[1];
+                                if (preg_match('/\sr="([^"]+)"/', $circle_tag, $m)) $r = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $circle_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $circle_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $circle_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<circle cx="%s" cy="%s" r="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $cx, $cy, $r, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract polygon elements  
+                        if (preg_match_all('/<polygon[^>]+\/?>/is', $raw_svg, $poly_matches)) {
+                            foreach ($poly_matches[0] as $poly_tag) {
+                                if (preg_match('/\spoints="([^"]*)"/s', $poly_tag, $p_match)) {
+                                    $points = preg_replace('/[\r\n\t]+/', ' ', $p_match[1]);
+                                    $points = preg_replace('/\s+/', ' ', trim($points));
+                                    
+                                    $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                    if (preg_match('/\sfill="([^"]+)"/', $poly_tag, $m)) {
+                                        $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                    }
+                                    if (preg_match('/\sstroke="([^"]+)"/', $poly_tag, $m)) {
+                                        $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                    }
+                                    if (preg_match('/\sstroke-width="([^"]+)"/', $poly_tag, $m)) $stroke_width = $m[1];
+                                    
+                                    $paths[] = sprintf(
+                                        '<polygon points="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                        htmlspecialchars($points, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                        $fill, $stroke, $stroke_width
+                                    );
+                                }
+                            }
+                        }
+                        
+                        // Extract ellipse elements
+                        if (preg_match_all('/<ellipse[^>]+\/?>/is', $raw_svg, $ellipse_matches)) {
+                            foreach ($ellipse_matches[0] as $ellipse_tag) {
+                                $cx = '0'; $cy = '0'; $rx = '0'; $ry = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\scx="([^"]+)"/', $ellipse_tag, $m)) $cx = $m[1];
+                                if (preg_match('/\scy="([^"]+)"/', $ellipse_tag, $m)) $cy = $m[1];
+                                if (preg_match('/\srx="([^"]+)"/', $ellipse_tag, $m)) $rx = $m[1];
+                                if (preg_match('/\sry="([^"]+)"/', $ellipse_tag, $m)) $ry = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $ellipse_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $ellipse_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $ellipse_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<ellipse cx="%s" cy="%s" rx="%s" ry="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $cx, $cy, $rx, $ry, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract line elements
+                        if (preg_match_all('/<line[^>]+\/?>/is', $raw_svg, $line_matches)) {
+                            foreach ($line_matches[0] as $line_tag) {
+                                $x1 = '0'; $y1 = '0'; $x2 = '0'; $y2 = '0';
+                                $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\sx1="([^"]+)"/', $line_tag, $m)) $x1 = $m[1];
+                                if (preg_match('/\sy1="([^"]+)"/', $line_tag, $m)) $y1 = $m[1];
+                                if (preg_match('/\sx2="([^"]+)"/', $line_tag, $m)) $x2 = $m[1];
+                                if (preg_match('/\sy2="([^"]+)"/', $line_tag, $m)) $y2 = $m[1];
+                                if (preg_match('/\sstroke="([^"]+)"/', $line_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $line_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="%s"/>',
+                                    $x1, $y1, $x2, $y2, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Build a completely clean SVG from scratch
+                        $raw_svg = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+                        $raw_svg .= sprintf(
+                            '<svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="%s">',
+                            htmlspecialchars($width, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                            htmlspecialchars($height, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                            htmlspecialchars($viewBox, ENT_XML1 | ENT_QUOTES, 'UTF-8')
+                        ) . "\n";
+                        $raw_svg .= '  <metadata>Cut-ready SVG rebuilt from Order #' . intval($order_id) . ' - textures and images removed for cutting</metadata>' . "\n";
+                        $raw_svg .= '  <g id="cut-paths">' . "\n";
+                        
+                        foreach ($paths as $path) {
+                            $raw_svg .= '    ' . $path . "\n";
+                        }
+                        
+                        $raw_svg .= '  </g>' . "\n";
+                        $raw_svg .= '</svg>';
+                        
+                        error_log('APD SVG Processing - Order #' . $order_id . ': Rebuilt SVG with ' . count($paths) . ' elements');
+                        
+                        error_log('APD SVG Processing - Order #' . $order_id . ': Cleaned SVG length: ' . strlen($raw_svg));
+                        
+                        // Set headers and output
+                        header('Content-Type: image/svg+xml; charset=utf-8');
+                        header('Content-Disposition: attachment; filename="order-' . $order_id . '-cut-ready.svg"');
+                        header('Cache-Control: no-cache, must-revalidate');
+                        echo $raw_svg;
+                        exit;
+                    }
+                }
+            }
+        }
+        
+        libxml_clear_errors();
+
+        $xpath = new DOMXPath($dom);
+        $xpath->registerNamespace('svg', 'http://www.w3.org/2000/svg');
+
+        // Get the root SVG element and preserve its dimensions
+        $svgRoot = $dom->documentElement;
+        $originalViewBox = $svgRoot->getAttribute('viewBox');
+        $originalWidth = $svgRoot->getAttribute('width');
+        $originalHeight = $svgRoot->getAttribute('height');
+        
+        // Log original dimensions for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Original dimensions - viewBox="%s", width="%s", height="%s"',
+            $order_id,
+            $originalViewBox,
+            $originalWidth,
+            $originalHeight
+        ));
+
+        // 1. Remove all <image> elements (embedded textures/photos)
+        $images = $xpath->query('//svg:image');
+        foreach ($images as $image) {
+            $image->parentNode->removeChild($image);
+        }
+
+        // 2. Handle material stroke patterns - for cut-ready, strokes with patterns should be removed
+        // The pattern strokes are decorative (material texture outline) and not needed for cutting
+        $strokeRefs = $xpath->query('//*[@stroke and contains(@stroke, "url(#")]');
+        $stroke_count = 0;
+        foreach ($strokeRefs as $elem) {
+            $stroke = $elem->getAttribute('stroke');
+            if (preg_match('/url\(#.*pattern.*\)/i', $stroke)) {
+                // Remove the decorative pattern stroke - it causes blur/artifacts in cut files
+                $elem->setAttribute('stroke', 'none');
+                $elem->removeAttribute('stroke-width');
+                $stroke_count++;
+                // Log what we found for debugging
+                error_log(sprintf(
+                    'APD Cut-Ready SVG - Order #%d: Removed pattern stroke on <%s> element',
+                    $order_id,
+                    $elem->nodeName
+                ));
+            }
+        }
+        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d pattern strokes', $order_id, $stroke_count));
+        
+        // 3. Remove all <pattern> elements (used for textures)
+        $patterns = $xpath->query('//svg:pattern');
+        foreach ($patterns as $pattern) {
+            $pattern->parentNode->removeChild($pattern);
+        }
+
+        // 4. Remove elements that reference removed patterns in FILL only
+        $fillRefs = $xpath->query('//*[@fill and contains(@fill, "url(#")]');
+        foreach ($fillRefs as $elem) {
+            $fill = $elem->getAttribute('fill');
+            if (preg_match('/url\(#.*pattern.*\)/i', $fill)) {
+                // Change to solid color or remove fill
+                $elem->setAttribute('fill', 'none');
+            }
+        }
+
+        // 5. Convert text elements to paths would require complex library
+        // For now, just add a comment warning about text
+        $texts = $xpath->query('//svg:text');
+        if ($texts->length > 0) {
+            $comment = $dom->createComment(' WARNING: This SVG contains text elements. Convert to paths in CorelDRAW before cutting. ');
+            $root = $dom->documentElement;
+            $root->insertBefore($comment, $root->firstChild);
+        }
+
+        // 6. Flatten nested SVG elements - IMPORTANT: preserve position and scale
+        $nestedSvgs = $xpath->query('//svg:svg[parent::*]');
+        foreach ($nestedSvgs as $nested) {
+            $g = $dom->createElement('g');
+            
+            // Build transform to preserve position and scale
+            $transforms = array();
+            
+            // Get position (x, y attributes)
+            $x = $nested->getAttribute('x') ?: '0';
+            $y = $nested->getAttribute('y') ?: '0';
+            if ($x !== '0' || $y !== '0') {
+                $transforms[] = "translate($x, $y)";
+            }
+            
+            // Copy existing transform if present
+            if ($nested->hasAttribute('transform')) {
+                $transforms[] = $nested->getAttribute('transform');
+            }
+            
+            // Handle viewBox scaling - if nested SVG has different viewBox, we need to scale
+            $nestedViewBox = $nested->getAttribute('viewBox');
+            $nestedWidth = $nested->getAttribute('width');
+            $nestedHeight = $nested->getAttribute('height');
+            
+            if ($nestedViewBox && ($nestedWidth || $nestedHeight)) {
+                // Parse viewBox
+                $vbParts = preg_split('/[\s,]+/', trim($nestedViewBox));
+                if (count($vbParts) >= 4) {
+                    $vbWidth = floatval($vbParts[2]);
+                    $vbHeight = floatval($vbParts[3]);
+                    
+                    // Parse width/height (remove units)
+                    $actualWidth = floatval(preg_replace('/[^0-9.]/', '', $nestedWidth ?: $vbWidth));
+                    $actualHeight = floatval(preg_replace('/[^0-9.]/', '', $nestedHeight ?: $vbHeight));
+                    
+                    // Calculate scale factors
+                    if ($vbWidth > 0 && $vbHeight > 0) {
+                        $scaleX = $actualWidth / $vbWidth;
+                        $scaleY = $actualHeight / $vbHeight;
+                        
+                        // Only add scale if it's not 1:1
+                        if (abs($scaleX - 1) > 0.001 || abs($scaleY - 1) > 0.001) {
+                            $transforms[] = "scale($scaleX, $scaleY)";
+                        }
+                        
+                        // Handle viewBox offset (minX, minY)
+                        $vbMinX = floatval($vbParts[0]);
+                        $vbMinY = floatval($vbParts[1]);
+                        if ($vbMinX != 0 || $vbMinY != 0) {
+                            $transforms[] = "translate(" . (-$vbMinX) . ", " . (-$vbMinY) . ")";
+                        }
+                    }
+                }
+            }
+            
+            // Apply combined transform
+            if (!empty($transforms)) {
+                $g->setAttribute('transform', implode(' ', $transforms));
+                error_log(sprintf(
+                    'APD Cut-Ready SVG - Order #%d: Flattened nested SVG with transform="%s"',
+                    $order_id,
+                    implode(' ', $transforms)
+                ));
+            }
+            
+            // Move all children to group
+            while ($nested->firstChild) {
+                $g->appendChild($nested->firstChild);
+            }
+            $nested->parentNode->replaceChild($g, $nested);
+        }
+        
+        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Flattened %d nested SVG elements', $order_id, $nestedSvgs->length));
+
+        // 7. Add metadata for tracking
+        $metadata = $dom->createElement('metadata');
+        $metadata->nodeValue = sprintf(
+            'Cut-ready SVG processed from Order #%d on %s. Optimized for CorelDRAW/cutting machines. Material outlines preserved as black strokes.',
+            $order_id,
+            current_time('Y-m-d H:i:s')
+        );
+        $dom->documentElement->insertBefore($metadata, $dom->documentElement->firstChild);
+
+        // 8. Restore and ensure proper dimensions for the root SVG element
+        // This prevents the cut-ready SVG from being scaled differently than the original
+        if ($originalViewBox && !$svgRoot->getAttribute('viewBox')) {
+            $svgRoot->setAttribute('viewBox', $originalViewBox);
+        }
+        if ($originalWidth && !$svgRoot->getAttribute('width')) {
+            $svgRoot->setAttribute('width', $originalWidth);
+        }
+        if ($originalHeight && !$svgRoot->getAttribute('height')) {
+            $svgRoot->setAttribute('height', $originalHeight);
+        }
+        
+        // Log final dimensions for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Final dimensions - viewBox="%s", width="%s", height="%s"',
+            $order_id,
+            $svgRoot->getAttribute('viewBox'),
+            $svgRoot->getAttribute('width'),
+            $svgRoot->getAttribute('height')
+        ));
+
+        // 9. Clean up and return with UTF-16 encoding
+        $clean_svg = $dom->saveXML();
+        
+        // Apply the common XML fixes to the output as well
+        // This catches any corruption that happened during DOMDocument processing
+        $clean_svg = $this->fix_common_xml_issues($clean_svg);
+        
+        // Fix any remaining malformed attributes (like stroke-width: becoming an invalid QName)
+        // These can happen when style properties get incorrectly parsed
+        $clean_svg = preg_replace('/\s+stroke-width:(?=[^"]*(?:"|$))/', ' stroke-width="', $clean_svg);
+        $clean_svg = preg_replace('/\s+fill:(?=[^"]*(?:"|$))/', ' fill="', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke:(?=[^"]*(?:"|$))/', ' stroke="', $clean_svg);
+        
+        // Remove any attribute that has a colon as its name (invalid XML)
+        $clean_svg = preg_replace('/\s+[a-zA-Z-]+:[a-zA-Z-]+:[^=]*="[^"]*"/', '', $clean_svg);
+        
+        // Fix double-colon issues in attribute names
+        $clean_svg = preg_replace('/\s+([a-zA-Z-]+)::([a-zA-Z-]+)="/', ' $1-$2="', $clean_svg);
+        
+        // Remove orphaned colons at the end of attribute names
+        $clean_svg = preg_replace('/\s+([a-zA-Z-]+):="/', ' $1="', $clean_svg);
+        
+        // Clean up any empty style attributes
+        $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
+        
+        // Add DOCTYPE for SVG 1.1 (like CorelDRAW exports) - insert after XML declaration
+        if (strpos($clean_svg, '<!DOCTYPE') === false) {
+            $clean_svg = preg_replace(
+                '/(<\?xml[^?]*\?>)/i',
+                '$1' . "\n" . '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">',
+                $clean_svg
+            );
+        }
+        
+        // Ensure UTF-16 encoding in XML declaration
+        if (!preg_match('/encoding="UTF-16"/i', $clean_svg)) {
+            $clean_svg = preg_replace('/encoding="[^"]+"/i', 'encoding="UTF-16"', $clean_svg);
+            if (!preg_match('/encoding=/i', $clean_svg)) {
+                $clean_svg = preg_replace('/<\?xml version="[^"]+"\?>/i', '<?xml version="1.0" encoding="UTF-16"?>', $clean_svg);
+            }
+        }
+        
+        // Convert to UTF-16LE (Little Endian) for maximum CorelDRAW compatibility
+        $clean_svg = mb_convert_encoding($clean_svg, 'UTF-16LE', 'UTF-8');
+        
+        // Add BOM (Byte Order Mark) for UTF-16LE
+        $bom = chr(255) . chr(254);
+        $clean_svg = $bom . $clean_svg;
+        
+        return $clean_svg;
+    }
+
+    private function fix_common_xml_issues($svg_content)
+    {
+        // Remove any BOM (UTF-8 and UTF-16 variants)
+        $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content);
+        $svg_content = preg_replace('/^\xFF\xFE/', '', $svg_content);
+        $svg_content = preg_replace('/^\xFE\xFF/', '', $svg_content);
+        
+        // Remove any null bytes or control characters (except newline/tab)
+        $svg_content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $svg_content);
+        
+        // ==========================================
+        // Fix corrupted/split SVG attributes
+        // Pattern: vector-effect="" non-scaling-stroke="" should be vector-effect="non-scaling-stroke"
+        // Pattern: stroke-linejoin="" round="" should be stroke-linejoin="round"
+        // Pattern: stroke-width="=" should be removed or fixed
+        // Pattern: fill="="" rgb="" should be fixed
+        // ==========================================
+        
+        // Fix stroke-width with corrupted value: stroke-width="="" -> remove entirely
+        // This pattern: stroke-width="="" needs to be removed
+        $svg_content = preg_replace('/\s+stroke-width="=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+stroke-width="="/', '', $svg_content);
+        $svg_content = preg_replace('/\s+stroke-width=""/', '', $svg_content);
+        
+        // Fix vector-effect split: vector-effect="" non-scaling-stroke="" OR vector-effect=""
+        $svg_content = preg_replace('/vector-effect=""\s+non-scaling-stroke=""/', 'vector-effect="non-scaling-stroke"', $svg_content);
+        // Remove empty vector-effect if not followed by non-scaling-stroke
+        $svg_content = preg_replace('/\s+vector-effect=""(?!\s+non-scaling-stroke)/', '', $svg_content);
+        
+        // Fix stroke-linejoin split: stroke-linejoin="" round="" OR just empty stroke-linejoin=""
+        $svg_content = preg_replace('/stroke-linejoin=""\s+round=""/', 'stroke-linejoin="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+miter=""/', 'stroke-linejoin="miter"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+bevel=""/', 'stroke-linejoin="bevel"', $svg_content);
+        // Remove empty stroke-linejoin if not followed by valid value
+        $svg_content = preg_replace('/\s+stroke-linejoin=""(?!\s+(round|miter|bevel)="")/', '', $svg_content);
+        
+        // Fix stroke-linecap split: stroke-linecap="" round="" OR just empty stroke-linecap=""
+        $svg_content = preg_replace('/stroke-linecap=""\s+round=""/', 'stroke-linecap="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+square=""/', 'stroke-linecap="square"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+butt=""/', 'stroke-linecap="butt"', $svg_content);
+        // Remove empty stroke-linecap if not followed by valid value
+        $svg_content = preg_replace('/\s+stroke-linecap=""(?!\s+(round|square|butt)="")/', '', $svg_content);
+        
+        // Fix fill with corrupted value patterns
+        $svg_content = preg_replace('/fill="=""/', 'fill="none"', $svg_content);
+        $svg_content = preg_replace('/fill=""=""/', 'fill="none"', $svg_content);
+        // Remove empty fill="" at the end of attributes (before d= or > or />)
+        $svg_content = preg_replace('/\s+fill=""(?=\s+d=|\s*>|\s*\/>)/', '', $svg_content);
+        
+        // Fix orphaned attribute values that became separate attributes (e.g., non-scaling-stroke="")
+        $svg_content = preg_replace('/\s+non-scaling-stroke=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+round=""(?!\s*\w+[=-])/', '', $svg_content);
+        $svg_content = preg_replace('/\s+miter=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+bevel=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+square=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+butt=""/', '', $svg_content);
+        
+        // Fix orphaned rgb="" that shouldn't be an attribute
+        $svg_content = preg_replace('/\s+rgb=""/', '', $svg_content);
+        
+        // Fix double/nested CDATA markers (common issue from repeated processing)
+        // Pattern: <![CDATA[<![CDATA[...]]>]]> should become <![CDATA[...]]>
+        $svg_content = preg_replace('/<!\[CDATA\[\s*<!\[CDATA\[/', '<![CDATA[', $svg_content);
+        $svg_content = preg_replace('/\]\]>\s*\]\]>/', ']]>', $svg_content);
+        
+        // Preserve CDATA sections by temporarily replacing them with placeholders
+        $cdataPlaceholders = array();
+        $svg_content = preg_replace_callback(
+            '/<!\[CDATA\[(.*?)\]\]>/s',
+            function($matches) use (&$cdataPlaceholders) {
+                $placeholder = '___CDATA_PLACEHOLDER_' . count($cdataPlaceholders) . '___';
+                $cdataPlaceholders[$placeholder] = '<![CDATA[' . $matches[1] . ']]>';
+                return $placeholder;
+            },
+            $svg_content
+        );
+        
+        // Remove HTML-style class attributes that break XML parsing
+        $svg_content = preg_replace('/\s+class="[^"]*"/', '', $svg_content);
+        
+        // Remove data-* attributes which are HTML5 specific and can break XML
+        $svg_content = preg_replace('/\s+data-[a-zA-Z0-9-]+="[^"]*"/', '', $svg_content);
+        
+        // Fix path d attributes with line breaks, tabs, or excessive whitespace
+        $svg_content = preg_replace_callback(
+            '/(<path[^>]*\sd=")([^"]*)(")/s',
+            function($matches) {
+                $d = $matches[2];
+                // Remove line breaks and normalize whitespace in path data
+                $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                $d = preg_replace('/\s+/', ' ', $d);
+                $d = trim($d);
+                return $matches[1] . $d . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix polygon/polyline points attributes with line breaks
+        $svg_content = preg_replace_callback(
+            '/(<(?:polygon|polyline)[^>]*\spoints=")([^"]*)(")/s',
+            function($matches) {
+                $points = $matches[2];
+                $points = preg_replace('/[\r\n\t]+/', ' ', $points);
+                $points = preg_replace('/\s+/', ' ', $points);
+                $points = trim($points);
+                return $matches[1] . $points . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Sanitize style attributes - convert CSS property names to valid XML
+        // Replace hyphenated properties with camelCase equivalents
+        $svg_content = preg_replace_callback(
+            '/style="([^"]*)"/',
+            function($matches) {
+                $style = $matches[1];
+                // Convert common hyphenated CSS properties to camelCase
+                $style = str_replace('shape-rendering', 'shapeRendering', $style);
+                $style = str_replace('text-rendering', 'textRendering', $style);
+                $style = str_replace('image-rendering', 'imageRendering', $style);
+                $style = str_replace('color-interpolation', 'colorInterpolation', $style);
+                $style = str_replace('fill-rule', 'fillRule', $style);
+                $style = str_replace('clip-rule', 'clipRule', $style);
+                $style = str_replace('stroke-width', 'strokeWidth', $style);
+                $style = str_replace('stroke-linecap', 'strokeLinecap', $style);
+                $style = str_replace('stroke-linejoin', 'strokeLinejoin', $style);
+                $style = str_replace('stroke-miterlimit', 'strokeMiterlimit', $style);
+                $style = str_replace('stroke-dasharray', 'strokeDasharray', $style);
+                $style = str_replace('stroke-dashoffset', 'strokeDashoffset', $style);
+                $style = str_replace('stroke-opacity', 'strokeOpacity', $style);
+                $style = str_replace('fill-opacity', 'fillOpacity', $style);
+                $style = str_replace('font-family', 'fontFamily', $style);
+                $style = str_replace('font-size', 'fontSize', $style);
+                $style = str_replace('font-weight', 'fontWeight', $style);
+                $style = str_replace('font-style', 'fontStyle', $style);
+                $style = str_replace('text-anchor', 'textAnchor', $style);
+                $style = str_replace('dominant-baseline', 'dominantBaseline', $style);
+                $style = str_replace('paint-order', 'paintOrder', $style);
+                return 'style="' . $style . '"';
+            },
+            $svg_content
+        );
+        
+        // Escape or remove potentially problematic base64 href attributes in images
+        // Match href="data:image..." and ensure it's properly formatted
+        $svg_content = preg_replace_callback(
+            '/(href=")([^"]*data:image[^"]*)(")/i',
+            function($matches) {
+                // Clean up any potential XML-breaking characters in the data URL
+                $data_url = $matches[2];
+                // Remove any newlines or carriage returns that might have snuck in
+                $data_url = str_replace(array("\r", "\n", "\t"), '', $data_url);
+                return $matches[1] . $data_url . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix unencoded ampersands (except in entities)
+        $svg_content = preg_replace('/&(?!(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);)/', '&amp;', $svg_content);
+        
+        // Remove any null bytes
+        $svg_content = str_replace("\0", '', $svg_content);
+        
+        // Fix attributes with newlines inside them (common XMLSerializer issue)
+        // This pattern finds attributes and removes any internal line breaks
+        $svg_content = preg_replace_callback(
+            '/(\s[a-zA-Z][a-zA-Z0-9-]*=")([^"]*)(")/s',
+            function($matches) {
+                $attr_value = $matches[2];
+                // Remove line breaks and excessive whitespace inside attribute values
+                $attr_value = preg_replace('/[\r\n]+/', ' ', $attr_value);
+                $attr_value = preg_replace('/\s+/', ' ', $attr_value);
+                return $matches[1] . trim($attr_value) . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix shape-rendering and text-rendering attributes outside of style (standalone attributes)
+        $svg_content = preg_replace('/\sshape-rendering=/', ' shapeRendering=', $svg_content);
+        $svg_content = preg_replace('/\stext-rendering=/', ' textRendering=', $svg_content);
+        
+        // Fix any stray < or > characters that aren't part of tags
+        // This is tricky but we can try to fix obvious cases
+        $svg_content = preg_replace('/\s<\s/', ' &lt; ', $svg_content);
+        $svg_content = preg_replace('/\s>\s/', ' &gt; ', $svg_content);
+        
+        // Ensure proper XML declaration if missing
+        if (strpos($svg_content, '<?xml') === false) {
+            $svg_content = '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . $svg_content;
+        }
+        
+        // Restore CDATA sections from placeholders
+        foreach ($cdataPlaceholders as $placeholder => $cdataContent) {
+            $svg_content = str_replace($placeholder, $cdataContent, $svg_content);
+        }
+        
+        return $svg_content;
+    }
+
     // --- Admin: Register/ensure statuses visible in All ---
     public function apd_register_statuses_visible()
     {
@@ -2916,11 +4267,17 @@ class AdvancedProductDesigner
         
         // Add download SVG button for admin
         if (current_user_can('manage_options') && !empty($svg_download_url)) {
-            echo '<div class="order-svg-download-section" style="margin: 20px 0;">';
+            echo '<div class="order-svg-download-section" style="margin: 20px 0; padding: 15px; background: #f0f6fc; border: 1px solid #0073aa; border-radius: 4px;">';
+            echo '<h3 style="margin: 0 0 10px 0; font-size: 14px; color: #0073aa;">Production Files</h3>';
+            echo '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
             echo '<button type="button" class="button button-primary" onclick="downloadOrderSVG(' . $order_id . ')">';
-            echo '<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Download Production SVG';
+            echo '<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Download Original SVG';
             echo '</button>';
-            echo '<p class="description">Download the production-ready SVG file for this order</p>';
+            echo '<button type="button" class="button button-secondary" onclick="processCutReadySVG(' . $order_id . ')" style="background: #2271b1; color: white; border-color: #2271b1;">';
+            echo '<span class="dashicons dashicons-media-code" style="margin-top: 3px;"></span> Export Cut-Ready SVG';
+            echo '</button>';
+            echo '</div>';
+            echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers).</p>';
             echo '</div>';
         }
 
@@ -3399,6 +4756,52 @@ class AdvancedProductDesigner
                 },
                 error: function() {
                     alert('Network error occurred while downloading SVG');
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
+
+        // Process Cut-Ready SVG
+        function processCutReadySVG(orderId) {
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
+
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'apd_process_cut_ready_svg',
+                    order_id: orderId,
+                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Download the processed SVG file
+                        const a = document.createElement('a');
+                        a.href = response.data.file_url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 8000);
+                    } else {
+                        alert('Error: ' + (response.data || 'Failed to process SVG'));
+                    }
+                },
+                error: function(xhr, status, error) {
+                    alert('Network error occurred while processing SVG: ' + error);
                 },
                 complete: function() {
                     button.disabled = false;
@@ -6727,8 +8130,8 @@ class AdvancedProductDesigner
         $GLOBALS['apd_product_id'] = $product_id;
         $GLOBALS['apd_template'] = $template;
         
-        // Get materials for the template and extract URLs only
-        $materials_data = $this->get_materials();
+        // Get materials for the template (filtered by allowed categories) and extract URLs only
+        $materials_data = $this->get_materials($template_id);
         $materials = array();
         foreach ($materials_data as $name => $data) {
             $materials[$name] = is_array($data) ? $data['url'] : $data;
@@ -7267,6 +8670,25 @@ class AdvancedProductDesigner
     {
         wp_nonce_field('apd_pricing_tiers_meta', 'apd_pricing_tiers_nonce');
         
+        // Check if variants are enabled
+        $variants = get_post_meta($post->ID, '_apd_variants', true);
+        $variants_enabled = is_array($variants) && isset($variants['enabled']) && $variants['enabled'];
+        
+        if ($variants_enabled) {
+            ?>
+            <div class="apd-pricing-tiers-wrapper">
+                <div style="padding: 20px; background: #fff3cd; border-left: 4px solid #ffc107; margin: 10px 0;">
+                    <h4 style="margin-top: 0; color: #856404;">⚠️ Variants Enabled</h4>
+                    <p style="margin-bottom: 0; color: #856404;">
+                        This product has variants enabled. Product-level volume pricing tiers are disabled.<br>
+                        To set quantity discounts, use the <strong>"Add Quantity Discounts"</strong> button next to each variant in the <strong>"Product Variants"</strong> section above.
+                    </p>
+                </div>
+            </div>
+            <?php
+            return;
+        }
+        
         $pricing_service = new APD_Pricing_Service();
         $tiers = $pricing_service->get_price_tiers($post->ID);
         
@@ -7409,6 +8831,13 @@ class AdvancedProductDesigner
         $background_color = get_post_meta($post->ID, '_apd_template_bg_color', true) ?: '#ffffff';
         $background_image = get_post_meta($post->ID, '_apd_template_bg_image', true);
         $template_data = get_post_meta($post->ID, '_apd_template_data', true) ?: '{}';
+        $allowed_categories = get_post_meta($post->ID, '_apd_allowed_material_categories', true);
+        if (!is_array($allowed_categories)) {
+            $allowed_categories = array();
+        }
+        
+        // Get all material categories
+        $all_categories = $this->get_material_categories();
 
         ?>
         <table class="form-table">
@@ -7455,6 +8884,31 @@ class AdvancedProductDesigner
                 <td>
                     <input type="url" id="apd_template_bg_image" name="apd_template_bg_image" value="<?php echo esc_attr($background_image); ?>" class="regular-text">
                     <button type="button" class="button" id="select-bg-image">Select Image</button>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">
+                    <label for="apd_allowed_material_categories">Allowed Material Categories</label>
+                </th>
+                <td>
+                    <fieldset>
+                        <legend class="screen-reader-text"><span>Allowed Material Categories</span></legend>
+                        <label style="display: block; margin-bottom: 8px;">
+                            <input type="checkbox" name="apd_allowed_material_categories[]" value="all" <?php checked(empty($allowed_categories) || in_array('all', $allowed_categories)); ?>> 
+                            <strong>All Categories (No Restriction)</strong>
+                        </label>
+                        <?php foreach ($all_categories as $category): ?>
+                            <label style="display: block; margin-bottom: 6px;">
+                                <input type="checkbox" name="apd_allowed_material_categories[]" value="<?php echo esc_attr($category); ?>" <?php checked(in_array($category, $allowed_categories)); ?>> 
+                                <?php echo esc_html($category); ?>
+                            </label>
+                        <?php endforeach; ?>
+                        <label style="display: block; margin-bottom: 6px;">
+                            <input type="checkbox" name="apd_allowed_material_categories[]" value="Uncategorized" <?php checked(in_array('Uncategorized', $allowed_categories)); ?>> 
+                            Uncategorized
+                        </label>
+                    </fieldset>
+                    <p class="description">Select which material categories are allowed for this template. If "All Categories" is checked, all materials will be available. Leave all unchecked to show all materials.</p>
                 </td>
             </tr>
         </table>
@@ -7535,6 +8989,15 @@ class AdvancedProductDesigner
                 update_post_meta($post_id, $field, sanitize_text_field($_POST[$field]));
             }
         }
+        
+        // Save allowed material categories
+        if (isset($_POST['apd_allowed_material_categories'])) {
+            $allowed_categories = array_map('sanitize_text_field', $_POST['apd_allowed_material_categories']);
+            update_post_meta($post_id, '_apd_allowed_material_categories', $allowed_categories);
+        } else {
+            // If no categories selected, delete the meta (which means all materials allowed)
+            delete_post_meta($post_id, '_apd_allowed_material_categories');
+        }
     }
 
     /**
@@ -7570,7 +9033,8 @@ class AdvancedProductDesigner
                 '_apd_template_bg_type',
                 '_apd_template_bg_color',
                 '_apd_template_bg_image',
-                '_apd_template_data'
+                '_apd_template_data',
+                '_apd_allowed_material_categories'
             );
 
             foreach ($meta_keys as $key) {
@@ -7671,6 +9135,14 @@ class AdvancedProductDesigner
         $font_family = str_replace(array('-', '_'), ' ', $font_name);
         $font_family = ucwords($font_family);
 
+        // Get font weight from POST (default to 400 if not provided)
+        $font_weight = isset($_POST['font_weight']) ? sanitize_text_field($_POST['font_weight']) : '400';
+        // Validate font weight is a valid value
+        $valid_weights = array('100', '200', '300', '400', '500', '600', '700', '800', '900');
+        if (!in_array($font_weight, $valid_weights)) {
+            $font_weight = '400';
+        }
+
         // Get file URL
         $file_url = $upload_dir['baseurl'] . '/fonts/' . $filename;
 
@@ -7681,6 +9153,7 @@ class AdvancedProductDesigner
             'family' => $font_family,
             'url' => $file_url,
             'file' => $filename,
+            'weight' => $font_weight,
             'uploaded' => current_time('mysql')
         );
         update_option('apd_uploaded_fonts', $uploaded_fonts);
@@ -7691,7 +9164,8 @@ class AdvancedProductDesigner
                 'name' => $font_name,
                 'family' => $font_family,
                 'url' => $file_url,
-                'file' => $filename
+                'file' => $filename,
+                'weight' => $font_weight
             )
         )));
     }
@@ -8251,10 +9725,13 @@ class AdvancedProductDesigner
             error_log('AJAX get_materials nonce verification failed. Nonce: ' . $nonce);
             wp_send_json_error(array('message' => 'Security check failed. Nonce: ' . $nonce));
         }
+        
+        // Get template_id if provided to filter materials
+        $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
 
-        $materials = $this->get_materials();
+        $materials = $this->get_materials($template_id);
 
-        error_log('AJAX get_materials returning: ' . print_r($materials, true));
+        error_log('AJAX get_materials returning for template ' . $template_id . ': ' . print_r($materials, true));
 
         wp_send_json_success(array(
             'materials' => $materials
@@ -8275,8 +9752,11 @@ class AdvancedProductDesigner
         if (empty($material_name)) {
             wp_send_json_error(array('message' => 'Material name is required'));
         }
+        
+        // Get template_id if provided to filter materials
+        $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
 
-        $materials = $this->get_materials();
+        $materials = $this->get_materials($template_id);
 
         // Try to find the material by name (case insensitive)
         foreach ($materials as $name => $material_data) {

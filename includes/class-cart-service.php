@@ -190,10 +190,17 @@ class APD_Cart_Service
             }
         }
 
-        // Determine final base price per unit
+        // Determine final base price per unit and variant SKU
+        $variant_sku = '';
         if (isset($customization_data['variants']) && isset($customization_data['variants']['price'])) {
-            // Variant-specific price
-            $price = floatval($customization_data['variants']['price']);
+            // Variant-specific price (with fallback to product price)
+            $variant_price = floatval($customization_data['variants']['price']);
+            $price = $variant_price > 0 ? $variant_price : $product_base_price;
+            
+            // Get variant SKU for variant-specific tiered pricing
+            if (isset($customization_data['variants']['sku'])) {
+                $variant_sku = $customization_data['variants']['sku'];
+            }
         } elseif (isset($customization_data['product_price'])) {
             // Frontend-provided price
             $price = floatval($customization_data['product_price']);
@@ -202,8 +209,8 @@ class APD_Cart_Service
             $price = $product_base_price + $material_price;
         }
 
-        // Apply tiered pricing based on quantity
-        $pricing_result = $this->pricing_service->calculate_tiered_price($product_id, $quantity, $price);
+        // Apply tiered pricing based on quantity (with variant support)
+        $pricing_result = $this->pricing_service->calculate_tiered_price($product_id, $quantity, $price, $variant_sku);
         $price = $pricing_result['price']; // Use discounted price per unit
 
         return array(

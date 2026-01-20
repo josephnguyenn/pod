@@ -7,6 +7,10 @@
     background: #f9f9f9;
 }
 
+.apd-product-description h3 {
+    color: black;
+}
+
 .apd-product-placeholder {
     text-align: center;
     padding: 40px 20px;
@@ -695,6 +699,14 @@
 
 .apd-loading .spinner {
     margin-right: 10px;
+}
+
+/* Variant Section Headings */
+.apd-variant-section h4,
+.apd-variant-section h3 {
+    color: #000 !important;
+    font-weight: 600;
+    margin: 0 0 10px 0;
 }
 
 /* Error States */

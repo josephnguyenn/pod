@@ -132,10 +132,34 @@ jQuery(document).ready(function($) {
         // Function to ensure material group is loaded
         ensureMaterialGroup: function(){
             console.log('=== ENSURE MATERIAL GROUP DEBUG ===');
-            var materialsMap = FSC.materialsMap || (window.fscDefaults && window.fscDefaults.materials) || null;
-            console.log('Current materialsMap:', materialsMap);
             console.log('window.apd_ajax:', window.apd_ajax);
-            console.log('FSC.materialsLoading:', FSC.materialsLoading);
+            console.log('window.fscDefaults:', window.fscDefaults);
+            
+            // Check if outline selection is enabled for this product
+            // PHP sends 1 (enabled) or 0 (disabled) as integer
+            if (!window.apd_ajax) {
+                console.log('⚠️ window.apd_ajax not available - cannot determine if outline is enabled');
+                // Don't show materials if we can't verify the setting
+                return;
+            }
+            
+            console.log('enable_outline_selection value:', window.apd_ajax.enable_outline_selection);
+            console.log('enable_outline_selection type:', typeof window.apd_ajax.enable_outline_selection);
+            
+            // Explicit check: must be 1 or '1' to be enabled
+            // This handles both integer and string cases (in case of type inconsistency)
+            if (window.apd_ajax.enable_outline_selection !== 1 && window.apd_ajax.enable_outline_selection !== '1') {
+                console.log('❌ Outline selection DISABLED for this product');
+                return;
+            }
+            console.log('✅ Outline selection ENABLED for this product');
+            
+            var materialsMap = FSC.materialsMap || (window.fscDefaults && window.fscDefaults.materials) || null;
+            console.log('Materials check:');
+            console.log('  FSC.materialsMap:', FSC.materialsMap);
+            console.log('  window.fscDefaults?.materials:', window.fscDefaults && window.fscDefaults.materials);
+            console.log('  Final materialsMap:', materialsMap);
+            console.log('  FSC.materialsLoading:', FSC.materialsLoading);
 
             if (!materialsMap && window.apd_ajax && window.apd_ajax.ajax_url && !FSC.materialsLoading) {
                 console.log('Loading materials via AJAX...');
@@ -146,6 +170,7 @@ jQuery(document).ready(function($) {
                     dataType: 'json',
                     data: {
                         action: 'apd_get_materials',
+                        template_id: window.apd_ajax.template_id || 0,
                         nonce: (window.apd_ajax.fsc_nonce || window.apd_ajax.nonce || '46aeaf88d9'),
                         security: (window.apd_ajax.fsc_nonce || window.apd_ajax.nonce || '46aeaf88d9'),
                         _wpnonce: (window.apd_ajax.fsc_nonce || window.apd_ajax.nonce || '46aeaf88d9'),
@@ -219,7 +244,43 @@ jQuery(document).ready(function($) {
                         $grid.append($opt);
                     });
                     $matGroup.append($grid);
-                    if ($afterColor.length) { $afterColor.after($matGroup); } else { $panel.prepend($matGroup); }
+                    
+                    // Smart positioning: try multiple anchor points in order of preference
+                    var inserted = false;
+                    
+                    // 1. Try after Print Color section
+                    var $afterColor = $('.fsc-form-group:has(h4:contains("Print Color"))');
+                    if ($afterColor.length) {
+                        $afterColor.after($matGroup);
+                        inserted = true;
+                    }
+                    
+                    // 2. Try after Custom Text section
+                    if (!inserted) {
+                        var $afterCustomText = $('.fsc-form-group:has(h4:contains("Custom Text"))');
+                        if ($afterCustomText.length) {
+                            $afterCustomText.after($matGroup);
+                            inserted = true;
+                        }
+                    }
+                    
+                    // 3. Try before Benefits section
+                    if (!inserted) {
+                        var $beforeBenefits = $('.fsc-form-group.fsc-features:has(h4:contains("Benefits"))');
+                        if ($beforeBenefits.length) {
+                            $beforeBenefits.before($matGroup);
+                            inserted = true;
+                        }
+                    }
+                    
+                    // 4. Fallback: prepend to panel
+                    if (!inserted) {
+                        $panel.prepend($matGroup);
+                    }
+                    
+                    console.log('✅ Material Outline group created and added to DOM');
+                } else {
+                    console.log('ℹ️ Material Outline group already exists');
                 }
                 $('.fsc-material-outline-option').off('click.apdMatGrid').on('click.apdMatGrid', function(){
                     $('.fsc-material-outline-option').css('border','2px solid #ddd').removeClass('selected');
@@ -240,7 +301,13 @@ jQuery(document).ready(function($) {
                 
                 return true;
             };
-            if (materialsMap) { renderMaterialGroup(materialsMap); }
+            
+            if (materialsMap) {
+                console.log('📦 Calling renderMaterialGroup with', Object.keys(materialsMap).length, 'materials');
+                renderMaterialGroup(materialsMap);
+            } else {
+                console.log('❌ No materials available to render');
+            }
         },
 
         resolveSelectedMaterialUrl: function(){
@@ -1141,9 +1208,9 @@ jQuery(document).ready(function($) {
             let scaleFactor = Math.min(scaleX, scaleY);
             scaleFactor = Math.max(minScale, Math.min(maxScale, scaleFactor));
 
-            // Calculate final dimensions
-            const cw = Math.round(originalWidth * scaleFactor);
-            const ch = Math.round(originalHeight * scaleFactor);
+            // Calculate final dimensions - use precise values without rounding
+            const cw = originalWidth * scaleFactor;
+            const ch = originalHeight * scaleFactor;
 
             // Debug logging
             console.log('🎨 Render Template:', {
@@ -1152,7 +1219,7 @@ jQuery(document).ready(function($) {
                 availableSize: `${availableWidth}x${availableHeight}`,
                 scaleFactorRaw: `${(Math.min(scaleX, scaleY)).toFixed(3)}`,
                 scaleFactorClamped: scaleFactor.toFixed(3),
-                finalSize: `${cw}x${ch}`,
+                finalSize: `${cw.toFixed(2)}x${ch.toFixed(2)}`,
                 minScale: minScale,
                 maxScale: maxScale
             });
@@ -1175,10 +1242,13 @@ jQuery(document).ready(function($) {
             svgElement.setAttribute('class', 'apd-template-canvas-full');
             svgElement.setAttribute('width', cw);
             svgElement.setAttribute('height', ch);
-            svgElement.setAttribute('viewBox', `0 0 ${cw} ${ch}`);
+            svgElement.setAttribute('viewBox', `0 0 ${originalWidth} ${originalHeight}`);
+            svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
             svgElement.setAttribute('xmlns', svgNS);
             svgElement.style.display = 'block';
             svgElement.style.overflow = 'visible';
+            svgElement.style.shapeRendering = 'geometricPrecision';
+            svgElement.style.textRendering = 'geometricPrecision';
             
             const $canvas = $(svgElement);
 
@@ -1198,8 +1268,8 @@ jQuery(document).ready(function($) {
                 
                 if (type === 'color') {
                     const bgRect = document.createElementNS(svgNS, 'rect');
-                    bgRect.setAttribute('width', cw);
-                    bgRect.setAttribute('height', ch);
+                    bgRect.setAttribute('width', originalWidth);
+                    bgRect.setAttribute('height', originalHeight);
                     bgRect.setAttribute('fill', String(bg.color || bg.value || '#ffffff'));
                     svgElement.appendChild(bgRect);
                 } else if (type === 'gradient') {
@@ -1235,8 +1305,8 @@ jQuery(document).ready(function($) {
                     defsElement.appendChild(gradientEl);
                     
                     const bgRect = document.createElementNS(svgNS, 'rect');
-                    bgRect.setAttribute('width', cw);
-                    bgRect.setAttribute('height', ch);
+                    bgRect.setAttribute('width', originalWidth);
+                    bgRect.setAttribute('height', originalHeight);
                     bgRect.setAttribute('fill', `url(#${gradientId})`);
                     svgElement.appendChild(bgRect);
                 } else if (type === 'image' && (bg.url || bg.src || bg.image)) {
@@ -1244,21 +1314,21 @@ jQuery(document).ready(function($) {
                     const patternEl = document.createElementNS(svgNS, 'pattern');
                     patternEl.setAttribute('id', patternId);
                     patternEl.setAttribute('patternUnits', 'userSpaceOnUse');
-                    patternEl.setAttribute('width', cw);
-                    patternEl.setAttribute('height', ch);
+                    patternEl.setAttribute('width', originalWidth);
+                    patternEl.setAttribute('height', originalHeight);
                     
                     const imgEl = document.createElementNS(svgNS, 'image');
                     imgEl.setAttribute('href', bg.url || bg.src || bg.image);
-                    imgEl.setAttribute('width', cw);
-                    imgEl.setAttribute('height', ch);
+                    imgEl.setAttribute('width', originalWidth);
+                    imgEl.setAttribute('height', originalHeight);
                     imgEl.setAttribute('preserveAspectRatio', bg.size === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet');
                     
                     patternEl.appendChild(imgEl);
                     defsElement.appendChild(patternEl);
                     
                     const bgRect = document.createElementNS(svgNS, 'rect');
-                    bgRect.setAttribute('width', cw);
-                    bgRect.setAttribute('height', ch);
+                    bgRect.setAttribute('width', originalWidth);
+                    bgRect.setAttribute('height', originalHeight);
                     bgRect.setAttribute('fill', `url(#${patternId})`);
                     svgElement.appendChild(bgRect);
                 }
@@ -1272,16 +1342,14 @@ jQuery(document).ready(function($) {
                 const minW = 1000;
                 const minH = 1000;
 
-                // Scale all dimensions
-                const scaledX = Math.round(x * scaleFactor);
-                const scaledY = Math.round(y * scaleFactor);
-                const scaledW = Math.round(Math.max(w, minW) * scaleFactor);
-                const scaledH = Math.round(Math.max(h, minH) * scaleFactor);
+                // Use original dimensions in viewBox coordinate system
+                const elementW = Math.max(w, minW);
+                const elementH = Math.max(h, minH);
 
-                // Create SVG group element for positioning
+                // Create SVG group element for positioning in original coordinate system
                 const groupEl = document.createElementNS(svgNS, 'g');
                 groupEl.setAttribute('class', 'apd-el');
-                groupEl.setAttribute('transform', `translate(${scaledX}, ${scaledY})`);
+                groupEl.setAttribute('transform', `translate(${x}, ${y})`);
                 
                 const $el = $(groupEl);
 
@@ -1465,10 +1533,10 @@ jQuery(document).ready(function($) {
                 } else if (el.type === 'text') {
                     const prefix = (el.properties && el.properties.prefix) ? String(el.properties.prefix) : '';
                     const suffix = (el.properties && el.properties.suffix) ? String(el.properties.suffix) : '';
-                    const baseValue = (el.properties && (el.properties.value || el.properties.text || el.properties.note)) || '';
+                    const baseValue = (el.properties && (el.properties.value || el.properties.text)) || '';
                     const displayText = prefix + baseValue + suffix;
                     const originalSizePx = (el.properties && el.properties.fontSize) ? (el.properties.fontSize) : 18;
-                    const sizePx = originalSizePx; // Don't scale font size to preserve original value
+                    const sizePx = originalSizePx; // Use original font size in viewBox coordinate system
                     const family = (el.properties && el.properties.fontFamily) || 'inherit';
                     const weight = (el.properties && el.properties.fontWeight) || 'bold';
                     
@@ -1477,7 +1545,7 @@ jQuery(document).ready(function($) {
                     if (el.properties && el.properties.textStrokeWidth !== undefined) {
                         originalOutline = el.properties.textStrokeWidth;
                     }
-                    const initialOutline = originalOutline; // Don't scale stroke width to preserve original value
+                    const initialOutline = originalOutline; // Use original stroke width in viewBox coordinate system
                     
                     // Get element-specific color from template data
                     let elementColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
@@ -1485,14 +1553,16 @@ jQuery(document).ready(function($) {
                         elementColor = el.properties.color;
                     }
 
-                    // Create nested SVG for text (will be embedded in main SVG)
+                    // Create nested SVG for text (will be embedded in main SVG) using original dimensions
                     const textSvgEl = document.createElementNS(svgNS, 'svg');
                     textSvgEl.setAttribute('class', 'apd-text-svg');
-                    textSvgEl.setAttribute('width', String(scaledW));
-                    textSvgEl.setAttribute('height', String(scaledH));
+                    textSvgEl.setAttribute('width', String(elementW));
+                    textSvgEl.setAttribute('height', String(elementH));
                     textSvgEl.setAttribute('x', '0');
                     textSvgEl.setAttribute('y', '0');
                     textSvgEl.setAttribute('overflow', 'visible');
+                    textSvgEl.style.shapeRendering = 'geometricPrecision';
+                    textSvgEl.style.textRendering = 'geometricPrecision';
                     
                     const $svg = $(textSvgEl);
                     const textDefsEl = document.createElementNS(svgNS, 'defs');
@@ -1507,7 +1577,6 @@ jQuery(document).ready(function($) {
                     textEl.setAttribute('stroke-linejoin', 'round');
                     textEl.setAttribute('stroke-linecap', 'round');
                     textEl.setAttribute('paint-order', 'stroke fill');
-                    textEl.setAttribute('vector-effect', 'non-scaling-stroke');
                     textEl.setAttribute('font-size', String(sizePx));
                     textEl.setAttribute('font-family', family);
                     textEl.setAttribute('font-weight', weight);
@@ -1672,10 +1741,10 @@ jQuery(document).ready(function($) {
                 textEls.forEach(function(el, idx){
                     const label = el.label || ('Text ' + (idx+1));
                     const initialValue = (el.properties && (el.properties.value || el.properties.text)) || '';
-                    const hintText = (el.properties && (el.properties.note || el.properties.hint || el.properties.placeholder)) || '';
+                    // Don't display hints in frontend customizer - they're for admin reference only
                     const id = 'fsc-text-' + (el.id || idx);
                     const $row = $('<div class="fsc-input-group" />');
-                    var labelHtml = '<label for="' + id + '">' + label + (hintText ? ' <sup class="fsc-hint-sup" style="font-size:11px;color:#888;vertical-align:super;font-weight:500;">' + hintText + '</sup>' : '') + '</label>';
+                    var labelHtml = '<label for="' + id + '">' + label + '</label>';
                     $row.append(labelHtml);
                     const $input = $('<input type="text" class="fsc-form-input" />').attr('id', id).val(initialValue).attr('placeholder','');
                     // Apply maxLength from template data if provided
@@ -1880,6 +1949,17 @@ jQuery(document).ready(function($) {
 
         init: function() {
             console.log('🚀 FSC Initializing...');
+            console.log('Initial state check:');
+            console.log('  window.apd_ajax:', window.apd_ajax);
+            console.log('  window.fscDefaults:', window.fscDefaults);
+            
+            // Initialize materials map from fscDefaults if available
+            if (!this.materialsMap && window.fscDefaults && window.fscDefaults.materials) {
+                this.materialsMap = window.fscDefaults.materials;
+                console.log('✅ Materials loaded from fscDefaults:', Object.keys(this.materialsMap).length, 'materials');
+            } else if (!this.materialsMap) {
+                console.log('⚠️ No materials found in fscDefaults');
+            }
             
             // Initialize default values
             this.currentColor = this.currentColor || 'black';
@@ -1903,6 +1983,10 @@ jQuery(document).ready(function($) {
             this.updatePreview();
             this.initCustomizerPreview();
             this.loadCartCount();
+            
+            // Load material outline group if enabled
+            this.ensureMaterialGroup();
+            
             this.initializeDefaultSelections();
             // Update price after initialization to account for default material
             setTimeout(function() {
@@ -2781,14 +2865,31 @@ jQuery(document).ready(function($) {
                 complete: function(){ $('.fsc-container').removeClass('fsc-loading'); },
                 success: function(response){
                     if (response && response.success) {
+                        console.log('✅ Server save successful for action:', action);
                         switch(action){
                             case 'cart': return FSC.addToCart();
                             case 'customize': return FSC.showCustomizationModal();
                             case 'checkout': return FSC.downloadAndCheckout();
                         }
-                    } else { FSC.showMessage('Error saving customization', 'error'); }
+                    } else { 
+                        console.warn('⚠️ Server save failed, but localStorage has data');
+                        // For checkout, proceed anyway since localStorage has the data
+                        if (action === 'checkout') {
+                            console.log('📦 Proceeding with checkout using localStorage data');
+                            return FSC.downloadAndCheckout();
+                        }
+                        FSC.showMessage('Error saving customization', 'error'); 
+                    }
                 },
-                error: function(){ FSC.showMessage('Network error occurred', 'error'); }
+                error: function(xhr, status, error){ 
+                    console.error('❌ Server save error:', status, error);
+                    // For checkout, proceed anyway since localStorage has the data
+                    if (action === 'checkout') {
+                        console.log('📦 Server error, but proceeding with checkout using localStorage data');
+                        return FSC.downloadAndCheckout();
+                    }
+                    FSC.showMessage('Network error occurred', 'error'); 
+                }
             });
         },
 

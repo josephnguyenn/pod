@@ -180,13 +180,28 @@ if (!defined('ABSPATH')) {
                 <h2>Fonts</h2>
                 <p>Upload custom fonts (TTF/OTF/WOFF/WOFF2) to use in templates.</p>
 
-                <div class="apd-grid-3">
+                <div class="apd-grid-3" style="grid-template-columns: 2fr 1fr 1fr; gap: 16px;">
                     <div>
                         <label class="apd-form-label">Font file</label>
                         <input id="apd-font-file" type="file" accept=".ttf,.otf,.woff,.woff2" class="apd-form-input" />
                         <p class="apd-form-help">Max size 5MB. Only TTF, OTF, WOFF, WOFF2.</p>
                     </div>
                     <div>
+                        <label class="apd-form-label">Font Weight</label>
+                        <select id="apd-font-weight" class="apd-form-input">
+                            <option value="100">100 - Thin</option>
+                            <option value="200">200 - Extra Light</option>
+                            <option value="300">300 - Light</option>
+                            <option value="400" selected>400 - Regular</option>
+                            <option value="500">500 - Medium</option>
+                            <option value="600">600 - Semi Bold</option>
+                            <option value="700">700 - Bold</option>
+                            <option value="800">800 - Extra Bold</option>
+                            <option value="900">900 - Black</option>
+                        </select>
+                        <p class="apd-form-help">Weight of this font file</p>
+                    </div>
+                    <div style="display: flex; align-items: flex-end;">
                         <button id="apd-upload-font" class="apd-btn w-full">Upload</button>
                     </div>
                 </div>
@@ -202,7 +217,17 @@ if (!defined('ABSPATH')) {
                                 if (!empty($font['family']) && !empty($font['url'])) {
                                     $family_css = esc_attr($font['family']);
                                     $url_css = esc_url($font['url']);
-                                    echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('truetype');font-display:swap;}\n";
+                                    $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+                                    // Determine font format based on URL extension
+                                    $format = 'truetype';
+                                    if (strpos($url_css, '.woff2') !== false) {
+                                        $format = 'woff2';
+                                    } elseif (strpos($url_css, '.woff') !== false) {
+                                        $format = 'woff';
+                                    } elseif (strpos($url_css, '.otf') !== false) {
+                                        $format = 'opentype';
+                                    }
+                                    echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
                                 }
                             }
                             echo '</style>';
@@ -214,10 +239,11 @@ if (!defined('ABSPATH')) {
                                 $family = isset($font['family']) ? $font['family'] : '';
                                 $name = isset($font['name']) ? $font['name'] : $family;
                                 $url = isset($font['url']) ? $font['url'] : '';
+                                $weight = isset($font['weight']) ? $font['weight'] : '400';
                                 echo '<div class="apd-font-item">';
                                 echo '<div class="apd-font-info">';
-                                echo '<h4>'.esc_html($name).'</h4>';
-                                echo '<p style="font-family:\''.esc_attr($family).'\';">Aa Bb Cc</p>';
+                                echo '<h4>'.esc_html($name).' <span style="font-weight:normal;color:#6b7280;font-size:0.85rem;">(Weight: '.$weight.')</span></h4>';
+                                echo '<p style="font-family:\''.esc_attr($family).'\';font-weight:'.$weight.';">Aa Bb Cc 123</p>';
                                 echo '</div>';
                                 echo '<div class="apd-font-actions">';
                                 echo '<button class="apd-btn apd-btn-small apd-btn-danger apd-delete-font" data-index="'.$idx.'">Delete</button>';
@@ -966,6 +992,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('DOMContentLoaded', function() {
     const uploadBtn = document.getElementById('apd-upload-font');
     const fileInput = document.getElementById('apd-font-file');
+    const weightSelect = document.getElementById('apd-font-weight');
     const listEl = document.getElementById('apd-fonts-list');
 
     if (uploadBtn) {
@@ -976,38 +1003,43 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!['ttf','otf','woff','woff2'].includes(ext)) { alert('Invalid font type.'); return; }
             if (file.size > 5 * 1024 * 1024) { alert('Font too large (max 5MB).'); return; }
 
+            const fontWeight = weightSelect ? weightSelect.value : '400';
+
             const fd = new FormData();
             fd.append('action', 'upload_font');
             fd.append('font_file', file);
+            fd.append('font_weight', fontWeight);
 
             fetch(ajaxurl, { method: 'POST', body: fd })
                 .then(r => r.json().catch(() => ({ success: false, data: 'Invalid JSON' })))
                 .then(data => {
                     if (data && data.success) {
                         const font = data.data;
+                        const weight = font.weight || '400';
                         // Inject @font-face so preview uses the uploaded font immediately
                         (function ensureFontFace(){
-                            const id = 'apd-font-' + font.family.replace(/\s+/g, '-');
+                            const id = 'apd-font-' + font.family.replace(/\s+/g, '-') + '-' + weight;
                             if (!document.getElementById(id)) {
                                 const style = document.createElement('style');
                                 style.id = id;
-                                style.textContent = `@font-face{font-family:'${font.family}';src:url('${font.url}') format('truetype');font-display:swap;}`;
+                                style.textContent = `@font-face{font-family:'${font.family}';src:url('${font.url}') format('truetype');font-weight:${weight};font-display:swap;}`;
                                 document.head.appendChild(style);
                             }
                         })();
                         const row = document.createElement('div');
-                        row.className = 'flex items-center justify-between py-3';
+                        row.className = 'apd-font-item';
                         row.innerHTML = `
-                            <div class="flex items-center gap-3">
-                                <span class="text-sm font-medium">${font.name}</span>
-                                <span class="text-sm text-gray-500" style="font-family: '${font.family}';">Aa Bb Cc</span>
+                            <div class="apd-font-info">
+                                <h4>${font.name} <span style="font-weight:normal;color:#6b7280;font-size:0.85rem;">(Weight: ${weight})</span></h4>
+                                <p style="font-family: '${font.family}'; font-weight: ${weight};">Aa Bb Cc 123</p>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <button class="apd-delete-font bg-red-600 text-white text-sm px-3 py-1 rounded" data-file="${font.file}">Delete</button>
+                            <div class="apd-font-actions">
+                                <button class="apd-btn apd-btn-small apd-btn-danger apd-delete-font" data-file="${font.file}">Delete</button>
                             </div>`;
                         listEl.appendChild(row);
                         alert('Font uploaded successfully.');
                         fileInput.value = '';
+                        if (weightSelect) weightSelect.value = '400';
                     } else {
                         alert('Upload failed: ' + (data && data.data ? data.data : 'Unknown error'));
                     }
@@ -1029,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 .then(r => r.json())
                 .then(data => {
                     if (data && data.success) {
-                        e.target.closest('.flex.items-center.justify-between.py-3')?.remove();
+                        e.target.closest('.apd-font-item')?.remove();
                     } else {
                         alert('Delete failed: ' + (data && data.data ? data.data : 'Unknown error'));
                     }

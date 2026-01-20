@@ -76,7 +76,7 @@ class APD_Order_Service
         $order_id = wp_insert_post(array(
             'post_type' => APD_Config::POST_TYPE_ORDER,
             'post_title' => 'Order ' . date('Y-m-d H:i:s'),
-            'post_status' => APD_Config::ORDER_STATUS_PENDING
+            'post_status' => 'apd_pending' // Use prefixed status to match registered statuses
         ));
 
         if (is_wp_error($order_id) || !$order_id) {
@@ -287,7 +287,7 @@ class APD_Order_Service
             // Order Details
             'payment_method' => sanitize_text_field($payment_data['payment_method'] ?? APD_Config::PAYMENT_METHOD_PAYPAL),
             'order_date' => current_time('Y-m-d H:i:s'),
-            'order_status' => APD_Config::ORDER_STATUS_PENDING,
+            'order_status' => 'apd_pending', // Use prefixed status to match registered statuses
 
             // Cart Summary
             'cart_items' => wp_json_encode($cart_items),

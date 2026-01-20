@@ -98,6 +98,9 @@ jQuery(document).ready(function($) {
                     ? parseFloat(firstCombo.sale_price)
                     : parseFloat(firstCombo.price);
                 $('#apd-price-display').text(displayPrice.toFixed(2));
+                
+                // Update tiers for first combo
+                updateVariantTiers(firstCombo.sku);
             }
             return;
         }
@@ -143,17 +146,23 @@ jQuery(document).ready(function($) {
         console.log('[APD Variants] Found combo:', combo);
         
         if (combo) {
-            // Update price display
-            const displayPrice = combo.sale_price && parseFloat(combo.sale_price) > 0 
-                ? parseFloat(combo.sale_price)
-                : parseFloat(combo.price);
+            // Update price display with fallback to product-level prices
+            const variantPrice = combo.price && parseFloat(combo.price) > 0 
+                ? parseFloat(combo.price) 
+                : (window.apdProductBasePrice || 0);
+            
+            const variantSale = combo.sale_price && parseFloat(combo.sale_price) > 0 
+                ? parseFloat(combo.sale_price) 
+                : (window.apdProductSalePrice || 0);
+            
+            const displayPrice = variantSale > 0 ? variantSale : variantPrice;
             
             $('#apd-price-display').text(displayPrice.toFixed(2));
             
             // Show/hide sale price styling
-            if (combo.sale_price && parseFloat(combo.sale_price) > 0) {
+            if (variantSale > 0) {
                 $('.apd-variant-price').addClass('has-sale');
-                $('.apd-variant-regular-price').text('$' + parseFloat(combo.price).toFixed(2)).show();
+                $('.apd-variant-regular-price').text('$' + variantPrice.toFixed(2)).show();
             } else {
                 $('.apd-variant-price').removeClass('has-sale');
                 $('.apd-variant-regular-price').hide();
@@ -173,12 +182,64 @@ jQuery(document).ready(function($) {
                 $('#apd-stock-status').text('In Stock').addClass('in-stock').removeClass('out-of-stock');
             }
             
+            // Update variant-specific pricing tiers
+            updateVariantTiers(combo.sku);
+            
             console.log('[APD Variants] Updated UI with price:', displayPrice, 'stock:', combo.stock);
         } else {
             console.warn('[APD Variants] No matching combination found');
             $('#apd-price-display').text('--');
             $('#apd-start-customizing').prop('disabled', true);
         }
+    }
+    
+    // Update pricing tiers based on selected variant
+    function updateVariantTiers(variantSku) {
+        if (!window.apdVariantTiers) {
+            console.log('[APD Variants] No variant tier data available');
+            return;
+        }
+        
+        const variantTiers = window.apdVariantTiers[variantSku];
+        const $volumePricing = $('#apd-variant-volume-pricing');
+        
+        if (!variantTiers || variantTiers.length === 0) {
+            // No variant-specific tiers, check product-level tiers
+            if (window.apdProductTiers && window.apdProductTiers.length > 0) {
+                renderTierTable(window.apdProductTiers);
+                $volumePricing.show();
+            } else {
+                $volumePricing.hide();
+            }
+            return;
+        }
+        
+        // Render variant-specific tiers
+        renderTierTable(variantTiers);
+        $volumePricing.show();
+    }
+    
+    // Render tier table with given tiers
+    function renderTierTable(tiers) {
+        const $tbody = $('#apd-variant-tiers-body');
+        $tbody.empty();
+        
+        // Get base price from current variant
+        const basePrice = parseFloat($('#apd-price-display').text()) || 0;
+        
+        tiers.forEach(function(tier) {
+            const discountPercent = parseFloat(tier.discount_percent);
+            const discountedPrice = basePrice - ((basePrice * discountPercent) / 100);
+            
+            const row = `
+                <tr>
+                    <td>${tier.min_qty}+</td>
+                    <td><span class="apd-discount-badge">${discountPercent}% off</span></td>
+                    <td class="apd-tier-price">$${discountedPrice.toFixed(2)}</td>
+                </tr>
+            `;
+            $tbody.append(row);
+        });
     }
     
     // Start Customizing button
@@ -213,10 +274,16 @@ jQuery(document).ready(function($) {
             return;
         }
         
-        // Build customizer URL with variant parameters
-        const variantPrice = combo.sale_price && parseFloat(combo.sale_price) > 0 
-            ? combo.sale_price 
-            : combo.price;
+        // Build customizer URL with variant parameters (with fallback)
+        const comboPrice = combo.price && parseFloat(combo.price) > 0 
+            ? parseFloat(combo.price) 
+            : (window.apdProductBasePrice || 0);
+        
+        const comboSale = combo.sale_price && parseFloat(combo.sale_price) > 0 
+            ? parseFloat(combo.sale_price) 
+            : (window.apdProductSalePrice || 0);
+        
+        const variantPrice = comboSale > 0 ? comboSale : comboPrice;
             
         const url = apdVariantsConfig.homeUrl +
                     '/customizer/' + productId + '/' +

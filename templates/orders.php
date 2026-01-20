@@ -9,6 +9,29 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Inject @font-face rules for uploaded fonts
+$uploaded_fonts = get_option('apd_uploaded_fonts', array());
+if (!empty($uploaded_fonts)) {
+    echo '<style id="apd-orders-fonts">';
+    foreach ($uploaded_fonts as $font) {
+        if (!empty($font['family']) && !empty($font['url'])) {
+            $family_css = esc_attr($font['family']);
+            $url_css = esc_url($font['url']);
+            $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+            $format = 'truetype';
+            if (strpos($url_css, '.woff2') !== false) {
+                $format = 'woff2';
+            } elseif (strpos($url_css, '.woff') !== false) {
+                $format = 'woff';
+            } elseif (strpos($url_css, '.otf') !== false) {
+                $format = 'opentype';
+            }
+            echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
+        }
+    }
+    echo '</style>';
+}
+
 $user_id = get_current_user_id();
 if (!$user_id) {
     echo '<div class="apd-error">Please log in to view your orders.</div>';

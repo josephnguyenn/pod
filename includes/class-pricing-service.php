@@ -26,15 +26,21 @@ class APD_Pricing_Service {
     const TIER_META_KEY = '_apd_price_tiers';
     
     /**
+     * Meta key for storing variant-specific price tiers
+     */
+    const VARIANT_TIER_META_KEY = '_apd_variant_price_tiers';
+    
+    /**
      * Calculate the final price for a product based on quantity
      * 
      * @param int $product_id Product ID
      * @param int $quantity Order quantity
      * @param float $base_price Base price per unit
+     * @param string $variant_sku Optional variant SKU for variant-specific pricing
      * @return array Array with 'price', 'discount', 'tier' keys
      */
-    public function calculate_tiered_price($product_id, $quantity, $base_price) {
-        $tiers = $this->get_price_tiers($product_id);
+    public function calculate_tiered_price($product_id, $quantity, $base_price, $variant_sku = '') {
+        $tiers = $this->get_price_tiers($product_id, $variant_sku);
         
         if (empty($tiers)) {
             return array(
@@ -92,12 +98,27 @@ class APD_Pricing_Service {
     }
     
     /**
-     * Get price tiers for a product
+     * Get price tiers for a product or variant
      * 
      * @param int $product_id Product ID
+     * @param string $variant_sku Optional variant SKU for variant-specific pricing
      * @return array Array of pricing tiers sorted by min_qty ascending
      */
-    public function get_price_tiers($product_id) {
+    public function get_price_tiers($product_id, $variant_sku = '') {
+        // Try to get variant-specific tiers first if variant SKU is provided
+        if (!empty($variant_sku)) {
+            $variant_tiers_all = get_post_meta($product_id, self::VARIANT_TIER_META_KEY, true);
+            if (is_array($variant_tiers_all) && isset($variant_tiers_all[$variant_sku]) && is_array($variant_tiers_all[$variant_sku])) {
+                $tiers = $variant_tiers_all[$variant_sku];
+                // Sort tiers by minimum quantity (ascending)
+                usort($tiers, function($a, $b) {
+                    return intval($a['min_qty']) - intval($b['min_qty']);
+                });
+                return $tiers;
+            }
+        }
+        
+        // Fall back to product-level tiers
         $tiers = get_post_meta($product_id, self::TIER_META_KEY, true);
         
         if (!is_array($tiers)) {
@@ -153,6 +174,60 @@ class APD_Pricing_Service {
     }
     
     /**
+     * Save variant-specific price tiers
+     * 
+     * @param int $product_id Product ID
+     * @param string $variant_sku Variant SKU
+     * @param array $tiers Array of pricing tiers
+     * @return bool Success status
+     */
+    public function save_variant_tiers($product_id, $variant_sku, $tiers) {
+        if (empty($variant_sku) || !is_array($tiers)) {
+            return false;
+        }
+        
+        // Get all variant tiers
+        $all_variant_tiers = get_post_meta($product_id, self::VARIANT_TIER_META_KEY, true);
+        if (!is_array($all_variant_tiers)) {
+            $all_variant_tiers = array();
+        }
+        
+        // Validate and sanitize tiers
+        $sanitized_tiers = array();
+        foreach ($tiers as $tier) {
+            if (isset($tier['min_qty']) && isset($tier['discount_percent'])) {
+                $min_qty = intval($tier['min_qty']);
+                $discount = floatval($tier['discount_percent']);
+                
+                // Skip invalid entries
+                if ($min_qty <= 0 || $discount < 0 || $discount > 100) {
+                    continue;
+                }
+                
+                $sanitized_tiers[] = array(
+                    'min_qty' => $min_qty,
+                    'discount_percent' => $discount,
+                    'name' => isset($tier['name']) ? sanitize_text_field($tier['name']) : ''
+                );
+            }
+        }
+        
+        // Sort by minimum quantity
+        usort($sanitized_tiers, function($a, $b) {
+            return $a['min_qty'] - $b['min_qty'];
+        });
+        
+        // Update variant tiers
+        if (empty($sanitized_tiers)) {
+            unset($all_variant_tiers[$variant_sku]);
+        } else {
+            $all_variant_tiers[$variant_sku] = $sanitized_tiers;
+        }
+        
+        return update_post_meta($product_id, self::VARIANT_TIER_META_KEY, $all_variant_tiers);
+    }
+    
+    /**
      * Delete price tiers for a product
      * 
      * @param int $product_id Product ID
@@ -163,14 +238,38 @@ class APD_Pricing_Service {
     }
     
     /**
+     * Delete variant-specific price tiers
+     * 
+     * @param int $product_id Product ID
+     * @param string $variant_sku Optional variant SKU (deletes all if empty)
+     * @return bool Success status
+     */
+    public function delete_variant_tiers($product_id, $variant_sku = '') {
+        if (empty($variant_sku)) {
+            // Delete all variant tiers
+            return delete_post_meta($product_id, self::VARIANT_TIER_META_KEY);
+        }
+        
+        // Delete specific variant tiers
+        $all_variant_tiers = get_post_meta($product_id, self::VARIANT_TIER_META_KEY, true);
+        if (is_array($all_variant_tiers) && isset($all_variant_tiers[$variant_sku])) {
+            unset($all_variant_tiers[$variant_sku]);
+            return update_post_meta($product_id, self::VARIANT_TIER_META_KEY, $all_variant_tiers);
+        }
+        
+        return false;
+    }
+    
+    /**
      * Get HTML table for displaying pricing tiers
      * 
      * @param int $product_id Product ID
      * @param float $base_price Base price per unit
+     * @param string $variant_sku Optional variant SKU
      * @return string HTML table or empty string
      */
-    public function get_tier_table_html($product_id, $base_price) {
-        $tiers = $this->get_price_tiers($product_id);
+    public function get_tier_table_html($product_id, $base_price, $variant_sku = '') {
+        $tiers = $this->get_price_tiers($product_id, $variant_sku);
         
         if (empty($tiers)) {
             return '';
@@ -212,10 +311,11 @@ class APD_Pricing_Service {
      * @param int $product_id Product ID
      * @param int $quantity Current quantity
      * @param float $base_price Base price
+     * @param string $variant_sku Optional variant SKU
      * @return string Pricing message HTML
      */
-    public function get_pricing_message($product_id, $quantity, $base_price) {
-        $pricing = $this->calculate_tiered_price($product_id, $quantity, $base_price);
+    public function get_pricing_message($product_id, $quantity, $base_price, $variant_sku = '') {
+        $pricing = $this->calculate_tiered_price($product_id, $quantity, $base_price, $variant_sku);
         
         if ($pricing['discount'] > 0) {
             $message = sprintf(
@@ -230,7 +330,7 @@ class APD_Pricing_Service {
         }
         
         // Show next tier incentive
-        $tiers = $this->get_price_tiers($product_id);
+        $tiers = $this->get_price_tiers($product_id, $variant_sku);
         if (!empty($tiers)) {
             foreach ($tiers as $tier) {
                 if ($quantity < intval($tier['min_qty'])) {
@@ -295,11 +395,23 @@ class APD_Pricing_Service {
      * Check if product has tiered pricing
      * 
      * @param int $product_id Product ID
+     * @param string $variant_sku Optional variant SKU
      * @return bool True if product has tiers
      */
-    public function has_tiered_pricing($product_id) {
-        $tiers = $this->get_price_tiers($product_id);
+    public function has_tiered_pricing($product_id, $variant_sku = '') {
+        $tiers = $this->get_price_tiers($product_id, $variant_sku);
         return !empty($tiers);
+    }
+    
+    /**
+     * Check if product has any variant-specific tiers
+     * 
+     * @param int $product_id Product ID
+     * @return bool True if product has variant tiers
+     */
+    public function has_variant_tiers($product_id) {
+        $variant_tiers = get_post_meta($product_id, self::VARIANT_TIER_META_KEY, true);
+        return is_array($variant_tiers) && !empty($variant_tiers);
     }
     
     /**

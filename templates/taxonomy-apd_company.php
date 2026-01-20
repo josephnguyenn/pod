@@ -32,19 +32,11 @@ if (did_action('elementor/loaded')) {
 ?>
 
 <div class="apd-company-archive-wrapper">
-    <div class="apd-company-header">
-        <h1 class="apd-company-title"><?php echo esc_html($company_name); ?> Products</h1>
-        <?php if ($company_description): ?>
-            <div class="apd-company-description">
-                <?php echo wp_kses_post($company_description); ?>
-            </div>
-        <?php endif; ?>
-    </div>
-
     <div class="apd-company-products">
         <?php
         // Use the shortcode to display products
-        echo do_shortcode('[apd_products_by_company company="' . esc_attr($current_term->slug) . '"]');
+        echo do_shortcode('[apd_products_by_company company="' . esc_attr($current_term->slug) . '" hide_header="false"]');
+        ?>
         ?>
     </div>
 </div>

@@ -117,7 +117,17 @@ if (!isset($materials)) {
                     if (!empty($font['family']) && !empty($font['url'])) {
                         $family_css = esc_attr($font['family']);
                         $url_css = esc_url($font['url']);
-                        echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('truetype');font-display:swap;}\n";
+                        $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+                        // Determine font format based on URL extension
+                        $format = 'truetype';
+                        if (strpos($url_css, '.woff2') !== false) {
+                            $format = 'woff2';
+                        } elseif (strpos($url_css, '.woff') !== false) {
+                            $format = 'woff';
+                        } elseif (strpos($url_css, '.otf') !== false) {
+                            $format = 'opentype';
+                        }
+                        echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
                     }
                 }
                 echo '</style>';

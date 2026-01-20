@@ -9,6 +9,29 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Inject @font-face rules for uploaded fonts
+$uploaded_fonts = get_option('apd_uploaded_fonts', array());
+if (!empty($uploaded_fonts)) {
+    echo '<style id="apd-product-list-fonts">';
+    foreach ($uploaded_fonts as $font) {
+        if (!empty($font['family']) && !empty($font['url'])) {
+            $family_css = esc_attr($font['family']);
+            $url_css = esc_url($font['url']);
+            $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+            $format = 'truetype';
+            if (strpos($url_css, '.woff2') !== false) {
+                $format = 'woff2';
+            } elseif (strpos($url_css, '.woff') !== false) {
+                $format = 'woff';
+            } elseif (strpos($url_css, '.otf') !== false) {
+                $format = 'opentype';
+            }
+            echo "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}\n";
+        }
+    }
+    echo '</style>';
+}
+
 // Extract template data
 $categories = $template_data['categories'];
 $show_title = $template_data['show_title'];
@@ -20,10 +43,13 @@ $items_per_page = -1;
 ?>
 
 <div class="apd-product-list-container">
+    <?php if (!isset($template_data['hide_header']) || $template_data['hide_header'] !== true): ?>
     <div class="apd-product-list-header">
         <h2 class="apd-product-list-title">Our Products</h2>
-        <p class="apd-product-list-subtitle">Choose from our wide range of customizable products</p>
+        <p class="apd-product-list-subtitle">25 years anniversary, authorized vendor for <?php echo isset($template_data['company_name']) ? esc_html($template_data['company_name']) : 'companies'; ?></p>
+        <p class="apd-product-support-info">For support or any questions: <a href="mailto:gotospectrum@gmail.com">gotospectrum@gmail.com</a></p>
     </div>
+    <?php endif; ?>
     
     <div class="apd-category-tabs">
         <div class="apd-tab-nav">
@@ -85,11 +111,49 @@ $items_per_page = -1;
                                 
                                 <?php if ($show_price): ?>
                                     <div class="apd-product-pricing">
-                                        <?php if (!empty($product['sale_price']) && $show_sale): ?>
-                                            <span class="apd-sale-price">$<?php echo esc_html($product['sale_price']); ?></span>
-                                            <span class="apd-regular-price apd-crossed">$<?php echo esc_html($product['price']); ?></span>
+                                        <?php
+                                        // Check if product has variants
+                                        $variants = get_post_meta($product['id'], '_apd_variants', true);
+                                        $has_variants = is_array($variants) && isset($variants['enabled']) && $variants['enabled'] && !empty($variants['combinations']);
+                                        
+                                        if ($has_variants):
+                                            // Get price range from variants with fallback to product price
+                                            $product_base_price = floatval($product['price']);
+                                            $product_sale_price = !empty($product['sale_price']) ? floatval($product['sale_price']) : 0;
+                                            
+                                            $prices = array();
+                                            foreach ($variants['combinations'] as $combo) {
+                                                // Use variant price, or fall back to product price
+                                                $variant_price = !empty($combo['price']) && floatval($combo['price']) > 0 
+                                                    ? floatval($combo['price']) 
+                                                    : $product_base_price;
+                                                
+                                                // Check for sale price (variant or product level)
+                                                $variant_sale = !empty($combo['sale_price']) && floatval($combo['sale_price']) > 0 
+                                                    ? floatval($combo['sale_price']) 
+                                                    : ($product_sale_price > 0 ? $product_sale_price : 0);
+                                                
+                                                // Use sale price if available, otherwise regular price
+                                                $final_price = $variant_sale > 0 ? $variant_sale : $variant_price;
+                                                $prices[] = $final_price;
+                                            }
+                                            $min_price = min($prices);
+                                            $max_price = max($prices);
+                                            
+                                            if ($min_price === $max_price):
+                                                // Same price for all variants
+                                                ?>
+                                                <span class="apd-regular-price">$<?php echo number_format($min_price, 2); ?></span>
+                                            <?php else: ?>
+                                                <span class="apd-price-range">$<?php echo number_format($min_price, 2); ?> - $<?php echo number_format($max_price, 2); ?></span>
+                                            <?php endif; ?>
                                         <?php else: ?>
-                                            <span class="apd-regular-price">$<?php echo esc_html($product['price']); ?></span>
+                                            <?php if (!empty($product['sale_price']) && $show_sale): ?>
+                                                <span class="apd-sale-price">$<?php echo esc_html($product['sale_price']); ?></span>
+                                                <span class="apd-regular-price apd-crossed">$<?php echo esc_html($product['price']); ?></span>
+                                            <?php else: ?>
+                                                <span class="apd-regular-price">$<?php echo esc_html($product['price']); ?></span>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </div>
                                 <?php endif; ?>
@@ -419,6 +483,12 @@ $items_per_page = -1;
     align-items: center;
     gap: 8px;
     padding-top: 4px;
+}
+
+.apd-price-range {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-foreground);
 }
 
 .apd-sale-price {
