@@ -9290,19 +9290,21 @@ if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php')) {
 }
 
 // Initialize the plugin
-function apd_init()
-{
-    global $advanced_product_designer;
-    $advanced_product_designer = new AdvancedProductDesigner();
-    new APD_Block_Registration();
-    
-    // Initialize health check and debug logger
-    if (class_exists('APD_Health_Check')) {
-        new APD_Health_Check();
+if (!function_exists('apd_init')) {
+    function apd_init()
+    {
+        global $advanced_product_designer;
+        $advanced_product_designer = new AdvancedProductDesigner();
+        new APD_Block_Registration();
+        
+        // Initialize health check and debug logger
+        if (class_exists('APD_Health_Check')) {
+            new APD_Health_Check();
+        }
+        if (class_exists('APD_Debug_Logger')) {
+            APD_Debug_Logger::get_instance();
+        }
     }
-    if (class_exists('APD_Debug_Logger')) {
-        APD_Debug_Logger::get_instance();
-    }
-}
 
-add_action('plugins_loaded', 'apd_init');
+    add_action('plugins_loaded', 'apd_init');
+}

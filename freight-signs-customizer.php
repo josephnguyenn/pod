@@ -2253,7 +2253,7 @@ class AdvancedProductDesigner
         error_log('APD: First 100 chars: ' . substr($svg_content, 0, 100));
 
         // Normalize encoding to UTF-8 if file appears to be UTF-16
-        if (strpos($svg_content, "\x00") !== false || preg_match('/encoding=["\']utf-16["\']/i', $svg_content)) {
+        if (!empty($svg_content) && (strpos($svg_content, "\x00") !== false || preg_match('/encoding=["\']utf-16["\']/i', $svg_content))) {
             if (function_exists('mb_convert_encoding')) {
                 $converted = @mb_convert_encoding($svg_content, 'UTF-8', 'UTF-16,UTF-16LE,UTF-16BE,UTF-8');
                 if ($converted !== false) {
@@ -2660,8 +2660,8 @@ class AdvancedProductDesigner
         if (!isset($_POST['image'])) {
             wp_send_json_error(array('message' => 'No image provided'), 400);
         }
-        $data_url = $_POST['image'];
-        if (strpos($data_url, 'data:image/png;base64,') !== 0) {
+        $data_url = $_POST['image'] ?? '';
+        if (empty($data_url) || strpos($data_url, 'data:image/png;base64,') !== 0) {
             wp_send_json_error(array('message' => 'Invalid image format'), 400);
         }
         $raw = base64_decode(substr($data_url, strlen('data:image/png;base64,')));
@@ -10833,19 +10833,21 @@ if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php')) {
 }
 
 // Initialize the plugin
-function apd_init()
-{
-    global $advanced_product_designer;
-    $advanced_product_designer = new AdvancedProductDesigner();
-    new APD_Block_Registration();
-    
-    // Initialize health check and debug logger
-    if (class_exists('APD_Health_Check')) {
-        new APD_Health_Check();
+if (!function_exists('apd_init')) {
+    function apd_init()
+    {
+        global $advanced_product_designer;
+        $advanced_product_designer = new AdvancedProductDesigner();
+        new APD_Block_Registration();
+        
+        // Initialize health check and debug logger
+        if (class_exists('APD_Health_Check')) {
+            new APD_Health_Check();
+        }
+        if (class_exists('APD_Debug_Logger')) {
+            APD_Debug_Logger::get_instance();
+        }
     }
-    if (class_exists('APD_Debug_Logger')) {
-        APD_Debug_Logger::get_instance();
-    }
-}
 
-add_action('plugins_loaded', 'apd_init');
+    add_action('plugins_loaded', 'apd_init');
+}
