@@ -3849,22 +3849,22 @@ class AdvancedProductDesigner
         // 8. Restore and ensure proper dimensions AND styles for the root SVG element
         // This prevents the cut-ready SVG from being scaled differently than the original
         // AND ensures all inline styles are preserved for visual consistency
-        if ($originalViewBox && !$svgRoot->getAttribute('viewBox')) {
+        if ($originalViewBox) {
             $svgRoot->setAttribute('viewBox', $originalViewBox);
         }
-        if ($originalWidth && !$svgRoot->getAttribute('width')) {
+        if ($originalWidth) {
             $svgRoot->setAttribute('width', $originalWidth);
         }
-        if ($originalHeight && !$svgRoot->getAttribute('height')) {
+        if ($originalHeight) {
             $svgRoot->setAttribute('height', $originalHeight);
         }
-        // CRITICAL: Preserve inline style attribute from original SVG
+        // CRITICAL: Always restore inline style attribute from original SVG to ensure exact match
         // This ensures visual consistency (display, overflow, shape-rendering, text-rendering, etc.)
-        if ($originalStyle && !$svgRoot->getAttribute('style')) {
+        if ($originalStyle) {
             $svgRoot->setAttribute('style', $originalStyle);
         }
         // Preserve preserveAspectRatio if it was in the original
-        if ($originalPreserveAspectRatio && !$svgRoot->getAttribute('preserveAspectRatio')) {
+        if ($originalPreserveAspectRatio) {
             $svgRoot->setAttribute('preserveAspectRatio', $originalPreserveAspectRatio);
         }
         
