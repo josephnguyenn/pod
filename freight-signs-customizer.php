@@ -3326,6 +3326,9 @@ class AdvancedProductDesigner
                 // Only remove malformed attributes, not valid style attributes
                 // Style attributes will be preserved and restored later in the process
                 
+                // Start with the original content
+                $svg_content_cleaned = $svg_content;
+                
                 // Fix path d attributes with line breaks or special chars
                 $svg_content_cleaned = preg_replace_callback(
                     '/(<path[^>]*\sd=")([^"]*)(")/s',
@@ -4006,9 +4009,9 @@ class AdvancedProductDesigner
         $finalDom = new DOMDocument('1.0', 'UTF-8');
         $finalDom->preserveWhiteSpace = false;
         $finalDom->formatOutput = true;
-        @$finalDom->loadXML($clean_svg, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
+        $finalLoaded = @$finalDom->loadXML($clean_svg, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
         
-        if ($finalDom->documentElement) {
+        if ($finalLoaded && $finalDom->documentElement) {
             $finalXpath = new DOMXPath($finalDom);
             $finalXpath->registerNamespace('svg', 'http://www.w3.org/2000/svg');
             
@@ -4024,6 +4027,17 @@ class AdvancedProductDesigner
             
             // Save the final version with all styles restored
             $clean_svg = $finalDom->saveXML();
+        } else {
+            // If final DOM reload fails, log error but continue with current $clean_svg
+            // The styles were already restored earlier, so this is just a safety check
+            $errors = libxml_get_errors();
+            $error_messages = array();
+            foreach ($errors as $error) {
+                $error_messages[] = trim($error->message);
+            }
+            libxml_clear_errors();
+            error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Final DOM reload failed (non-critical): ' . implode('; ', $error_messages));
+            // Continue with $clean_svg as-is - styles were already restored earlier
         }
         
         // Don't add DOCTYPE - CorelDRAW doesn't require it and it might cause issues
@@ -4051,6 +4065,12 @@ class AdvancedProductDesigner
         
         // Keep as UTF-8 for browser compatibility (browsers cannot read UTF-16 encoded SVG files)
         // Note: CorelDRAW can still open UTF-8 SVG files, so this maintains compatibility with both
+        
+        // Final validation: Ensure we have valid SVG content
+        if (empty($clean_svg) || strpos($clean_svg, '<svg') === false) {
+            error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Final validation failed - empty or invalid SVG');
+            return new WP_Error('invalid_svg', 'Failed to process SVG: Result is empty or invalid');
+        }
         
         return $clean_svg;
     }
