@@ -3608,19 +3608,23 @@ class AdvancedProductDesigner
         $xpath = new DOMXPath($dom);
         $xpath->registerNamespace('svg', 'http://www.w3.org/2000/svg');
 
-        // Get the root SVG element and preserve its dimensions
+        // Get the root SVG element and preserve its dimensions AND inline styles
         $svgRoot = $dom->documentElement;
         $originalViewBox = $svgRoot->getAttribute('viewBox');
         $originalWidth = $svgRoot->getAttribute('width');
         $originalHeight = $svgRoot->getAttribute('height');
+        $originalStyle = $svgRoot->getAttribute('style'); // Preserve inline style attribute
+        $originalPreserveAspectRatio = $svgRoot->getAttribute('preserveAspectRatio');
         
-        // Log original dimensions for debugging
+        // Log original attributes for debugging
         error_log(sprintf(
-            'APD Cut-Ready SVG - Order #%d: Original dimensions - viewBox="%s", width="%s", height="%s"',
+            'APD Cut-Ready SVG - Order #%d: Original attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s"',
             $order_id,
             $originalViewBox,
             $originalWidth,
-            $originalHeight
+            $originalHeight,
+            $originalStyle,
+            $originalPreserveAspectRatio
         ));
 
         // 1. Keep <image> elements for visual consistency (only remove if they cause issues)
@@ -3842,8 +3846,9 @@ class AdvancedProductDesigner
         // 7.6. Keep all <defs> elements (preserve structure - CorelDRAW can handle them)
         // Don't remove defs even if empty - preserve exact structure
 
-        // 8. Restore and ensure proper dimensions for the root SVG element
+        // 8. Restore and ensure proper dimensions AND styles for the root SVG element
         // This prevents the cut-ready SVG from being scaled differently than the original
+        // AND ensures all inline styles are preserved for visual consistency
         if ($originalViewBox && !$svgRoot->getAttribute('viewBox')) {
             $svgRoot->setAttribute('viewBox', $originalViewBox);
         }
@@ -3853,14 +3858,25 @@ class AdvancedProductDesigner
         if ($originalHeight && !$svgRoot->getAttribute('height')) {
             $svgRoot->setAttribute('height', $originalHeight);
         }
+        // CRITICAL: Preserve inline style attribute from original SVG
+        // This ensures visual consistency (display, overflow, shape-rendering, text-rendering, etc.)
+        if ($originalStyle && !$svgRoot->getAttribute('style')) {
+            $svgRoot->setAttribute('style', $originalStyle);
+        }
+        // Preserve preserveAspectRatio if it was in the original
+        if ($originalPreserveAspectRatio && !$svgRoot->getAttribute('preserveAspectRatio')) {
+            $svgRoot->setAttribute('preserveAspectRatio', $originalPreserveAspectRatio);
+        }
         
-        // Log final dimensions for debugging
+        // Log final attributes for debugging
         error_log(sprintf(
-            'APD Cut-Ready SVG - Order #%d: Final dimensions - viewBox="%s", width="%s", height="%s"',
+            'APD Cut-Ready SVG - Order #%d: Final attributes - viewBox="%s", width="%s", height="%s", style="%s", preserveAspectRatio="%s"',
             $order_id,
             $svgRoot->getAttribute('viewBox'),
             $svgRoot->getAttribute('width'),
-            $svgRoot->getAttribute('height')
+            $svgRoot->getAttribute('height'),
+            $svgRoot->getAttribute('style'),
+            $svgRoot->getAttribute('preserveAspectRatio')
         ));
 
         // 9. Clean up and return with UTF-8 encoding (browsers require UTF-8)
