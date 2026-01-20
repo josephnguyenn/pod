@@ -12,6 +12,13 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// DISABLED: This file is not in use. Prevent it from loading to avoid conflicts.
+// Exit early if any version of the plugin is already loaded (main plugin or Shop plugin).
+if (class_exists('AdvancedProductDesigner') || function_exists('apd_init')) {
+    // Silently exit - don't load this plugin file
+    return;
+}
+
 // Define plugin constants
 define('APD_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('APD_PLUGIN_PATH', plugin_dir_path(__FILE__));
