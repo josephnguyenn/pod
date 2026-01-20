@@ -3650,13 +3650,27 @@ class AdvancedProductDesigner
         }
         error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d pattern strokes', $order_id, $stroke_count));
         
-        // 3. Remove all <pattern> elements (used for textures)
+        // 3. Remove all <style> elements containing @font-face (CorelDRAW doesn't support base64 fonts)
+        $styles = $xpath->query('//svg:style');
+        foreach ($styles as $style) {
+            $styleContent = $style->textContent;
+            // Remove style elements that contain @font-face or base64 fonts
+            if (stripos($styleContent, '@font-face') !== false || 
+                stripos($styleContent, 'base64') !== false ||
+                stripos($styleContent, 'data:application/x-font') !== false ||
+                stripos($styleContent, 'data:font') !== false) {
+                $style->parentNode->removeChild($style);
+                error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed @font-face style element', $order_id));
+            }
+        }
+
+        // 4. Remove all <pattern> elements (used for textures)
         $patterns = $xpath->query('//svg:pattern');
         foreach ($patterns as $pattern) {
             $pattern->parentNode->removeChild($pattern);
         }
 
-        // 4. Remove elements that reference removed patterns in FILL only
+        // 5. Remove elements that reference removed patterns in FILL only
         $fillRefs = $xpath->query('//*[@fill and contains(@fill, "url(#")]');
         foreach ($fillRefs as $elem) {
             $fill = $elem->getAttribute('fill');
@@ -3666,16 +3680,27 @@ class AdvancedProductDesigner
             }
         }
 
-        // 5. Convert text elements to paths would require complex library
-        // For now, just add a comment warning about text
+        // 6. Remove or convert text elements (CorelDRAW needs paths, not fonts)
+        // Since we removed fonts, text won't render correctly - remove text elements
         $texts = $xpath->query('//svg:text');
-        if ($texts->length > 0) {
-            $comment = $dom->createComment(' WARNING: This SVG contains text elements. Convert to paths in CorelDRAW before cutting. ');
+        $textCount = 0;
+        foreach ($texts as $text) {
+            // Remove text elements since fonts are removed and CorelDRAW needs paths
+            $text->parentNode->removeChild($text);
+            $textCount++;
+        }
+        if ($textCount > 0) {
+            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d text elements (fonts not supported in CorelDRAW)', $order_id, $textCount));
+            $comment = $dom->createComment(' NOTE: Text elements were removed. Use path-based designs for cutting machines. ');
             $root = $dom->documentElement;
-            $root->insertBefore($comment, $root->firstChild);
+            if ($root->firstChild) {
+                $root->insertBefore($comment, $root->firstChild);
+            } else {
+                $root->appendChild($comment);
+            }
         }
 
-        // 6. Flatten nested SVG elements - IMPORTANT: preserve position and scale
+        // 7. Flatten nested SVG elements - IMPORTANT: preserve position and scale
         $nestedSvgs = $xpath->query('//svg:svg[parent::*]');
         foreach ($nestedSvgs as $nested) {
             $g = $dom->createElement('g');
@@ -3750,7 +3775,7 @@ class AdvancedProductDesigner
         
         error_log(sprintf('APD Cut-Ready SVG - Order #%d: Flattened %d nested SVG elements', $order_id, $nestedSvgs->length));
 
-        // 7. Add metadata for tracking
+        // 8. Add metadata for tracking
         $metadata = $dom->createElement('metadata');
         $metadata->nodeValue = sprintf(
             'Cut-ready SVG processed from Order #%d on %s. Optimized for CorelDRAW/cutting machines. Material outlines preserved as black strokes.',
@@ -3760,7 +3785,7 @@ class AdvancedProductDesigner
         $dom->documentElement->insertBefore($metadata, $dom->documentElement->firstChild);
 
         // 7.5. CRITICAL: Clean up malformed attributes from ALL elements before saving
-        // This prevents "attributes construct error" in browsers
+        // This prevents "attributes construct error" in browsers and CorelDRAW
         $allElements = $xpath->query('//*');
         foreach ($allElements as $element) {
             // Get all attributes
@@ -3778,6 +3803,15 @@ class AdvancedProductDesigner
             // Remove the malformed attributes
             foreach ($attributesToRemove as $attrName) {
                 $element->removeAttribute($attrName);
+            }
+        }
+        
+        // 7.6. Remove any remaining <defs> that only contain removed content (patterns, fonts, etc)
+        $defsElements = $xpath->query('//svg:defs');
+        foreach ($defsElements as $defs) {
+            // If defs is empty or only contains removed elements, remove it
+            if ($defs->childNodes->length === 0) {
+                $defs->parentNode->removeChild($defs);
             }
         }
 
