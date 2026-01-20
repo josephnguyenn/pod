@@ -3630,43 +3630,66 @@ class AdvancedProductDesigner
         // 2. Keep all stroke patterns for visual consistency (preserve all styles)
         // Pattern strokes are part of the design and should be preserved to match Original SVG
         
-        // 3. Remove ONLY @font-face base64 from styles (keep other styles intact for visual consistency)
-        // CorelDRAW parser breaks on base64 fonts, but we keep text elements and other styles
+        // 3. Remove ONLY @font-face base64 from styles (keep everything else exactly the same)
+        // CorelDRAW parser breaks on base64 fonts - remove them but keep all other styles
         $styles = $xpath->query('//svg:style');
         foreach ($styles as $style) {
             $styleContent = $style->textContent;
+            $originalContent = $styleContent;
+            
             // Check if this style contains @font-face with base64
             if (stripos($styleContent, '@font-face') !== false && 
                 (stripos($styleContent, 'base64') !== false ||
                  stripos($styleContent, 'data:application/x-font') !== false ||
                  stripos($styleContent, 'data:font') !== false)) {
-                // Remove only @font-face rules with base64, keep other CSS rules
-                // Match @font-face blocks that contain base64 (can span multiple lines)
+                
+                // More aggressive regex to catch all @font-face blocks with base64 (including multi-line)
+                // Match @font-face { ... } blocks that contain base64 anywhere inside
+                // Use non-greedy matching and handle nested braces
                 $cleanedContent = preg_replace(
-                    '/@font-face\s*\{[^}]*url\s*\([^)]*base64[^)]*\)[^}]*\}/is',  // Remove @font-face with base64
+                    '/@font-face\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*[^}]*base64[^}]*\}/is',  // Remove @font-face blocks containing base64
                     '',
                     $styleContent
                 );
-                // Also remove any standalone @font-face blocks (in case base64 is elsewhere)
+                
+                // Also catch @font-face blocks with data:application/x-font (more specific)
                 $cleanedContent = preg_replace(
-                    '/@font-face\s*\{[^}]*data:application\/x-font[^}]*\}/is',  // Remove @font-face with data:application/x-font
+                    '/@font-face\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*[^}]*data:application\/x-font[^}]*\}/is',
                     '',
                     $cleanedContent
                 );
-                // Clean up multiple consecutive newlines/whitespace
-                $cleanedContent = preg_replace('/\n\s*\n\s*\n/', "\n\n", $cleanedContent);
+                
+                // Catch @font-face blocks with data:font
+                $cleanedContent = preg_replace(
+                    '/@font-face\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*[^}]*data:font[^}]*\}/is',
+                    '',
+                    $cleanedContent
+                );
+                
+                // Also try a simpler pattern that matches from @font-face to closing brace
+                // This handles cases where the block might be very long (base64 data)
+                $cleanedContent = preg_replace(
+                    '/@font-face[^}]*base64[^}]*\}/is',
+                    '',
+                    $cleanedContent
+                );
+                
+                // Clean up extra whitespace but preserve structure
+                $cleanedContent = preg_replace('/\n{3,}/', "\n\n", $cleanedContent);
                 $cleanedContent = trim($cleanedContent);
                 
-                // If there's still useful CSS left, keep the style element with cleaned content
-                if (!empty($cleanedContent) && strlen($cleanedContent) > 10) {
-                    // Update style content - DOMDocument handles CDATA automatically
-                    $style->nodeValue = '';
-                    $style->textContent = $cleanedContent;
-                    error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed @font-face base64, kept other styles', $order_id));
-                } else {
-                    // If only @font-face was in this style, remove the entire style element
-                    $style->parentNode->removeChild($style);
-                    error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed style element (only contained @font-face)', $order_id));
+                // Only update if content changed
+                if ($cleanedContent !== $originalContent) {
+                    if (!empty($cleanedContent) && strlen($cleanedContent) > 5) {
+                        // Update style content - preserve CDATA if it was there
+                        $style->nodeValue = '';
+                        $style->textContent = $cleanedContent;
+                        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed @font-face base64, kept other styles', $order_id));
+                    } else {
+                        // If only @font-face was in this style, remove the entire style element
+                        $style->parentNode->removeChild($style);
+                        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed style element (only contained @font-face)', $order_id));
+                    }
                 }
             }
         }
@@ -3678,27 +3701,23 @@ class AdvancedProductDesigner
         // 5. Keep pattern fills - preserve visual appearance
         // No need to remove pattern references since we're keeping patterns
 
-        // 6. Keep text elements but ensure they have fallback font-family (preserve visual style)
-        // Text elements are kept for visual consistency, but @font-face base64 is removed to prevent parser errors
+        // 6. Keep text elements exactly as-is (don't modify - preserve exact style)
+        // Text elements are kept exactly as they are for visual consistency
         $texts = $xpath->query('//svg:text');
-        $textCount = 0;
-        foreach ($texts as $text) {
-            // Ensure text has a fallback font-family if it was using custom font
-            $style = $text->getAttribute('style');
-            $fontFamily = $text->getAttribute('font-family');
-            
-            // If no font-family specified, add a safe fallback
-            if (empty($fontFamily) && (empty($style) || stripos($style, 'font-family') === false)) {
-                $text->setAttribute('font-family', 'Arial, sans-serif');
-            }
-            $textCount++;
-        }
-        if ($textCount > 0) {
-            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Kept %d text elements (styles preserved, @font-face base64 removed)', $order_id, $textCount));
+        if ($texts->length > 0) {
+            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Kept %d text elements (exact styles preserved)', $order_id, $texts->length));
         }
 
-        // 7. Flatten nested SVG elements - IMPORTANT: preserve position and scale
+        // 7. Keep nested SVG elements as-is (don't flatten - preserve exact structure for CorelDRAW)
+        // CorelDRAW can handle nested SVGs, so we keep them to preserve exact visual appearance
+        // Only log for debugging
         $nestedSvgs = $xpath->query('//svg:svg[parent::*]');
+        if ($nestedSvgs->length > 0) {
+            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Keeping %d nested SVG elements (preserving structure)', $order_id, $nestedSvgs->length));
+        }
+        
+        // OLD CODE - Flattening nested SVGs (DISABLED to preserve exact structure)
+        /*
         foreach ($nestedSvgs as $nested) {
             $g = $dom->createElement('g');
             
@@ -3769,8 +3788,7 @@ class AdvancedProductDesigner
             }
             $nested->parentNode->replaceChild($g, $nested);
         }
-        
-        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Flattened %d nested SVG elements', $order_id, $nestedSvgs->length));
+        */
 
         // 8. Add metadata for tracking
         $metadata = $dom->createElement('metadata');
@@ -3803,14 +3821,8 @@ class AdvancedProductDesigner
             }
         }
         
-        // 7.6. Remove any remaining <defs> that only contain removed content (patterns, fonts, etc)
-        $defsElements = $xpath->query('//svg:defs');
-        foreach ($defsElements as $defs) {
-            // If defs is empty or only contains removed elements, remove it
-            if ($defs->childNodes->length === 0) {
-                $defs->parentNode->removeChild($defs);
-            }
-        }
+        // 7.6. Keep all <defs> elements (preserve structure - CorelDRAW can handle them)
+        // Don't remove defs even if empty - preserve exact structure
 
         // 8. Restore and ensure proper dimensions for the root SVG element
         // This prevents the cut-ready SVG from being scaled differently than the original
@@ -3906,14 +3918,8 @@ class AdvancedProductDesigner
         // Clean up any empty style attributes
         $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
         
-        // Add DOCTYPE for SVG 1.1 (like CorelDRAW exports) - insert after XML declaration
-        if (strpos($clean_svg, '<!DOCTYPE') === false) {
-            $clean_svg = preg_replace(
-                '/(<\?xml[^?]*\?>)/i',
-                '$1' . "\n" . '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">',
-                $clean_svg
-            );
-        }
+        // Don't add DOCTYPE - CorelDRAW doesn't require it and it might cause issues
+        // Keep the SVG as simple as possible, just like the Original SVG
         
         // Ensure UTF-8 encoding in XML declaration (browsers require UTF-8, not UTF-16)
         if (!preg_match('/encoding="UTF-8"/i', $clean_svg)) {
