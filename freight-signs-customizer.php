@@ -3623,81 +3623,78 @@ class AdvancedProductDesigner
             $originalHeight
         ));
 
-        // 1. Remove all <image> elements (embedded textures/photos)
-        $images = $xpath->query('//svg:image');
-        foreach ($images as $image) {
-            $image->parentNode->removeChild($image);
-        }
+        // 1. Keep <image> elements for visual consistency (only remove if they cause issues)
+        // Images are part of the design and should be preserved
+        // Note: Some cutting machines may not support images, but we keep them for visual consistency
 
-        // 2. Handle material stroke patterns - for cut-ready, strokes with patterns should be removed
-        // The pattern strokes are decorative (material texture outline) and not needed for cutting
-        $strokeRefs = $xpath->query('//*[@stroke and contains(@stroke, "url(#")]');
-        $stroke_count = 0;
-        foreach ($strokeRefs as $elem) {
-            $stroke = $elem->getAttribute('stroke');
-            if (preg_match('/url\(#.*pattern.*\)/i', $stroke)) {
-                // Remove the decorative pattern stroke - it causes blur/artifacts in cut files
-                $elem->setAttribute('stroke', 'none');
-                $elem->removeAttribute('stroke-width');
-                $stroke_count++;
-                // Log what we found for debugging
-                error_log(sprintf(
-                    'APD Cut-Ready SVG - Order #%d: Removed pattern stroke on <%s> element',
-                    $order_id,
-                    $elem->nodeName
-                ));
-            }
-        }
-        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d pattern strokes', $order_id, $stroke_count));
+        // 2. Keep all stroke patterns for visual consistency (preserve all styles)
+        // Pattern strokes are part of the design and should be preserved to match Original SVG
         
-        // 3. Remove all <style> elements containing @font-face (CorelDRAW doesn't support base64 fonts)
+        // 3. Remove ONLY @font-face base64 from styles (keep other styles intact for visual consistency)
+        // CorelDRAW parser breaks on base64 fonts, but we keep text elements and other styles
         $styles = $xpath->query('//svg:style');
         foreach ($styles as $style) {
             $styleContent = $style->textContent;
-            // Remove style elements that contain @font-face or base64 fonts
-            if (stripos($styleContent, '@font-face') !== false || 
-                stripos($styleContent, 'base64') !== false ||
-                stripos($styleContent, 'data:application/x-font') !== false ||
-                stripos($styleContent, 'data:font') !== false) {
-                $style->parentNode->removeChild($style);
-                error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed @font-face style element', $order_id));
+            // Check if this style contains @font-face with base64
+            if (stripos($styleContent, '@font-face') !== false && 
+                (stripos($styleContent, 'base64') !== false ||
+                 stripos($styleContent, 'data:application/x-font') !== false ||
+                 stripos($styleContent, 'data:font') !== false)) {
+                // Remove only @font-face rules with base64, keep other CSS rules
+                // Match @font-face blocks that contain base64 (can span multiple lines)
+                $cleanedContent = preg_replace(
+                    '/@font-face\s*\{[^}]*url\s*\([^)]*base64[^)]*\)[^}]*\}/is',  // Remove @font-face with base64
+                    '',
+                    $styleContent
+                );
+                // Also remove any standalone @font-face blocks (in case base64 is elsewhere)
+                $cleanedContent = preg_replace(
+                    '/@font-face\s*\{[^}]*data:application\/x-font[^}]*\}/is',  // Remove @font-face with data:application/x-font
+                    '',
+                    $cleanedContent
+                );
+                // Clean up multiple consecutive newlines/whitespace
+                $cleanedContent = preg_replace('/\n\s*\n\s*\n/', "\n\n", $cleanedContent);
+                $cleanedContent = trim($cleanedContent);
+                
+                // If there's still useful CSS left, keep the style element with cleaned content
+                if (!empty($cleanedContent) && strlen($cleanedContent) > 10) {
+                    // Update style content - DOMDocument handles CDATA automatically
+                    $style->nodeValue = '';
+                    $style->textContent = $cleanedContent;
+                    error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed @font-face base64, kept other styles', $order_id));
+                } else {
+                    // If only @font-face was in this style, remove the entire style element
+                    $style->parentNode->removeChild($style);
+                    error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed style element (only contained @font-face)', $order_id));
+                }
             }
         }
 
-        // 4. Remove all <pattern> elements (used for textures)
-        $patterns = $xpath->query('//svg:pattern');
-        foreach ($patterns as $pattern) {
-            $pattern->parentNode->removeChild($pattern);
-        }
+        // 4. Keep <pattern> elements for visual consistency (preserve textures/styles)
+        // Patterns are part of the design style and should be preserved
+        // Note: Some cutting machines may not support patterns, but we keep them for visual consistency
+        
+        // 5. Keep pattern fills - preserve visual appearance
+        // No need to remove pattern references since we're keeping patterns
 
-        // 5. Remove elements that reference removed patterns in FILL only
-        $fillRefs = $xpath->query('//*[@fill and contains(@fill, "url(#")]');
-        foreach ($fillRefs as $elem) {
-            $fill = $elem->getAttribute('fill');
-            if (preg_match('/url\(#.*pattern.*\)/i', $fill)) {
-                // Change to solid color or remove fill
-                $elem->setAttribute('fill', 'none');
-            }
-        }
-
-        // 6. Remove or convert text elements (CorelDRAW needs paths, not fonts)
-        // Since we removed fonts, text won't render correctly - remove text elements
+        // 6. Keep text elements but ensure they have fallback font-family (preserve visual style)
+        // Text elements are kept for visual consistency, but @font-face base64 is removed to prevent parser errors
         $texts = $xpath->query('//svg:text');
         $textCount = 0;
         foreach ($texts as $text) {
-            // Remove text elements since fonts are removed and CorelDRAW needs paths
-            $text->parentNode->removeChild($text);
+            // Ensure text has a fallback font-family if it was using custom font
+            $style = $text->getAttribute('style');
+            $fontFamily = $text->getAttribute('font-family');
+            
+            // If no font-family specified, add a safe fallback
+            if (empty($fontFamily) && (empty($style) || stripos($style, 'font-family') === false)) {
+                $text->setAttribute('font-family', 'Arial, sans-serif');
+            }
             $textCount++;
         }
         if ($textCount > 0) {
-            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d text elements (fonts not supported in CorelDRAW)', $order_id, $textCount));
-            $comment = $dom->createComment(' NOTE: Text elements were removed. Use path-based designs for cutting machines. ');
-            $root = $dom->documentElement;
-            if ($root->firstChild) {
-                $root->insertBefore($comment, $root->firstChild);
-            } else {
-                $root->appendChild($comment);
-            }
+            error_log(sprintf('APD Cut-Ready SVG - Order #%d: Kept %d text elements (styles preserved, @font-face base64 removed)', $order_id, $textCount));
         }
 
         // 7. Flatten nested SVG elements - IMPORTANT: preserve position and scale
@@ -3778,7 +3775,7 @@ class AdvancedProductDesigner
         // 8. Add metadata for tracking
         $metadata = $dom->createElement('metadata');
         $metadata->nodeValue = sprintf(
-            'Cut-ready SVG processed from Order #%d on %s. Optimized for CorelDRAW/cutting machines. Material outlines preserved as black strokes.',
+            'Cut-ready SVG processed from Order #%d on %s. Styles preserved from Original SVG. Only @font-face base64 removed for CorelDRAW compatibility.',
             $order_id,
             current_time('Y-m-d H:i:s')
         );
