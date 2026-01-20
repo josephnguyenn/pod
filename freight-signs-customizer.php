@@ -3644,41 +3644,49 @@ class AdvancedProductDesigner
                  stripos($styleContent, 'data:font') !== false)) {
                 
                 // Remove @font-face blocks with base64 - handle very long base64 strings
-                // The base64 data can be extremely long, so we need to match everything from @font-face to the closing brace
-                // Use a pattern that matches @font-face followed by any content until we find the closing brace
-                // Since base64 can contain any characters, we match everything non-greedily until }
+                // The base64 data can be extremely long (hundreds of thousands of characters)
+                // We need to match from @font-face to the closing brace, handling any content in between
                 
-                // First, try to match the entire @font-face block including the very long base64
-                // Pattern: @font-face{...} where ... can contain base64 and be very long
+                // Strategy: Match @font-face followed by opening brace, then match everything
+                // until we find the closing brace. Since base64 can be very long, we use
+                // a pattern that matches any character including newlines until we find }
+                
+                // Pattern 1: Match @font-face{...} where ... contains base64
+                // Use DOTALL flag (s) to match newlines, and non-greedy (*?) to match until first }
                 $cleanedContent = preg_replace(
-                    '/@font-face\s*\{[^}]*base64[^}]*\}/is',
+                    '/@font-face\s*\{[^}]*?base64[^}]*?\}/is',
                     '',
                     $styleContent
                 );
                 
-                // If the above didn't work (base64 might span multiple lines or have nested braces),
-                // try a more aggressive pattern that matches everything until we find a closing brace
-                // This handles cases where base64 data is extremely long
+                // Pattern 2: More aggressive - match @font-face{...} where ... contains data:application/x-font
                 $cleanedContent = preg_replace(
-                    '/@font-face\s*\{[^}]*data:application\/x-font[^}]*\}/is',
+                    '/@font-face\s*\{[^}]*?data:application\/x-font[^}]*?\}/is',
                     '',
                     $cleanedContent
                 );
                 
-                // Also catch @font-face blocks with data:font
+                // Pattern 3: Match @font-face{...} where ... contains data:font
                 $cleanedContent = preg_replace(
-                    '/@font-face\s*\{[^}]*data:font[^}]*\}/is',
+                    '/@font-face\s*\{[^}]*?data:font[^}]*?\}/is',
                     '',
                     $cleanedContent
                 );
                 
-                // If still not removed, try matching the entire style content if it's mostly @font-face
-                // This is a fallback for very complex cases
+                // Pattern 4: If base64 is extremely long, the above might not work because [^}] 
+                // doesn't match newlines. Use a more aggressive pattern with DOTALL
+                // Match @font-face followed by opening brace, then ANY characters (including newlines)
+                // until we find a closing brace, but only if base64 is present
                 if (stripos($cleanedContent, '@font-face') !== false && 
                     (stripos($cleanedContent, 'base64') !== false || stripos($cleanedContent, 'data:application/x-font') !== false)) {
-                    // Try to match from @font-face to the end of the style block
+                    // Use DOTALL mode (s flag) to match newlines, and match everything until }
                     $cleanedContent = preg_replace(
-                        '/@font-face[^}]*base64.*?\}/is',
+                        '/@font-face\s*\{.*?base64.*?\}/is',
+                        '',
+                        $cleanedContent
+                    );
+                    $cleanedContent = preg_replace(
+                        '/@font-face\s*\{.*?data:application\/x-font.*?\}/is',
                         '',
                         $cleanedContent
                     );
