@@ -3768,7 +3768,7 @@ class AdvancedProductDesigner
             $svgRoot->getAttribute('height')
         ));
 
-        // 9. Clean up and return with UTF-16 encoding
+        // 9. Clean up and return with UTF-8 encoding (browsers require UTF-8)
         $clean_svg = $dom->saveXML();
         
         // Apply the common XML fixes to the output as well
@@ -3790,6 +3790,11 @@ class AdvancedProductDesigner
         // Remove orphaned colons at the end of attribute names
         $clean_svg = preg_replace('/\s+([a-zA-Z-]+):="/', ' $1="', $clean_svg);
         
+        // Fix common SVG attribute name issues (must be camelCase, not lowercase)
+        $clean_svg = preg_replace('/\spreserveaspectratio=/i', ' preserveAspectRatio=', $clean_svg);
+        $clean_svg = preg_replace('/\sviewbox=/i', ' viewBox=', $clean_svg);
+        $clean_svg = preg_replace('/\sxmlns:xlink=/i', ' xmlns:xlink=', $clean_svg);
+        
         // Clean up any empty style attributes
         $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
         
@@ -3802,20 +3807,16 @@ class AdvancedProductDesigner
             );
         }
         
-        // Ensure UTF-16 encoding in XML declaration
-        if (!preg_match('/encoding="UTF-16"/i', $clean_svg)) {
-            $clean_svg = preg_replace('/encoding="[^"]+"/i', 'encoding="UTF-16"', $clean_svg);
+        // Ensure UTF-8 encoding in XML declaration (browsers require UTF-8, not UTF-16)
+        if (!preg_match('/encoding="UTF-8"/i', $clean_svg)) {
+            $clean_svg = preg_replace('/encoding="[^"]+"/i', 'encoding="UTF-8"', $clean_svg);
             if (!preg_match('/encoding=/i', $clean_svg)) {
-                $clean_svg = preg_replace('/<\?xml version="[^"]+"\?>/i', '<?xml version="1.0" encoding="UTF-16"?>', $clean_svg);
+                $clean_svg = preg_replace('/<\?xml version="[^"]+"\?>/i', '<?xml version="1.0" encoding="UTF-8"?>', $clean_svg);
             }
         }
         
-        // Convert to UTF-16LE (Little Endian) for maximum CorelDRAW compatibility
-        $clean_svg = mb_convert_encoding($clean_svg, 'UTF-16LE', 'UTF-8');
-        
-        // Add BOM (Byte Order Mark) for UTF-16LE
-        $bom = chr(255) . chr(254);
-        $clean_svg = $bom . $clean_svg;
+        // Keep as UTF-8 for browser compatibility (browsers cannot read UTF-16 encoded SVG files)
+        // Note: CorelDRAW can still open UTF-8 SVG files, so this maintains compatibility with both
         
         return $clean_svg;
     }
@@ -8332,15 +8333,25 @@ class AdvancedProductDesigner
             return;
         }
 
-        // Validate SVG format
-        if (!preg_match('/^data:image\\/svg\\+xml;base64,/', $svg_data_url)) {
-            wp_send_json_error(array('message' => 'Invalid SVG format'));
+        // Validate SVG format - handle both base64 and URL-encoded formats
+        if (preg_match('/^data:image\\/svg\\+xml;base64,/', $svg_data_url)) {
+            // Extract base64 data
+            $svg_content = substr($svg_data_url, strlen('data:image/svg+xml;base64,'));
+            $svg_content = base64_decode($svg_content);
+        } elseif (preg_match('/^data:image\\/svg\\+xml(;charset=[^,]+)?,/', $svg_data_url)) {
+            // Handle URL-encoded format: data:image/svg+xml,<encoded content>
+            // Extract the part after the comma
+            $parts = explode(',', $svg_data_url, 2);
+            if (count($parts) === 2) {
+                $svg_content = urldecode($parts[1]);
+            } else {
+                wp_send_json_error(array('message' => 'Invalid SVG format: URL-encoded data missing'));
+                return;
+            }
+        } else {
+            wp_send_json_error(array('message' => 'Invalid SVG format: expected data:image/svg+xml URL'));
             return;
         }
-
-        // Extract base64 data
-        $svg_content = substr($svg_data_url, strlen('data:image/svg+xml;base64,'));
-        $svg_content = base64_decode($svg_content);
 
         if (!$svg_content) {
             wp_send_json_error(array('message' => 'Failed to decode SVG'));
