@@ -3186,10 +3186,21 @@ class AdvancedProductDesigner
             return;
         }
 
-        // Save the clean SVG as a file
+        // Save the clean SVG as a file (ensure UTF-8 encoding)
         $upload_dir = wp_upload_dir();
         $filename = 'order-' . $order_id . '-cut-ready-' . time() . '.svg';
         $filepath = $upload_dir['path'] . '/' . $filename;
+        
+        // Ensure the content is UTF-8 before saving
+        if (function_exists('mb_detect_encoding')) {
+            $detected = mb_detect_encoding($clean_svg, ['UTF-8', 'UTF-16', 'UTF-16LE', 'UTF-16BE'], true);
+            if ($detected && $detected !== 'UTF-8') {
+                $clean_svg = mb_convert_encoding($clean_svg, 'UTF-8', $detected);
+            }
+        }
+        
+        // Remove any BOM before saving
+        $clean_svg = ltrim($clean_svg, "\xEF\xBB\xBF\xFF\xFE\xFE\xFF");
         
         if (!file_put_contents($filepath, $clean_svg)) {
             wp_send_json_error('Failed to save processed SVG file');
@@ -3253,9 +3264,10 @@ class AdvancedProductDesigner
 
         // Load SVG with DOMDocument
         libxml_use_internal_errors(true);
-        $dom = new DOMDocument('1.0', 'UTF-8'); // Start with UTF-8, convert to UTF-16 at end
+        $dom = new DOMDocument('1.0', 'UTF-8'); // Use UTF-8 encoding (browsers require UTF-8)
         $dom->preserveWhiteSpace = false;
         $dom->formatOutput = true;
+        $dom->encoding = 'UTF-8'; // Explicitly set encoding
         
         // Fix common XML issues BEFORE first parse attempt
         $svg_content = $this->fix_common_xml_issues($svg_content);
@@ -3771,6 +3783,11 @@ class AdvancedProductDesigner
         // 9. Clean up and return with UTF-8 encoding (browsers require UTF-8)
         $clean_svg = $dom->saveXML();
         
+        // Remove any BOM that might have been added
+        $clean_svg = preg_replace('/^\xEF\xBB\xBF/', '', $clean_svg);
+        $clean_svg = preg_replace('/^\xFF\xFE/', '', $clean_svg);
+        $clean_svg = preg_replace('/^\xFE\xFF/', '', $clean_svg);
+        
         // Apply the common XML fixes to the output as well
         // This catches any corruption that happened during DOMDocument processing
         $clean_svg = $this->fix_common_xml_issues($clean_svg);
@@ -3791,9 +3808,11 @@ class AdvancedProductDesigner
         $clean_svg = preg_replace('/\s+([a-zA-Z-]+):="/', ' $1="', $clean_svg);
         
         // Fix common SVG attribute name issues (must be camelCase, not lowercase)
+        // These must be fixed in the SVG root element and all nested SVG elements
+        $clean_svg = preg_replace('/(<svg[^>]*)\spreserveaspectratio=/i', '$1 preserveAspectRatio=', $clean_svg);
+        $clean_svg = preg_replace('/(<svg[^>]*)\sviewbox=/i', '$1 viewBox=', $clean_svg);
         $clean_svg = preg_replace('/\spreserveaspectratio=/i', ' preserveAspectRatio=', $clean_svg);
         $clean_svg = preg_replace('/\sviewbox=/i', ' viewBox=', $clean_svg);
-        $clean_svg = preg_replace('/\sxmlns:xlink=/i', ' xmlns:xlink=', $clean_svg);
         
         // Clean up any empty style attributes
         $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
@@ -3812,6 +3831,18 @@ class AdvancedProductDesigner
             $clean_svg = preg_replace('/encoding="[^"]+"/i', 'encoding="UTF-8"', $clean_svg);
             if (!preg_match('/encoding=/i', $clean_svg)) {
                 $clean_svg = preg_replace('/<\?xml version="[^"]+"\?>/i', '<?xml version="1.0" encoding="UTF-8"?>', $clean_svg);
+            }
+        }
+        
+        // Ensure the string is UTF-8 encoded (remove any UTF-16 BOM or encoding issues)
+        // Remove any remaining BOM characters
+        $clean_svg = ltrim($clean_svg, "\xEF\xBB\xBF\xFF\xFE\xFE\xFF");
+        
+        // Convert to UTF-8 if it's not already (safety check)
+        if (function_exists('mb_detect_encoding')) {
+            $detected = mb_detect_encoding($clean_svg, ['UTF-8', 'UTF-16', 'UTF-16LE', 'UTF-16BE'], true);
+            if ($detected && $detected !== 'UTF-8') {
+                $clean_svg = mb_convert_encoding($clean_svg, 'UTF-8', $detected);
             }
         }
         
