@@ -3322,8 +3322,9 @@ class AdvancedProductDesigner
                 // Third attempt: Use regex to aggressively clean the SVG
                 error_log('APD SVG Processing - Order #' . $order_id . ': Attempting aggressive regex cleanup');
                 
-                // Remove all style attributes entirely as they're often the source of issues
-                $svg_content_cleaned = preg_replace('/\s+style="[^"]*"/', '', $svg_content);
+                // NOTE: We do NOT remove style attributes here - they must be preserved
+                // Only remove malformed attributes, not valid style attributes
+                // Style attributes will be preserved and restored later in the process
                 
                 // Fix path d attributes with line breaks or special chars
                 $svg_content_cleaned = preg_replace_callback(
@@ -3977,8 +3978,23 @@ class AdvancedProductDesigner
         $clean_svg = preg_replace('/\spreserveaspectratio=/i', ' preserveAspectRatio=', $clean_svg);
         $clean_svg = preg_replace('/\sviewbox=/i', ' viewBox=', $clean_svg);
         
-        // Clean up any empty style attributes
+        // Clean up any empty style attributes (only empty ones, preserve all non-empty styles)
+        // This only removes style="" but keeps all style="..." with actual content
         $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
+        
+        // CRITICAL: After all regex cleanup, restore ALL inline styles to ensure nothing was lost
+        // This is a final safety check to preserve all inline styles from Original SVG
+        $allElementsFinal = $xpath->query('//*');
+        foreach ($allElementsFinal as $element) {
+            $elementId = $element->getNodePath();
+            if (isset($originalStyles[$elementId]) && $originalStyles[$elementId]) {
+                // Always restore original style to ensure exact match with Original SVG
+                $element->setAttribute('style', $originalStyles[$elementId]);
+            }
+        }
+        
+        // Re-save after restoring styles
+        $clean_svg = $dom->saveXML();
         
         // Don't add DOCTYPE - CorelDRAW doesn't require it and it might cause issues
         // Keep the SVG as simple as possible, just like the Original SVG
