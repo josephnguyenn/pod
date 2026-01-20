@@ -3999,11 +3999,34 @@ class AdvancedProductDesigner
         $clean_svg = preg_replace('/\s+[a-zA-Z-]+="="/', '', $clean_svg);
         $clean_svg = preg_replace('/\s+[a-zA-Z-]+=""/', '', $clean_svg);
         
-        // Fix any remaining malformed attributes (like stroke-width: becoming an invalid QName)
+        // CRITICAL: Fix malformed style attributes that got broken during processing
+        // Pattern: style="...stroke=" url(" - fix broken style attributes where url() got split
+        // This happens when style processing incorrectly breaks CSS url() functions
+        // 
+        // Fix pattern 1: style="...stroke=" url(#pattern)" -> style="...stroke: url(#pattern)"
+        // This fixes when url() got split outside the style attribute
+        $clean_svg = preg_replace('/style="([^"]*?)(stroke|fill|background|background-image)="\s*url\s*\(([^)]+)\)"\s*([a-z-]+)="/i', 'style="$1$2: url($3)" $4="', $clean_svg);
+        
+        // Fix pattern 2: style="...stroke=" url(" -> style="...stroke: url("
+        // This fixes when url() got split but is still inside quotes
+        $clean_svg = preg_replace('/style="([^"]*?)(stroke|fill|background|background-image)="\s*url\s*\(/i', 'style="$1$2: url(', $clean_svg);
+        
+        // Fix pattern 3: style="...stroke=" url(#pattern)" -> style="...stroke: url(#pattern)"
+        // This fixes when url() got split with pattern reference
+        $clean_svg = preg_replace('/style="([^"]*?)(stroke|fill)="\s*url\s*\(([^)]+)\)/i', 'style="$1$2: url($3)', $clean_svg);
+        
+        // Fix attributes that got broken (like stroke-width: becoming an invalid QName)
         // These can happen when style properties get incorrectly parsed
-        $clean_svg = preg_replace('/\s+stroke-width:(?=[^"]*(?:"|$))/', ' stroke-width="', $clean_svg);
-        $clean_svg = preg_replace('/\s+fill:(?=[^"]*(?:"|$))/', ' fill="', $clean_svg);
-        $clean_svg = preg_replace('/\s+stroke:(?=[^"]*(?:"|$))/', ' stroke="', $clean_svg);
+        // But be careful not to break valid CSS url() functions
+        $clean_svg = preg_replace('/\s+stroke-width:(?=[^"]*(?:"|$))(?![^"]*url\s*\()/', ' stroke-width="', $clean_svg);
+        $clean_svg = preg_replace('/\s+fill:(?=[^"]*(?:"|$))(?![^"]*url\s*\()/', ' fill="', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke:(?=[^"]*(?:"|$))(?![^"]*url\s*\()/', ' stroke="', $clean_svg);
+        
+        // CRITICAL: Fix broken style attributes where url() got split and created invalid "url" attribute
+        // Pattern: style="...stroke=" url(#pattern)" d="..." -> style="...stroke: url(#pattern)" d="..."
+        // Also fix: stroke=" url(" -> remove the broken stroke attribute and fix style
+        $clean_svg = preg_replace('/\s+stroke="\s*url\s*\(/i', '', $clean_svg); // Remove broken stroke=" url("
+        $clean_svg = preg_replace('/\s+fill="\s*url\s*\(/i', '', $clean_svg); // Remove broken fill=" url("
         
         // Remove any attribute that has a colon as its name (invalid XML)
         $clean_svg = preg_replace('/\s+[a-zA-Z-]+:[a-zA-Z-]+:[^=]*="[^"]*"/', '', $clean_svg);
@@ -4207,38 +4230,10 @@ class AdvancedProductDesigner
             $svg_content
         );
         
-        // Sanitize style attributes - convert CSS property names to valid XML
-        // Replace hyphenated properties with camelCase equivalents
-        $svg_content = preg_replace_callback(
-            '/style="([^"]*)"/',
-            function($matches) {
-                $style = $matches[1];
-                // Convert common hyphenated CSS properties to camelCase
-                $style = str_replace('shape-rendering', 'shapeRendering', $style);
-                $style = str_replace('text-rendering', 'textRendering', $style);
-                $style = str_replace('image-rendering', 'imageRendering', $style);
-                $style = str_replace('color-interpolation', 'colorInterpolation', $style);
-                $style = str_replace('fill-rule', 'fillRule', $style);
-                $style = str_replace('clip-rule', 'clipRule', $style);
-                $style = str_replace('stroke-width', 'strokeWidth', $style);
-                $style = str_replace('stroke-linecap', 'strokeLinecap', $style);
-                $style = str_replace('stroke-linejoin', 'strokeLinejoin', $style);
-                $style = str_replace('stroke-miterlimit', 'strokeMiterlimit', $style);
-                $style = str_replace('stroke-dasharray', 'strokeDasharray', $style);
-                $style = str_replace('stroke-dashoffset', 'strokeDashoffset', $style);
-                $style = str_replace('stroke-opacity', 'strokeOpacity', $style);
-                $style = str_replace('fill-opacity', 'fillOpacity', $style);
-                $style = str_replace('font-family', 'fontFamily', $style);
-                $style = str_replace('font-size', 'fontSize', $style);
-                $style = str_replace('font-weight', 'fontWeight', $style);
-                $style = str_replace('font-style', 'fontStyle', $style);
-                $style = str_replace('text-anchor', 'textAnchor', $style);
-                $style = str_replace('dominant-baseline', 'dominantBaseline', $style);
-                $style = str_replace('paint-order', 'paintOrder', $style);
-                return 'style="' . $style . '"';
-            },
-            $svg_content
-        );
+        // CRITICAL: DO NOT modify style attributes - they must be preserved 100% identical
+        // The previous code was converting CSS properties to camelCase, but this breaks
+        // CSS syntax like url() functions. Style attributes should remain exactly as in Original SVG.
+        // Only fix malformed style attributes (broken quotes, etc.) but preserve content exactly
         
         // Escape or remove potentially problematic base64 href attributes in images
         // Match href="data:image..." and ensure it's properly formatted
@@ -4262,14 +4257,29 @@ class AdvancedProductDesigner
         
         // Fix attributes with newlines inside them (common XMLSerializer issue)
         // This pattern finds attributes and removes any internal line breaks
+        // CRITICAL: Exclude style attributes - they must be preserved exactly
         $svg_content = preg_replace_callback(
-            '/(\s[a-zA-Z][a-zA-Z0-9-]*=")([^"]*)(")/s',
+            '/(\s(?!style=)[a-zA-Z][a-zA-Z0-9-]*=")([^"]*)(")/s',
             function($matches) {
                 $attr_value = $matches[2];
                 // Remove line breaks and excessive whitespace inside attribute values
                 $attr_value = preg_replace('/[\r\n]+/', ' ', $attr_value);
                 $attr_value = preg_replace('/\s+/', ' ', $attr_value);
                 return $matches[1] . trim($attr_value) . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix style attributes separately - preserve CSS syntax exactly
+        // Only normalize whitespace, don't modify CSS content
+        $svg_content = preg_replace_callback(
+            '/style="([^"]*)"/',
+            function($matches) {
+                $style = $matches[1];
+                // Only normalize whitespace, preserve all CSS syntax including url()
+                $style = preg_replace('/[\r\n]+/', ' ', $style);
+                $style = preg_replace('/\s+/', ' ', $style);
+                return 'style="' . trim($style) . '"';
             },
             $svg_content
         );
