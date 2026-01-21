@@ -68,7 +68,18 @@ class APD_Autoloader
             'template-service',
             'pricing-service',
             'apd-debug-logger',
-            'apd-health-check'
+            'apd-health-check',
+            'admin-pages',
+            'material-manager',
+            'template-manager',
+            'rest-api',
+            'activation',
+            'ajax-handlers',
+            'frontend-shortcodes',
+            'svg-processor',
+            'order-admin-handler',
+            'email-tester',
+            'meta-boxes'
         );
 
         foreach ($services as $service) {

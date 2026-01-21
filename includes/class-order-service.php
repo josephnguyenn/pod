@@ -35,8 +35,8 @@ class APD_Order_Service
      */
     public function __construct($cart_service = null, $email_service = null)
     {
-        $this->cart_service = $cart_service ?? new APD_Cart_Service();
-        $this->email_service = $email_service ?? new APD_Email_Service();
+        $this->cart_service = $cart_service ? $cart_service : new APD_Cart_Service();
+        $this->email_service = $email_service ? $email_service : new APD_Email_Service();
     }
 
     /**
@@ -141,8 +141,8 @@ class APD_Order_Service
 
         // Calculate totals
         foreach ($cart_items as &$item) {
-            $price = isset($item['price']) ? floatval($item['price']) : floatval($item['product_price'] ?? APD_Config::DEFAULT_PRODUCT_PRICE);
-            $qty = max(1, intval($item['quantity'] ?? 1));
+            $price = isset($item['price']) ? floatval($item['price']) : (floatval(isset($item['product_price']) ? $item['product_price'] : APD_Config::DEFAULT_PRODUCT_PRICE));
+            $qty = max(1, intval(isset($item['quantity']) ? $item['quantity'] : 1));
             $item['total'] = $price * $qty;
             $order_total += $item['total'];
         }
@@ -249,43 +249,43 @@ class APD_Order_Service
         $variant_size = '';
         if (!empty($first_item['customization_data']['variants'])) {
             $variants = $first_item['customization_data']['variants'];
-            $variant_material = $variants['material'] ?? '';
-            $variant_size = $variants['size'] ?? '';
+            $variant_material = isset($variants['material']) ? $variants['material'] : '';
+            $variant_size = isset($variants['size']) ? $variants['size'] : '';
         }
 
         $meta = array(
             // Product Information
-            'product_id' => $first_item['product_id'] ?? '',
-            'product_name' => $first_item['product_name'] ?? 'Custom Product',
+            'product_id' => isset($first_item['product_id']) ? $first_item['product_id'] : '',
+            'product_name' => isset($first_item['product_name']) ? $first_item['product_name'] : 'Custom Product',
             'product_price' => isset($first_item['price']) ? floatval($first_item['price']) : APD_Config::DEFAULT_PRODUCT_PRICE,
             'quantity' => isset($first_item['quantity']) ? intval($first_item['quantity']) : 1,
             'total_amount' => $order_total,
 
             // Design Specifications
-            'print_color' => $first_item['print_color'] ?? '',
-            'vinyl_material' => $first_item['vinyl_material'] ?? $variant_material,
-            'material_texture_url' => $first_item['material_texture_url'] ?? '',
+            'print_color' => isset($first_item['print_color']) ? $first_item['print_color'] : '',
+            'vinyl_material' => isset($first_item['vinyl_material']) ? $first_item['vinyl_material'] : $variant_material,
+            'material_texture_url' => isset($first_item['material_texture_url']) ? $first_item['material_texture_url'] : '',
 
             // Template Data
-            'text_fields' => $first_item['text_fields'] ?? array(),
-            'template_data' => $first_item['template_data'] ?? array(),
-            'fields_display' => $first_item['fields_display'] ?? array(),
-            'template_fields_array' => $first_item['template_fields_array'] ?? array(),
+            'text_fields' => isset($first_item['text_fields']) ? $first_item['text_fields'] : array(),
+            'template_data' => isset($first_item['template_data']) ? $first_item['template_data'] : array(),
+            'fields_display' => isset($first_item['fields_display']) ? $first_item['fields_display'] : array(),
+            'template_fields_array' => isset($first_item['template_fields_array']) ? $first_item['template_fields_array'] : array(),
 
             // Visual References
-            'customization_image_url' => $first_item['customization_image_url'] ?? '',
-            'preview_image_url' => $first_item['preview_image_url'] ?? '',
-            'preview_image_png' => $first_item['preview_image_png'] ?? '',
-            'preview_image_svg' => $first_item['preview_image_svg'] ?? '',
+            'customization_image_url' => isset($first_item['customization_image_url']) ? $first_item['customization_image_url'] : '',
+            'preview_image_url' => isset($first_item['preview_image_url']) ? $first_item['preview_image_url'] : '',
+            'preview_image_png' => isset($first_item['preview_image_png']) ? $first_item['preview_image_png'] : '',
+            'preview_image_svg' => isset($first_item['preview_image_svg']) ? $first_item['preview_image_svg'] : '',
 
             // Customer Information
             'customer_name' => sanitize_text_field($customer_data['customer_name']),
             'customer_email' => sanitize_email($customer_data['customer_email']),
             'customer_phone' => sanitize_text_field($customer_data['customer_phone']),
-            'customer_address' => sanitize_textarea_field($customer_data['customer_address'] ?? ''),
+            'customer_address' => sanitize_textarea_field(isset($customer_data['customer_address']) ? $customer_data['customer_address'] : ''),
 
             // Order Details
-            'payment_method' => sanitize_text_field($payment_data['payment_method'] ?? APD_Config::PAYMENT_METHOD_PAYPAL),
+            'payment_method' => sanitize_text_field(isset($payment_data['payment_method']) ? $payment_data['payment_method'] : APD_Config::PAYMENT_METHOD_PAYPAL),
             'order_date' => current_time('Y-m-d H:i:s'),
             'order_status' => 'apd_pending', // Use prefixed status to match registered statuses
 
@@ -294,10 +294,10 @@ class APD_Order_Service
             'cart_total' => $order_total,
 
             // Payment Details
-            'paypal_order_id' => sanitize_text_field($payment_data['paypal_order_id'] ?? ''),
-            'paypal_transaction_id' => sanitize_text_field($payment_data['paypal_transaction_id'] ?? ''),
-            'paypal_payer_id' => sanitize_text_field($payment_data['paypal_payer_id'] ?? ''),
-            'payment_status' => sanitize_text_field($payment_data['payment_status'] ?? 'completed'),
+            'paypal_order_id' => sanitize_text_field(isset($payment_data['paypal_order_id']) ? $payment_data['paypal_order_id'] : ''),
+            'paypal_transaction_id' => sanitize_text_field(isset($payment_data['paypal_transaction_id']) ? $payment_data['paypal_transaction_id'] : ''),
+            'paypal_payer_id' => sanitize_text_field(isset($payment_data['paypal_payer_id']) ? $payment_data['paypal_payer_id'] : ''),
+            'payment_status' => sanitize_text_field(isset($payment_data['payment_status']) ? $payment_data['payment_status'] : 'completed'),
 
             // Manufacturing Notes
             'manufacturing_notes' => $this->generate_manufacturing_notes($first_item),
@@ -318,10 +318,10 @@ class APD_Order_Service
         $notes = array();
 
         $notes[] = 'PRODUCT SPECIFICATIONS:';
-        $notes[] = '- Product: ' . ($item_data['product_name'] ?? 'Custom Product');
-        $notes[] = '- Quantity: ' . ($item_data['quantity'] ?? 1);
-        $notes[] = '- Print Color: ' . ($item_data['print_color'] ?? 'Black');
-        $notes[] = '- Material: ' . ($item_data['vinyl_material'] ?? 'Standard');
+        $notes[] = '- Product: ' . (isset($item_data['product_name']) ? $item_data['product_name'] : 'Custom Product');
+        $notes[] = '- Quantity: ' . (isset($item_data['quantity']) ? $item_data['quantity'] : 1);
+        $notes[] = '- Print Color: ' . (isset($item_data['print_color']) ? $item_data['print_color'] : 'Black');
+        $notes[] = '- Material: ' . (isset($item_data['vinyl_material']) ? $item_data['vinyl_material'] : 'Standard');
 
         // Text fields
         if (!empty($item_data['text_fields'])) {
@@ -329,7 +329,7 @@ class APD_Order_Service
             $notes[] = 'TEXT CONTENT:';
             foreach ($item_data['text_fields'] as $field_id => $value) {
                 if (is_array($value)) {
-                    $notes[] = '- ' . ($value['label'] ?? $field_id) . ': ' . ($value['value'] ?? '');
+                    $notes[] = '- ' . (isset($value['label']) ? $value['label'] : $field_id) . ': ' . (isset($value['value']) ? $value['value'] : '');
                 } else {
                     $notes[] = '- ' . ucwords(str_replace('_', ' ', $field_id)) . ': ' . $value;
                 }
@@ -342,7 +342,7 @@ class APD_Order_Service
             $notes[] = 'TEMPLATE ELEMENTS:';
             foreach ($item_data['template_data'] as $field_id => $value) {
                 if (is_array($value)) {
-                    $notes[] = '- ' . ($value['label'] ?? $field_id) . ': ' . ($value['value'] ?? '');
+                    $notes[] = '- ' . (isset($value['label']) ? $value['label'] : $field_id) . ': ' . (isset($value['value']) ? $value['value'] : '');
                 } else {
                     $notes[] = '- ' . ucwords(str_replace('_', ' ', $field_id)) . ': ' . $value;
                 }
@@ -457,8 +457,8 @@ class APD_Order_Service
             if (isset($item['total'])) {
                 $total += (float) $item['total'];
             } else {
-                $price = (float) ($item['price'] ?? $item['product_price'] ?? 0);
-                $qty = (int) ($item['quantity'] ?? 1);
+                $price = (float) (isset($item['price']) ? $item['price'] : (isset($item['product_price']) ? $item['product_price'] : 0));
+                $qty = (int) (isset($item['quantity']) ? $item['quantity'] : 1);
                 $total += $price * $qty;
             }
         }
@@ -475,7 +475,13 @@ class APD_Order_Service
      */
     private function get_meta_value($meta_array, $key)
     {
-        return $meta_array[$key][0] ?? $meta_array['_' . $key][0] ?? '';
+        if (isset($meta_array[$key][0])) {
+            return $meta_array[$key][0];
+        }
+        if (isset($meta_array['_' . $key][0])) {
+            return $meta_array['_' . $key][0];
+        }
+        return '';
     }
 
     /**

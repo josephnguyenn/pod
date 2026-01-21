@@ -28,7 +28,7 @@ class APD_Email_Service
      */
     public function __construct($template_service = null)
     {
-        $this->template_service = $template_service ?? new APD_Template_Service();
+        $this->template_service = $template_service ? $template_service : new APD_Template_Service();
     }
 
     /**
@@ -46,7 +46,7 @@ class APD_Email_Service
                 return false;
             }
 
-            $customer_email = $order_data['customer_email'] ?? '';
+            $customer_email = isset($order_data['customer_email']) ? $order_data['customer_email'] : '';
             if (empty($customer_email) || !is_email($customer_email)) {
                 error_log('APD Email Service - Invalid customer email for order #' . $order_id);
                 return false;
@@ -151,7 +151,7 @@ class APD_Email_Service
                 return false;
             }
 
-            $customer_email = $order_data['customer_email'] ?? '';
+            $customer_email = isset($order_data['customer_email']) ? $order_data['customer_email'] : '';
             if (empty($customer_email) || !is_email($customer_email)) {
                 return false;
             }
@@ -168,7 +168,7 @@ class APD_Email_Service
                 'shipped' => __('Order Shipped', 'advanced-product-designer'),
             );
 
-            $subject = sprintf('%s - #%d', $status_labels[$status_type] ?? __('Order Update', 'advanced-product-designer'), $order_id);
+            $subject = sprintf('%s - #%d', isset($status_labels[$status_type]) ? $status_labels[$status_type] : __('Order Update', 'advanced-product-designer'), $order_id);
             $message = $this->build_status_update_email($order_id, $order_data, $status_type);
 
             $headers = array(
@@ -219,9 +219,9 @@ class APD_Email_Service
 
             foreach ($cart_items as $item) {
                 $html .= '<tr>';
-                $html .= '<td style="padding: 10px; border: 1px solid #ddd;">' . esc_html($item['product_name'] ?? 'Product') . '</td>';
-                $html .= '<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">' . esc_html($item['quantity'] ?? 1) . '</td>';
-                $html .= '<td style="padding: 10px; text-align: right; border: 1px solid #ddd;">' . APD_Template_Service::format_price($item['total'] ?? 0) . '</td>';
+                $html .= '<td style="padding: 10px; border: 1px solid #ddd;">' . esc_html(isset($item['product_name']) ? $item['product_name'] : 'Product') . '</td>';
+                $html .= '<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">' . esc_html(isset($item['quantity']) ? $item['quantity'] : 1) . '</td>';
+                $html .= '<td style="padding: 10px; text-align: right; border: 1px solid #ddd;">' . APD_Template_Service::format_price(isset($item['total']) ? $item['total'] : 0) . '</td>';
                 $html .= '</tr>';
             }
 
@@ -298,7 +298,7 @@ class APD_Email_Service
 
         $html .= '<h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">' . sprintf(__('Order #%d Update', 'advanced-product-designer'), $order_id) . '</h1>';
         $html .= '<p style="font-size: 16px; line-height: 1.5; color: #666;">' . sprintf(__('Hi %s,', 'advanced-product-designer'), esc_html($order_data['customer_name'])) . '</p>';
-        $html .= '<p style="font-size: 16px; line-height: 1.5; color: #666;">' . ($status_messages[$status_type] ?? __('Your order status has been updated.', 'advanced-product-designer')) . '</p>';
+        $html .= '<p style="font-size: 16px; line-height: 1.5; color: #666;">' . (isset($status_messages[$status_type]) ? $status_messages[$status_type] : __('Your order status has been updated.', 'advanced-product-designer')) . '</p>';
 
         $html .= '<div style="background: #f8f8f8; padding: 20px; margin: 20px 0; border-radius: 5px;">';
         $html .= '<h2 style="color: #333; font-size: 20px; margin-top: 0;">' . sprintf(__('Order #%d', 'advanced-product-designer'), $order_id) . '</h2>';

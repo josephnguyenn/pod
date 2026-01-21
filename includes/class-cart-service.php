@@ -54,7 +54,14 @@ class APD_Cart_Service
             // Guest user: use cookie-based session ID
             if (!isset($_COOKIE['apd_cart_session'])) {
                 $session_id = wp_generate_password(32, false);
-                setcookie('apd_cart_session', $session_id, time() + self::CART_EXPIRATION, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                
+                // Only set cookie if headers haven't been sent yet
+                if (!headers_sent()) {
+                    setcookie('apd_cart_session', $session_id, time() + self::CART_EXPIRATION, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                } else {
+                    // Headers already sent, log for debugging but continue with session ID
+                    error_log('APD Cart Service - Cannot set cookie, headers already sent. Using session ID: ' . substr($session_id, 0, 10) . '...');
+                }
             } else {
                 $session_id = sanitize_text_field($_COOKIE['apd_cart_session']);
             }
@@ -140,8 +147,8 @@ class APD_Cart_Service
             'total' => $pricing['price'] * max(1, intval($quantity)),
             'customization_data' => $customization_data,
             'added_at' => current_time('Y-m-d H:i:s'),
-            'print_color' => $customization_data['print_color'] ?? '',
-            'vinyl_material' => $customization_data['vinyl_material'] ?? ''
+            'print_color' => isset($customization_data['print_color']) ? $customization_data['print_color'] : '',
+            'vinyl_material' => isset($customization_data['vinyl_material']) ? $customization_data['vinyl_material'] : ''
         );
 
         // Add to cart

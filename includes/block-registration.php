@@ -10,7 +10,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class APD_Block_Registration {
+if (!class_exists('APD_Block_Registration')) {
+    class APD_Block_Registration {
     
     public function __construct() {
         add_action('init', array($this, 'register_blocks'));
@@ -99,3 +100,4 @@ class APD_Block_Registration {
         return $shortcode_output;
     }
 }
+} // End if (!class_exists('APD_Block_Registration'))
