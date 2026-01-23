@@ -230,6 +230,65 @@ class APD_SVG_Processor
     }
 
     /**
+     * Export PDF from SVG content (called from customizer preview)
+     * Converts text to curves and preserves material outlines
+     */
+    public function apd_export_pdf_from_svg()
+    {
+        // Verify nonce (optional for customizer preview)
+        // Allow any logged-in user to export PDF from customizer
+        
+        if (!isset($_POST['svg_content']) || empty($_POST['svg_content'])) {
+            wp_send_json_error(array('message' => 'SVG content is required'));
+            return;
+        }
+        
+        $svg_content = wp_unslash($_POST['svg_content']);
+        $filename = isset($_POST['filename']) ? sanitize_file_name($_POST['filename']) : 'design.pdf';
+        
+        error_log("APD PDF from SVG: Starting PDF export from customizer preview");
+        
+        // Process SVG for PDF export (preserves material patterns, converts text to curves)
+        $processed_svg = $this->make_pdf_compatible($svg_content, 0);
+        
+        if (is_wp_error($processed_svg)) {
+            wp_send_json_error(array('message' => $processed_svg->get_error_message()));
+            return;
+        }
+        
+        // Convert to PDF
+        $pdf_result = $this->svg_to_pdf($processed_svg, 0);
+        
+        if (is_wp_error($pdf_result)) {
+            // Check if client-side fallback is needed
+            $error_data = $pdf_result->get_error_data();
+            if (isset($error_data['use_client_side']) && $error_data['use_client_side']) {
+                wp_send_json_success(array(
+                    'use_client_side' => true,
+                    'svg_content' => $processed_svg
+                ));
+                return;
+            }
+            
+            wp_send_json_error(array('message' => $pdf_result->get_error_message()));
+            return;
+        }
+        
+        // Save PDF file
+        $upload_dir = wp_upload_dir();
+        $pdf_filename = 'pdf-' . time() . '-' . $filename;
+        $pdf_path = $upload_dir['path'] . '/' . $pdf_filename;
+        $pdf_url = $upload_dir['url'] . '/' . $pdf_filename;
+        
+        file_put_contents($pdf_path, $pdf_result);
+        
+        wp_send_json_success(array(
+            'pdf_url' => $pdf_url,
+            'filename' => $pdf_filename
+        ));
+    }
+
+    /**
      * Export PDF with embedded SVG (vector-based, CorelDRAW compatible)
      * Preserves all styles, material patterns, and vector data
      */

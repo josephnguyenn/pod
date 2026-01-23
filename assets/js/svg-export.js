@@ -566,7 +566,10 @@
                 formData.append('svg_content', svgContent);
                 formData.append('filename', filename);
                 
-                const response = await fetch(ajaxurl, {
+                // Get ajaxurl from WordPress
+                const ajaxUrl = (typeof ajaxurl !== 'undefined') ? ajaxurl : '/wp-admin/admin-ajax.php';
+                
+                const response = await fetch(ajaxUrl, {
                     method: 'POST',
                     body: formData
                 });
