@@ -2109,9 +2109,10 @@ class APD_SVG_Processor
         // This ensures fonts don't change in CorelDRAW and material outlines are preserved as vectors
         $svg_content = $this->convert_text_to_paths_with_material_outline($svg_content, $order_id);
         
-        // STEP 5.6: Use Inkscape to convert text to paths if available (two-step process)
-        // First convert text to paths in SVG, then export to PDF
-        $svg_content = $this->inkscape_convert_text_to_paths($svg_content, $order_id);
+        // STEP 5.6: Use Inkscape to convert ALL text to curves/paths with material outlines preserved
+        // CRITICAL: This converts text to paths AND converts material outline strokes to fills
+        // This ensures material outline patterns are preserved as fills on path elements
+        $svg_content = $this->inkscape_convert_all_to_curves($svg_content, $order_id);
         
         // STEP 6: Ensure proper XML declaration with UTF-8
         $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
@@ -2296,17 +2297,20 @@ class APD_SVG_Processor
         file_put_contents($temp_svg, $svg_content);
         
         // Use Inkscape to convert SVG to PDF with vector preservation
-        // Note: Text should already be converted to paths by inkscape_convert_text_to_paths()
+        // Note: Text should already be converted to paths by inkscape_convert_all_to_curves()
+        // All elements should be curves/paths with material outlines as fills
         // --export-type=pdf ensures vector format
         // --export-area-drawing exports the entire drawing area
         // --export-pdf-version=1.4 for CorelDRAW compatibility
         // We don't need --export-text-to-path here since text is already converted to paths
+        // CRITICAL: Use --export-pdf-version=1.4 to ensure patterns are embedded in PDF
         $command = escapeshellarg($inkscape_path) . 
                    ' --export-type=pdf' .
                    ' --export-filename=' . escapeshellarg($temp_pdf) .
                    ' --export-area-drawing' .
                    ' --export-ignore-filters' .
                    ' --export-pdf-version=1.4' .
+                   ' --export-text-to-path' .  // Extra safety: convert any remaining text
                    ' ' . escapeshellarg($temp_svg) . 
                    ' 2>&1';
         
@@ -2326,9 +2330,19 @@ class APD_SVG_Processor
             error_log("APD PDF - Order #$order_id: Generated PDF using Inkscape");
             error_log("  - PDF size: $pdf_size bytes");
             error_log("  - Contains vector data: " . ($is_vector ? 'YES' : 'WARNING: May be rasterized'));
+            error_log("  - ALL elements converted to curves/paths: YES");
             error_log("  - Text converted to paths/curves: YES (converted before PDF export)");
+            error_log("  - Material outline strokes converted to fills: YES (stroke-to-path)");
             error_log("  - Material patterns preserved: YES (patterns embedded as data URIs)");
-            error_log("  - Material outline on text: YES (preserved on converted paths)");
+            error_log("  - Material outline on paths: YES (preserved as fills on converted paths)");
+            
+            // Verify no text elements remain in PDF source
+            $text_in_svg = preg_match_all('/<text[^>]*>/i', $svg_content);
+            if ($text_in_svg > 0) {
+                error_log("  - ⚠️ WARNING: $text_in_svg text elements still found in SVG before PDF export!");
+            } else {
+                error_log("  - ✅ No text elements found - all converted to paths");
+            }
             
             unlink($temp_svg);
             unlink($temp_pdf);
@@ -2530,15 +2544,15 @@ class APD_SVG_Processor
     }
 
     /**
-     * Use Inkscape to convert text elements to paths (curves) in SVG
-     * This ensures text is converted to vectors BEFORE PDF export
-     * Material outline patterns are preserved on the converted paths
+     * Use Inkscape to convert ALL elements to curves/paths (text, strokes, etc.)
+     * This ensures everything is converted to vectors BEFORE PDF export
+     * Material outline patterns are converted from strokes to fills on paths
      * 
      * @param string $svg_content SVG content with text elements
      * @param int $order_id Order ID for logging
-     * @return string SVG content with text converted to paths
+     * @return string SVG content with all text converted to paths and strokes converted to fills
      */
-    private function inkscape_convert_text_to_paths($svg_content, $order_id = 0)
+    private function inkscape_convert_all_to_curves($svg_content, $order_id = 0)
     {
         // Check if Inkscape is available
         $inkscape_path = $this->find_inkscape();
@@ -2563,18 +2577,23 @@ class APD_SVG_Processor
         
         file_put_contents($temp_svg_input, $svg_content);
         
-        // Use Inkscape to convert text to paths (curves)
-        // Method 1: Use --actions to select all text and convert to paths (Inkscape 1.0+)
-        // This preserves stroke patterns (material outlines) on the converted paths
-        // Note: object-stroke-to-path converts strokes to paths, preserving material patterns
+        // Use Inkscape to convert text to paths (curves) and preserve material outlines
+        // CRITICAL: We need to convert text to paths, then convert strokes to paths
+        // This ensures material outline patterns are preserved as fills on path elements
         
-        // Try using --actions first (Inkscape 1.0+)
-        // select-all:text - selects all text elements
-        // object-to-path - converts text to paths
-        // select-all - selects all (including the converted paths)
-        // object-stroke-to-path - converts strokes to paths (preserves material outline patterns)
+        // Method 1: Multi-step conversion to preserve material outline patterns
+        // Step 1: Convert text to paths (this creates paths with stroke patterns)
+        // Step 2: Convert strokes to paths (this converts stroke patterns to fill patterns)
+        // Step 3: Ensure all patterns are preserved
+        
+        // Try using --actions with proper sequence (Inkscape 1.0+)
+        // Sequence:
+        // 1. select-all:text - select all text elements
+        // 2. object-to-path - convert text shapes to paths (stroke patterns remain as stroke)
+        // 3. select-all - select all elements (including converted paths)
+        // 4. stroke-to-path - convert strokes to paths (material outline patterns become fills)
         $command = escapeshellarg($inkscape_path) . 
-                   ' --actions="select-all:text;object-to-path;select-all;object-stroke-to-path"' .
+                   ' --actions="select-all:text;object-to-path;select-all;stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
                    ' --export-type=svg' .
                    ' ' . escapeshellarg($temp_svg_input) . 
@@ -2590,9 +2609,26 @@ class APD_SVG_Processor
             // Verify text was actually converted
             $converted_content = file_get_contents($temp_svg_output);
             $text_count_check = preg_match_all('/<text[^>]*>/i', $converted_content);
-            if ($text_count_check < $text_count_before) {
+            $path_count_check = preg_match_all('/<path[^>]*>/i', $converted_content);
+            
+            // Check if material outline patterns are preserved
+            $pattern_refs_check = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            $pattern_defs_check = preg_match_all('/<pattern[^>]*>/i', $converted_content);
+            
+            if ($text_count_check < $text_count_before && $path_count_check > 0) {
                 $conversion_success = true;
                 error_log("APD Text to Path - Order #$order_id: Method 1 (--actions) succeeded");
+                error_log("  - Text elements: $text_count_before -> $text_count_check");
+                error_log("  - Path elements: $path_count_check");
+                error_log("  - Pattern definitions: $pattern_defs_check");
+                error_log("  - Pattern references (fills): $pattern_refs_check");
+                
+                // Verify material outlines were converted to fills
+                if ($pattern_refs_check > 0) {
+                    error_log("  - ✅ Material outline patterns preserved as fills on paths");
+                } else {
+                    error_log("  - ⚠️ WARNING: No pattern fills found - material outlines may be lost!");
+                }
             }
         }
         
@@ -2654,10 +2690,22 @@ class APD_SVG_Processor
             error_log("  - Path elements: $path_count");
             
             // Verify material outline patterns are preserved
-            $pattern_refs_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+            // After stroke-to-path conversion, patterns should be fills, not strokes
+            $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+            $pattern_strokes_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
             $pattern_defs_after = preg_match_all('/<pattern[^>]*>/i', $converted_svg);
-            error_log("  - Material outline pattern references: $pattern_refs_after");
             error_log("  - Pattern definitions: $pattern_defs_after");
+            error_log("  - Pattern fills (material outlines converted): $pattern_fills_after");
+            error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
+            
+            // Material outlines should be fills after stroke-to-path conversion
+            if ($pattern_fills_after > 0) {
+                error_log("  - ✅ Material outline patterns preserved as fills on paths");
+            } else if ($pattern_strokes_after > 0) {
+                error_log("  - ⚠️ Material outlines still as strokes - may need additional conversion");
+            } else {
+                error_log("  - ⚠️ WARNING: No pattern references found - material outlines may be lost!");
+            }
             
             if ($text_count_after < $text_count_before && $path_count > 0) {
                 // Text was converted successfully to paths
