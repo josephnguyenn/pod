@@ -330,19 +330,20 @@ class APD_SVG_Processor
         $pdf_content = $this->svg_to_pdf($pdf_svg, $order_id);
 
         if (is_wp_error($pdf_content)) {
+            // Check if this is a client-side conversion request
+            $error_data = $pdf_content->get_error_data();
+            if (is_array($error_data) && isset($error_data['use_client_side']) && $error_data['use_client_side']) {
+                // Return SVG for client-side conversion
+                wp_send_json_success(array(
+                    'use_client_side' => true,
+                    'svg_content' => $error_data['svg_content'],
+                    'order_id' => $order_id,
+                    'message' => 'Using client-side PDF generation (no server dependencies required). PDF will be generated in your browser.'
+                ));
+                return;
+            }
+            
             wp_send_json_error($pdf_content->get_error_message());
-            return;
-        }
-
-        // Check if we got a client-side conversion response
-        if (is_array($pdf_content) && isset($pdf_content['use_client_side']) && $pdf_content['use_client_side']) {
-            // Return SVG for client-side conversion
-            wp_send_json_success(array(
-                'use_client_side' => true,
-                'svg_content' => $pdf_content['svg_content'],
-                'order_id' => $order_id,
-                'message' => 'Using client-side PDF generation (no server dependencies required). PDF will be generated in your browser.'
-            ));
             return;
         }
 
@@ -2163,17 +2164,19 @@ class APD_SVG_Processor
         }
         
         // Final fallback: Use client-side JavaScript conversion (no server dependencies)
-        // Return SVG content with instructions for client-side PDF generation
+        // Return special marker that triggers client-side PDF generation
         unlink($temp_svg);
         
         error_log("APD PDF - Order #$order_id: No server-side tools available, using client-side conversion");
         
-        // Return special response that triggers client-side PDF generation
-        return array(
+        // Return special WP_Error with client-side flag (will be handled in apd_export_pdf)
+        $error = new WP_Error('use_client_side', 'Client-side PDF generation required');
+        $error->add_data(array(
             'use_client_side' => true,
             'svg_content' => $svg_content,
             'order_id' => $order_id
-        );
+        ));
+        return $error;
     }
 
     /**
