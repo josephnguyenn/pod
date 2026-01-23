@@ -910,9 +910,9 @@ class APD_Order_Admin_Handler
                             console.log('  - Pattern definitions:', patternCount);
                             console.log('  - Pattern references:', patternRefs);
                             
-                            // Generate PDF using client-side library
+                            // Generate PDF using client-side library with text-to-curves conversion
                             try {
-                                generateClientSidePDF(response.data.svg_content, orderId, button);
+                                await generateClientSidePDF(response.data.svg_content, orderId, button);
                             } catch (error) {
                                 console.error('📄 ❌ Client-side PDF generation failed:', error);
                                 alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
@@ -991,9 +991,10 @@ class APD_Order_Admin_Handler
         }
 
         // Client-side PDF generation - creates PDF with embedded SVG for CorelDRAW
-        function generateClientSidePDF(svgContent, orderId, button) {
+        // Now includes text-to-curves conversion using opentype.js
+        async function generateClientSidePDF(svgContent, orderId, button) {
             console.log('📄 ===== CLIENT-SIDE PDF GENERATION =====');
-            console.log('📄 ⚠️ WARNING: This is a FALLBACK - text will NOT be converted to curves');
+            console.log('📄 Converting text to curves using opentype.js...');
             
             const originalText = button.innerHTML;
             
@@ -1041,12 +1042,7 @@ class APD_Order_Admin_Handler
                     console.log('📄 ⚠️ Some text elements were not converted');
                 }
                 
-                // Analyze SVG after processing
-                const textCountAfter = svgElement.querySelectorAll('text').length;
-                console.log('📄 SVG Analysis (after processing):');
-                console.log('  - Text elements:', textCountAfter, '(still text, NOT converted to curves)');
-                console.log('  - ⚠️ Text conversion: FAILED (client-side cannot convert)');
-                console.log('  - ⚠️ Material outline: May be lost in CorelDRAW');
+                // Analyze SVG after processing (already done above, remove duplicate)
                 
                 // Get SVG dimensions
                 let width = parseFloat(svgElement.getAttribute('width')) || 800;
@@ -1300,45 +1296,59 @@ class APD_Order_Admin_Handler
                         group.setAttribute('transform', transform);
                     }
                     
-                    // Try to get font from cache or use default
+                    // Try to get font from cache
                     let font = fontCache.get(fontFamily);
-                    if (!font && typeof opentype !== 'undefined') {
-                        // Try to find a similar font or use default
-                        console.warn('📄 Font not found in cache:', fontFamily, '- using system font approximation');
+                    if (!font) {
+                        // Try case-insensitive match
+                        for (const [cachedFamily, cachedFont] of fontCache.entries()) {
+                            if (cachedFamily.toLowerCase() === fontFamily.toLowerCase()) {
+                                font = cachedFont;
+                                console.log('📄 Found font (case-insensitive match):', cachedFamily);
+                                break;
+                            }
+                        }
                     }
                     
-                    // Convert text to path using opentype.js or canvas method
+                    if (!font) {
+                        console.warn('📄 Font not found in cache:', fontFamily);
+                        console.warn('📄 Available fonts:', Array.from(fontCache.keys()));
+                        // Continue without conversion - text will remain as text
+                        continue;
+                    }
+                    
+                    // Convert text to path using opentype.js
                     if (font && typeof opentype !== 'undefined') {
                         // Use opentype.js to convert text to path
                         try {
-                            const options = {
-                                x: x,
-                                y: y,
-                                fontSize: fontSize,
-                                letterSpacing: 0,
-                                tracking: 0
-                            };
+                            // Calculate x position based on text-anchor
+                            let textX = x;
+                            let textY = y;
                             
                             // Adjust y position based on baseline
                             if (dominantBaseline === 'hanging') {
-                                options.y = y + fontSize * 0.2;
+                                textY = y + fontSize * 0.2;
                             } else if (dominantBaseline === 'middle') {
-                                options.y = y - fontSize * 0.5;
+                                textY = y - fontSize * 0.5;
+                            } else if (dominantBaseline === 'alphabetic' || dominantBaseline === 'auto') {
+                                // Default: text baseline is at y
+                                textY = y;
                             }
                             
                             // Get path from font
-                            const path = font.getPath(text, options.x, options.y, fontSize);
+                            const path = font.getPath(text, textX, textY, fontSize);
                             const pathData = path.toPathData();
                             
-                            // Adjust for text-anchor
-                            if (textAnchor === 'middle' || textAnchor === 'end') {
-                                const bbox = path.getBoundingBox();
-                                const textWidth = bbox.x2 - bbox.x1;
-                                if (textAnchor === 'middle') {
-                                    group.setAttribute('transform', (transform ? transform + ' ' : '') + 'translate(' + (-textWidth / 2) + ', 0)');
-                                } else if (textAnchor === 'end') {
-                                    group.setAttribute('transform', (transform ? transform + ' ' : '') + 'translate(' + (-textWidth) + ', 0)');
-                                }
+                            // Get bounding box for text-anchor adjustment
+                            const bbox = path.getBoundingBox();
+                            const textWidth = bbox.x2 - bbox.x1;
+                            
+                            // Adjust for text-anchor by translating the group
+                            if (textAnchor === 'middle') {
+                                const currentTransform = group.getAttribute('transform') || '';
+                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth / 2) + ', 0)');
+                            } else if (textAnchor === 'end') {
+                                const currentTransform = group.getAttribute('transform') || '';
+                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth) + ', 0)');
                             }
                             
                             // Create fill path (text shape)
@@ -1350,39 +1360,34 @@ class APD_Order_Admin_Handler
                             
                             // Create outline path (material outline) if stroke exists
                             if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
-                                // For material outline, we need to create a stroke path
-                                // Use canvas to trace the stroke outline
-                                const canvas = document.createElement('canvas');
-                                const ctx = canvas.getContext('2d');
-                                canvas.width = fontSize * text.length * 2;
-                                canvas.height = fontSize * 2;
+                                // CRITICAL: For material outline, we need to create a path that represents the stroke
+                                // The best approach is to use opentype.js to get the outline path
+                                // Then convert the stroke to a fill path with the material pattern
                                 
-                                // Draw text with stroke
-                                ctx.font = fontWeight + ' ' + fontSize + 'px ' + fontFamily;
-                                ctx.textAlign = 'left';
-                                ctx.textBaseline = 'top';
-                                ctx.strokeStyle = '#000000';
-                                ctx.lineWidth = strokeWidth;
-                                ctx.lineJoin = strokeLinejoin;
-                                ctx.lineCap = strokeLinecap;
-                                ctx.strokeText(text, fontSize, fontSize);
-                                
-                                // Get image data and trace to path (simplified - creates outline)
-                                // Actually, better approach: create stroke path using path outline
-                                const outlinePath = document.createElementNS(namespace, 'path');
-                                // Use the same path data but with stroke instead of fill
-                                outlinePath.setAttribute('d', pathData);
-                                outlinePath.setAttribute('fill', 'none');
-                                outlinePath.setAttribute('stroke', stroke); // Material pattern
-                                outlinePath.setAttribute('stroke-width', strokeWidth);
-                                outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
-                                outlinePath.setAttribute('stroke-linecap', strokeLinecap);
-                                outlinePath.setAttribute('paint-order', paintOrder);
-                                
-                                // Insert outline before fill (so fill is on top)
-                                group.insertBefore(outlinePath, fillPath);
-                                
-                                console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves with material outline preserved');
+                                try {
+                                    // Get the path outline (stroke outline) using opentype.js
+                                    // We'll create a wider path that represents the stroke
+                                    const outlinePath = document.createElementNS(namespace, 'path');
+                                    
+                                    // Use the same path but with stroke properties
+                                    // The material pattern will be applied as stroke
+                                    outlinePath.setAttribute('d', pathData);
+                                    outlinePath.setAttribute('fill', 'none');
+                                    outlinePath.setAttribute('stroke', stroke); // Material pattern URL
+                                    outlinePath.setAttribute('stroke-width', strokeWidth);
+                                    outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
+                                    outlinePath.setAttribute('stroke-linecap', strokeLinecap);
+                                    outlinePath.setAttribute('paint-order', paintOrder);
+                                    
+                                    // Insert outline before fill (so fill is on top, outline behind)
+                                    group.insertBefore(outlinePath, fillPath);
+                                    
+                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
+                                    console.log('📄 ✅ Material outline preserved as stroke on path: ' + stroke);
+                                } catch (e) {
+                                    console.warn('📄 Failed to create material outline path:', e);
+                                    // Still add the fill path even if outline fails
+                                }
                             } else {
                                 console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
                             }
@@ -1396,9 +1401,10 @@ class APD_Order_Admin_Handler
                             // Keep original text element if conversion fails
                         }
                     } else {
-                        // Fallback: Use canvas-based approximation
-                        console.warn('📄 Font not available for text element ' + (i + 1) + ', using canvas approximation');
-                        // Keep text element - will be handled by svg2pdf
+                        // Font not available - cannot convert
+                        console.warn('📄 Font not available for text element ' + (i + 1) + ':', fontFamily);
+                        console.warn('📄 Text element will remain as text (not converted to curves)');
+                        // Keep text element - will be handled by svg2pdf but won't be curves
                     }
                     
                 } catch (error) {
@@ -1407,11 +1413,28 @@ class APD_Order_Admin_Handler
             }
             
             if (convertedElements.length > 0) {
-                console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' text elements to curves');
+                console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
                 console.log('📄 ✅ Material outline patterns preserved on converted paths');
+                
+                // Verify patterns are still in SVG
+                const patternCount = svgElement.querySelectorAll('pattern').length;
+                const patternRefs = (new XMLSerializer().serializeToString(svgElement).match(/url\(#[^)]+\)/g) || []).length;
+                console.log('📄 Pattern verification:');
+                console.log('  - Pattern definitions:', patternCount);
+                console.log('  - Pattern references:', patternRefs);
+                
+                if (patternRefs > 0) {
+                    console.log('📄 ✅ Material outline patterns are preserved in converted paths');
+                } else {
+                    console.warn('📄 ⚠️ WARNING: No pattern references found - material outlines may be lost');
+                }
             } else {
                 console.warn('📄 ⚠️ No text elements were converted to curves');
-                console.warn('📄 ⚠️ Fonts may not be available or opentype.js failed');
+                console.warn('📄 ⚠️ Possible reasons:');
+                console.warn('  - Fonts not found in SVG @font-face');
+                console.warn('  - opentype.js library not loaded');
+                console.warn('  - Font format not supported');
+                console.warn('📄 Text elements will remain as text (not curves)');
             }
         }
         </script>
