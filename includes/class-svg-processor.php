@@ -351,6 +351,8 @@ class APD_SVG_Processor
             wp_send_json_error('Invalid order ID');
             return;
         }
+        
+        error_log("APD PDF Export - Order #$order_id: ===== STARTING PDF EXPORT =====");
 
         // Get the original SVG - use same logic as cut-ready SVG
         $svg_content = '';
@@ -420,25 +422,51 @@ class APD_SVG_Processor
         }
 
         if (empty($svg_content)) {
+            error_log("APD PDF Export - Order #$order_id: ERROR - No SVG found");
             wp_send_json_error('No SVG found for this order');
             return;
         }
+        
+        error_log("APD PDF Export - Order #$order_id: SVG found from source: $source");
+        error_log("APD PDF Export - Order #$order_id: SVG content length: " . strlen($svg_content) . " bytes");
+        
+        // Log incoming SVG analysis
+        $text_count_incoming = preg_match_all('/<text[^>]*>/i', $svg_content);
+        $pattern_count_incoming = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $pattern_refs_incoming = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        error_log("APD PDF Export - Order #$order_id: Incoming SVG - $text_count_incoming text elements, $pattern_count_incoming patterns, $pattern_refs_incoming pattern stroke references");
 
         // Process the SVG to make it PDF-ready (preserves ALL content including patterns)
+        error_log("APD PDF Export - Order #$order_id: Calling make_pdf_compatible()...");
         $pdf_svg = $this->make_pdf_compatible($svg_content, $order_id);
 
         if (is_wp_error($pdf_svg)) {
+            error_log("APD PDF Export - Order #$order_id: ERROR in make_pdf_compatible: " . $pdf_svg->get_error_message());
             wp_send_json_error($pdf_svg->get_error_message());
             return;
         }
+        
+        // Log processed SVG analysis
+        $text_count_processed = preg_match_all('/<text[^>]*>/i', $pdf_svg);
+        $pattern_count_processed = preg_match_all('/<pattern[^>]*>/i', $pdf_svg);
+        $pattern_refs_processed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']|stroke=["\']url\(#[^)]+\)["\']/i', $pdf_svg);
+        error_log("APD PDF Export - Order #$order_id: Processed SVG - $text_count_processed text elements (was $text_count_incoming), $pattern_count_processed patterns, $pattern_refs_processed pattern references");
+        
+        if ($text_count_processed > 0) {
+            error_log("APD PDF Export - Order #$order_id: ⚠️ WARNING - Text elements still present after processing! Conversion may have failed.");
+        }
 
         // Generate PDF with embedded SVG
+        error_log("APD PDF Export - Order #$order_id: Calling svg_to_pdf()...");
         $pdf_content = $this->svg_to_pdf($pdf_svg, $order_id);
 
         if (is_wp_error($pdf_content)) {
+            error_log("APD PDF Export - Order #$order_id: ERROR in svg_to_pdf: " . $pdf_content->get_error_message());
+            
             // Check if this is a client-side conversion request
             $error_data = $pdf_content->get_error_data();
             if (is_array($error_data) && isset($error_data['use_client_side']) && $error_data['use_client_side']) {
+                error_log("APD PDF Export - Order #$order_id: Returning client-side fallback (Inkscape/ImageMagick not available)");
                 // Return SVG for client-side conversion
                 wp_send_json_success(array(
                     'use_client_side' => true,
@@ -449,9 +477,12 @@ class APD_SVG_Processor
                 return;
             }
             
+            error_log("APD PDF Export - Order #$order_id: Sending error response");
             wp_send_json_error($pdf_content->get_error_message());
             return;
         }
+        
+        error_log("APD PDF Export - Order #$order_id: PDF generated successfully (" . strlen($pdf_content) . " bytes)");
 
         // Save the PDF file
         $upload_dir = wp_upload_dir();

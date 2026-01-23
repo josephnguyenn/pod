@@ -1111,8 +1111,8 @@ class APD_Order_Admin_Handler
         }
 
         // Convert text elements to paths while preserving material outline patterns
-        // This ensures fonts don't change in CorelDRAW and material outlines are preserved as vectors
-        // Note: For best results, text-to-path conversion requires font files
+        // WARNING: This is a CLIENT-SIDE fallback - it only prepares text, doesn't convert to paths
+        // For proper text-to-curves conversion, server-side Inkscape is required
         // This function ensures material patterns are preserved in the SVG structure
         function convertTextToPathsWithMaterialOutline(svgDoc, svgElement) {
             const namespace = 'http://www.w3.org/2000/svg';
@@ -1122,7 +1122,9 @@ class APD_Order_Admin_Handler
                 return; // No text to convert
             }
             
-            console.log('Preparing ' + textElements.length + ' text elements for PDF export (material outlines preserved)...');
+            console.log('⚠️ CLIENT-SIDE FALLBACK: Preparing ' + textElements.length + ' text elements for PDF export (material outlines preserved)...');
+            console.log('⚠️ WARNING: Client-side cannot convert text to curves. Text will remain as text in PDF.');
+            console.log('⚠️ For proper text-to-curves conversion, server-side Inkscape is required.');
             
             // For client-side PDF generation, we'll ensure text elements have all attributes
             // Material patterns are already preserved in the SVG
@@ -1145,6 +1147,7 @@ class APD_Order_Admin_Handler
                         }
                         
                         console.log('Text element ' + (index + 1) + ' has material outline pattern preserved: ' + stroke);
+                        console.log('⚠️ NOTE: This text will NOT be converted to curves in client-side PDF. Material outline may be lost in CorelDRAW.');
                     }
                     
                     // Ensure fill is also set as attribute
@@ -1159,11 +1162,12 @@ class APD_Order_Admin_Handler
                 }
             });
             
-            // Note: True text-to-path conversion requires font files (opentype.js)
-            // For now, we preserve text elements with material outline patterns
-            // When using Inkscape (server-side), --export-text-to-path handles conversion
-            // For client-side, svg2pdf.js will render text, and CorelDRAW can convert on import
-            // Material patterns are preserved in the SVG structure and will be visible in PDF
+            // CRITICAL WARNING: Client-side cannot convert text to paths without font files
+            // The text will remain as text in the PDF, and material outlines may be lost
+            // For proper conversion, server-side Inkscape must be available
+            console.warn('⚠️ CLIENT-SIDE LIMITATION: Text elements are NOT converted to curves.');
+            console.warn('⚠️ Material outline patterns may be lost when PDF is opened in CorelDRAW.');
+            console.warn('⚠️ Solution: Install Inkscape on server for proper text-to-curves conversion.');
         }
         </script>
         <?php
