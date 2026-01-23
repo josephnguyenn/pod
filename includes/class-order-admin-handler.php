@@ -882,6 +882,18 @@ class APD_Order_Admin_Handler
                     if (response.success) {
                         // Check if we need to generate PDF client-side
                         if (response.data.use_client_side && response.data.svg_content) {
+                            console.warn('⚠️ CLIENT-SIDE FALLBACK: Server-side PDF generation not available');
+                            console.warn('⚠️ WARNING: Text will NOT be converted to curves in client-side PDF');
+                            console.warn('⚠️ WARNING: Material outlines may be lost when opening PDF in CorelDRAW');
+                            console.warn('💡 SOLUTION: Install Inkscape on server for proper text-to-curves conversion');
+                            
+                            // Show warning to user
+                            const warningDiv = document.createElement('div');
+                            warningDiv.className = 'notice notice-warning is-dismissible';
+                            warningDiv.innerHTML = '<p><strong>⚠️ Warning:</strong> Server-side PDF conversion not available. Text will remain as text (not curves) and material outlines may be lost. <strong>For best results, install Inkscape on the server.</strong></p>';
+                            button.closest('.order-svg-download-section').appendChild(warningDiv);
+                            setTimeout(() => warningDiv.remove(), 15000);
+                            
                             // Generate PDF using client-side library
                             try {
                                 generateClientSidePDF(response.data.svg_content, orderId, button);

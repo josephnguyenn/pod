@@ -2255,7 +2255,15 @@ class APD_SVG_Processor
      */
     private function svg_to_pdf($svg_content, $order_id = 0)
     {
-        error_log("APD SVG to PDF - Order #$order_id: Starting PDF generation");
+        error_log("APD SVG to PDF - Order #$order_id: ===== STARTING PDF GENERATION =====");
+        
+        // Check text elements before PDF generation
+        $text_count_before_pdf = preg_match_all('/<text[^>]*>/i', $svg_content);
+        error_log("APD SVG to PDF - Order #$order_id: Text elements before PDF generation: $text_count_before_pdf");
+        
+        if ($text_count_before_pdf > 0) {
+            error_log("APD SVG to PDF - Order #$order_id: ⚠️ WARNING - Text elements still present! They should have been converted to curves in make_pdf_compatible().");
+        }
         
         // Extract SVG dimensions
         $width = 800;
@@ -2649,12 +2657,18 @@ class APD_SVG_Processor
      */
     private function inkscape_convert_all_to_curves($svg_content, $order_id = 0)
     {
+        error_log("APD Text to Path - Order #$order_id: ===== STARTING TEXT-TO-CURVES CONVERSION =====");
+        
         // Check if Inkscape is available
         $inkscape_path = $this->find_inkscape();
         if (!$inkscape_path) {
-            error_log("APD Text to Path - Order #$order_id: Inkscape not available, text will be converted during PDF export");
+            error_log("APD Text to Path - Order #$order_id: ❌ ERROR - Inkscape not available!");
+            error_log("APD Text to Path - Order #$order_id: Text will NOT be converted to curves. PDF will fall back to client-side generation.");
+            error_log("APD Text to Path - Order #$order_id: ⚠️ SOLUTION: Install Inkscape on server for proper text-to-curves conversion.");
             return $svg_content;
         }
+        
+        error_log("APD Text to Path - Order #$order_id: ✅ Inkscape found at: $inkscape_path");
         
         // Count text elements before conversion
         $text_count_before = preg_match_all('/<text[^>]*>/i', $svg_content);
