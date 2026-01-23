@@ -2039,9 +2039,10 @@ class APD_SVG_Processor
             $svg_content
         );
         
-        // STEP 5: Process patterns with data:image for PDF compatibility
-        // Extract embedded images to external files (same as cut-ready)
-        $svg_content = $this->process_patterns_for_coreldraw($svg_content, $order_id);
+        // STEP 5: Process patterns for PDF - CRITICAL: Keep patterns embedded (not external) for PDF
+        // For PDF export, we want patterns embedded as data URIs so they're included in the PDF
+        // This ensures material patterns are visible when PDF is opened in CorelDRAW
+        $svg_content = $this->process_patterns_for_pdf($svg_content, $order_id);
         
         // STEP 5.5: Convert text to paths while preserving material outline patterns
         // This ensures fonts don't change in CorelDRAW and material outlines are preserved
@@ -2345,6 +2346,119 @@ class APD_SVG_Processor
         $pattern_count_after = preg_match_all('/<pattern[^>]*>/i', $svg_content);
         $pattern_refs_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
         error_log("APD Text to Path - Order #$order_id: After processing - $pattern_count_after pattern definitions, $pattern_refs_after pattern stroke references");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Process patterns for PDF export - embeds patterns as data URIs for PDF inclusion
+     * Unlike process_patterns_for_coreldraw which extracts to external files,
+     * this keeps patterns embedded so they're included in the PDF
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with embedded patterns
+     */
+    private function process_patterns_for_pdf($svg_content, $order_id = 0)
+    {
+        error_log("APD PDF Patterns - Order #$order_id: Processing patterns for PDF (keeping embedded)");
+        
+        // Find all pattern definitions and ensure images are embedded (not external)
+        $svg_content = preg_replace_callback(
+            '/<pattern([^>]*)>(.*?)<\/pattern>/is',
+            function($matches) use ($order_id) {
+                $pattern_attrs = $matches[1];
+                $pattern_content = $matches[2];
+                
+                // Extract pattern ID
+                $pattern_id = 'pattern';
+                if (preg_match('/id=["\']([^"\']+)["\']/', $pattern_attrs, $m)) {
+                    $pattern_id = $m[1];
+                }
+                
+                // Process image tags - ensure they use data URIs for PDF embedding
+                $pattern_content = preg_replace_callback(
+                    '/<image([^>]*)>/i',
+                    function($img_matches) use ($pattern_id, $order_id) {
+                        $img_attrs = $img_matches[1];
+                        
+                        // Check if image already has data URI
+                        if (preg_match('/(href|xlink:href)=["\']data:image\/([^;]+);base64,([^"\']+)["\']/', $img_attrs, $data_match)) {
+                            // Already embedded - keep it
+                            error_log("APD PDF Patterns - Order #$order_id: Pattern $pattern_id already has embedded image");
+                            return $img_matches[0];
+                        }
+                        
+                        // Check if image has external URL
+                        if (preg_match('/(href|xlink:href)=["\']([^"\']+)["\']/', $img_attrs, $url_match)) {
+                            $image_url = $url_match[2];
+                            
+                            // Try to fetch and convert to data URI
+                            if (strpos($image_url, 'http') === 0 || strpos($image_url, '/') === 0) {
+                                // Fetch image and convert to base64
+                                $upload_dir = wp_upload_dir();
+                                $image_path = '';
+                                
+                                // Check if it's a local file
+                                if (strpos($image_url, $upload_dir['url']) === 0) {
+                                    $image_path = str_replace($upload_dir['url'], $upload_dir['path'], $image_url);
+                                } elseif (strpos($image_url, '/') === 0) {
+                                    $image_path = ABSPATH . ltrim($image_url, '/');
+                                }
+                                
+                                if ($image_path && file_exists($image_path)) {
+                                    $image_data = file_get_contents($image_path);
+                                    $image_info = getimagesize($image_path);
+                                    $mime_type = $image_info ? $image_info['mime'] : 'image/png';
+                                    $base64_data = base64_encode($image_data);
+                                    $data_uri = 'data:' . $mime_type . ';base64,' . $base64_data;
+                                    
+                                    // Replace URL with data URI
+                                    $new_attrs = preg_replace(
+                                        '/(href|xlink:href)=["\'][^"\']*["\']/',
+                                        'href="' . $data_uri . '" xlink:href="' . $data_uri . '"',
+                                        $img_attrs
+                                    );
+                                    
+                                    error_log("APD PDF Patterns - Order #$order_id: Converted pattern $pattern_id image to embedded data URI");
+                                    return '<image' . $new_attrs . '>';
+                                } else {
+                                    // Try to fetch via HTTP
+                                    $response = wp_remote_get($image_url);
+                                    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                                        $image_data = wp_remote_retrieve_body($response);
+                                        $headers = wp_remote_retrieve_headers($response);
+                                        $content_type = isset($headers['content-type']) ? $headers['content-type'] : 'image/png';
+                                        $base64_data = base64_encode($image_data);
+                                        $data_uri = 'data:' . $content_type . ';base64,' . $base64_data;
+                                        
+                                        $new_attrs = preg_replace(
+                                            '/(href|xlink:href)=["\'][^"\']*["\']/',
+                                            'href="' . $data_uri . '" xlink:href="' . $data_uri . '"',
+                                            $img_attrs
+                                        );
+                                        
+                                        error_log("APD PDF Patterns - Order #$order_id: Fetched and embedded pattern $pattern_id image");
+                                        return '<image' . $new_attrs . '>';
+                                    }
+                                }
+                            }
+                        }
+                        
+                        return $img_matches[0];
+                    },
+                    $pattern_content
+                );
+                
+                return '<pattern' . $pattern_attrs . '>' . $pattern_content . '</pattern>';
+            },
+            $svg_content
+        );
+        
+        // Count patterns after processing
+        $pattern_count = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $embedded_images = preg_match_all('/data:image[^"\']+/i', $svg_content);
+        error_log("APD PDF Patterns - Order #$order_id: After processing - $pattern_count patterns, $embedded_images embedded images");
         
         return $svg_content;
     }
