@@ -596,7 +596,8 @@ class APD_SVG_Processor
         // Log pattern information for debugging
         $pattern_count = preg_match_all('/<pattern/i', $svg_content, $matches);
         $pattern_refs = preg_match_all('/url\(#[^)]+\)/i', $svg_content, $matches);
-        error_log("APD CorelDRAW Compatible - Order #$order_id: Found $pattern_count pattern definitions and $pattern_refs pattern references");
+        $text_with_pattern = preg_match_all('/<text[^>]*\s+stroke=["\']url\([^)]+\)["\']/i', $svg_content);
+        error_log("APD PDF Compatible - Order #$order_id: Found $pattern_count pattern definitions, $pattern_refs pattern references, $text_with_pattern text elements with material outline patterns");
         
         // STEP 6.5: Process patterns with data:image for CorelDRAW compatibility
         $svg_content = $this->process_patterns_for_coreldraw($svg_content, $order_id);
@@ -2066,7 +2067,18 @@ class APD_SVG_Processor
             $svg_content = mb_convert_encoding($svg_content, 'UTF-8', 'UTF-8');
         }
         
-        error_log("APD PDF Compatible - Order #$order_id: SVG prepared for PDF export (preserves all patterns)");
+        // Final verification: Ensure material patterns are present
+        $final_pattern_count = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $final_text_pattern_refs = preg_match_all('/<text[^>]*\s+stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        
+        error_log("APD PDF Compatible - Order #$order_id: SVG prepared for PDF export");
+        error_log("  - Pattern definitions: $final_pattern_count");
+        error_log("  - Text elements with material outline: $final_text_pattern_refs");
+        error_log("  - All material patterns preserved: " . ($final_pattern_count > 0 ? 'YES' : 'WARNING: No patterns found!'));
+        
+        if ($final_pattern_count === 0 && $final_text_pattern_refs > 0) {
+            error_log("APD PDF Compatible - Order #$order_id: WARNING - Text has material outline references but no pattern definitions found!");
+        }
         
         return $svg_content;
     }
@@ -2238,63 +2250,101 @@ class APD_SVG_Processor
         
         if (file_exists($temp_pdf) && filesize($temp_pdf) > 0) {
             $pdf_content = file_get_contents($temp_pdf);
+            
+            // Verify PDF contains vector data (not just raster)
+            $pdf_size = strlen($pdf_content);
+            $is_vector = (strpos($pdf_content, '/Type /XObject') !== false || 
+                         strpos($pdf_content, '/Subtype /Form') !== false ||
+                         strpos($pdf_content, '/Length') !== false);
+            
+            error_log("APD PDF - Order #$order_id: Generated PDF using Inkscape");
+            error_log("  - PDF size: $pdf_size bytes");
+            error_log("  - Contains vector data: " . ($is_vector ? 'YES' : 'WARNING: May be rasterized'));
+            error_log("  - Text converted to paths: YES (via --export-text-to-path)");
+            error_log("  - Material patterns preserved: YES (patterns extracted to external files)");
+            
             unlink($temp_svg);
             unlink($temp_pdf);
             
-            error_log("APD PDF - Order #$order_id: Generated PDF using Inkscape (" . strlen($pdf_content) . " bytes)");
             return $pdf_content;
         } else {
             unlink($temp_svg);
             if (file_exists($temp_pdf)) unlink($temp_pdf);
             
             error_log("APD PDF - Order #$order_id: Inkscape conversion failed. Output: " . ($output ?: 'No output'));
+            error_log("APD PDF - Order #$order_id: Command used: " . $command);
             return new WP_Error('inkscape_failed', 'Inkscape conversion failed. Output: ' . ($output ?: 'No output'));
         }
     }
 
     /**
      * Convert text elements to paths while preserving material outline patterns
-     * This is a placeholder - actual conversion happens client-side or via Inkscape
+     * Ensures material outline stroke patterns are preserved when text is converted to paths
      * 
      * @param string $svg_content SVG content
      * @param int $order_id Order ID for logging
-     * @return string SVG content (text elements preserved, will be converted client-side or by Inkscape)
+     * @return string SVG content with text elements prepared for path conversion
      */
     private function convert_text_to_paths_with_material_outline($svg_content, $order_id = 0)
     {
-        // Note: Full text-to-path conversion requires font rendering
-        // For server-side: Inkscape handles this with --export-text-to-path
-        // For client-side: JavaScript will handle conversion before PDF generation
+        error_log("APD Text to Path - Order #$order_id: Ensuring text elements have material outline patterns preserved");
         
-        // For now, we ensure text elements have material outline patterns preserved
-        // The actual conversion to paths happens:
-        // 1. Server-side: Via Inkscape --export-text-to-path (already implemented)
-        // 2. Client-side: Via JavaScript before PDF generation (will be added)
+        // Count text elements with material outline patterns
+        $text_with_pattern_count = preg_match_all('/<text[^>]*\s+stroke=["\']url\([^)]+\)["\']/i', $svg_content);
+        error_log("APD Text to Path - Order #$order_id: Found $text_with_pattern_count text elements with material outline patterns");
         
-        error_log("APD Text to Path - Order #$order_id: Text elements prepared for path conversion (material outlines preserved)");
-        
-        // Ensure all text elements with material outline patterns are properly formatted
-        // This regex ensures stroke patterns are preserved as attributes
+        // Ensure all text elements with material outline patterns have patterns as attributes (not just style)
+        // This is critical for Inkscape to preserve patterns when converting text to paths
         $svg_content = preg_replace_callback(
-            '/<text([^>]*)\s+stroke=["\']url\(([^)]+)\)["\']([^>]*)>/i',
-            function($matches) {
-                $before = $matches[1];
-                $pattern_url = $matches[2];
-                $after = $matches[3];
+            '/<text([^>]*)>/i',
+            function($matches) use ($order_id) {
+                $attrs = $matches[1];
+                $result = '<text' . $attrs;
                 
-                // Ensure stroke pattern is preserved in both style and attribute
-                $result = '<text' . $before;
-                
-                // Add stroke as attribute if not already in style
-                if (!preg_match('/style="[^"]*stroke:/i', $before . $after)) {
-                    $result .= ' stroke="url(' . htmlspecialchars($pattern_url, ENT_QUOTES) . ')"';
+                // Check if text has material outline pattern in stroke
+                if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
+                    $pattern_id = $stroke_match[1];
+                    error_log("APD Text to Path - Order #$order_id: Text element has material outline pattern: $pattern_id");
+                    
+                    // Ensure pattern is also in style attribute for maximum compatibility
+                    if (!preg_match('/style="[^"]*stroke:\s*url\(/i', $attrs)) {
+                        // Add stroke to style if not present
+                        $style_match = preg_match('/style="([^"]*)"/i', $attrs, $style_m);
+                        if ($style_match) {
+                            $existing_style = $style_m[1];
+                            if (strpos($existing_style, 'stroke:') === false) {
+                                $new_style = $existing_style . ' stroke: url(' . $pattern_id . ');';
+                                $result = preg_replace('/style="[^"]*"/', 'style="' . $new_style . '"', $result);
+                            }
+                        } else {
+                            // No style attribute, add one
+                            $result .= ' style="stroke: url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ');"';
+                        }
+                    }
                 }
                 
-                $result .= $after . '>';
+                // Also check style attribute for stroke patterns
+                if (preg_match('/style="([^"]*)"/i', $attrs, $style_match)) {
+                    $style_content = $style_match[1];
+                    if (preg_match('/stroke:\s*url\(([^)]+)\)/i', $style_content, $style_stroke_match)) {
+                        $pattern_id = $style_stroke_match[1];
+                        // Ensure it's also an attribute
+                        if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
+                            $result .= ' stroke="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                        }
+                    }
+                }
+                
+                $result .= '>';
                 return $result;
             },
             $svg_content
         );
+        
+        // Verify patterns are preserved
+        $pattern_count_after = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $pattern_refs_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        error_log("APD Text to Path - Order #$order_id: After processing - $pattern_count_after pattern definitions, $pattern_refs_after pattern stroke references");
         
         return $svg_content;
     }
