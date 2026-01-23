@@ -334,6 +334,18 @@ class APD_SVG_Processor
             return;
         }
 
+        // Check if we got a client-side conversion response
+        if (is_array($pdf_content) && isset($pdf_content['use_client_side']) && $pdf_content['use_client_side']) {
+            // Return SVG for client-side conversion
+            wp_send_json_success(array(
+                'use_client_side' => true,
+                'svg_content' => $pdf_content['svg_content'],
+                'order_id' => $order_id,
+                'message' => 'Using client-side PDF generation (no server dependencies required). PDF will be generated in your browser.'
+            ));
+            return;
+        }
+
         // Save the PDF file
         $upload_dir = wp_upload_dir();
         $filename = 'order-' . $order_id . '-vector-' . time() . '.pdf';
@@ -2150,11 +2162,17 @@ class APD_SVG_Processor
             }
         }
         
-        // Final fallback: Return error suggesting to use Inkscape or provide SVG download
+        // Final fallback: Use client-side JavaScript conversion (no server dependencies)
+        // Return SVG content with instructions for client-side PDF generation
         unlink($temp_svg);
-        return new WP_Error('pdf_generation_failed', 
-            'PDF generation requires Inkscape or ImageMagick. ' .
-            'Please install Inkscape for best CorelDRAW compatibility, or use the SVG export instead.'
+        
+        error_log("APD PDF - Order #$order_id: No server-side tools available, using client-side conversion");
+        
+        // Return special response that triggers client-side PDF generation
+        return array(
+            'use_client_side' => true,
+            'svg_content' => $svg_content,
+            'order_id' => $order_id
         );
     }
 

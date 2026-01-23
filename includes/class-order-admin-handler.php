@@ -508,6 +508,7 @@ class APD_Order_Admin_Handler
         // JS
         ?>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/svg2pdf.js/1.4.0/svg2pdf.umd.min.js"></script>
         <script>
         (function(){
             const orderId = <?php echo (int) $order_id; ?>;
@@ -854,7 +855,21 @@ class APD_Order_Admin_Handler
                 },
                 success: function(response) {
                     if (response.success) {
-                        // Download the PDF file
+                        // Check if we need to generate PDF client-side
+                        if (response.data.use_client_side && response.data.svg_content) {
+                            // Generate PDF using client-side library
+                            try {
+                                generateClientSidePDF(response.data.svg_content, orderId, button);
+                            } catch (error) {
+                                console.error('Client-side PDF generation failed:', error);
+                                alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
+                                button.disabled = false;
+                                button.innerHTML = originalText;
+                            }
+                            return;
+                        }
+                        
+                        // Server-side generated PDF - download it
                         const a = document.createElement('a');
                         a.href = response.data.file_url;
                         a.download = response.data.filename;
@@ -881,6 +896,107 @@ class APD_Order_Admin_Handler
                     button.innerHTML = originalText;
                 }
             });
+        }
+
+        // Client-side PDF generation using jsPDF and svg2pdf
+        function generateClientSidePDF(svgContent, orderId, button) {
+            const originalText = button.innerHTML;
+            
+            try {
+                // Parse SVG to get dimensions
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                const svgElement = svgDoc.documentElement;
+                
+                // Get SVG dimensions
+                let width = parseFloat(svgElement.getAttribute('width')) || 800;
+                let height = parseFloat(svgElement.getAttribute('height')) || 600;
+                
+                // Remove units if present
+                width = parseFloat(width);
+                height = parseFloat(height);
+                
+                // Convert pixels to mm (1 inch = 25.4mm, assuming 96 DPI)
+                const widthMM = (width / 96) * 25.4;
+                const heightMM = (height / 96) * 25.4;
+                
+                // Create PDF with jsPDF
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({
+                    orientation: widthMM > heightMM ? 'landscape' : 'portrait',
+                    unit: 'mm',
+                    format: [widthMM, heightMM]
+                });
+                
+                // Convert SVG to PDF using svg2pdf
+                if (typeof svg2pdf !== 'undefined') {
+                    svg2pdf(svgElement, doc, {
+                        xOffset: 0,
+                        yOffset: 0,
+                        scale: 1
+                    });
+                } else {
+                    // Fallback: embed SVG as image if svg2pdf not available
+                    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml' });
+                    const url = URL.createObjectURL(svgBlob);
+                    const img = new Image();
+                    
+                    img.onload = function() {
+                        const imgWidth = this.width;
+                        const imgHeight = this.height;
+                        const pdfWidth = doc.internal.pageSize.getWidth();
+                        const pdfHeight = doc.internal.pageSize.getHeight();
+                        const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+                        
+                        doc.addImage(url, 'SVG', 0, 0, imgWidth * ratio, imgHeight * ratio);
+                        URL.revokeObjectURL(url);
+                        
+                        // Download PDF
+                        const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
+                        doc.save(filename);
+                        
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> PDF generated in your browser. Open in CorelDRAW to convert to editable vectors.</p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 10000);
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                    };
+                    
+                    img.onerror = function() {
+                        URL.revokeObjectURL(url);
+                        alert('Failed to load SVG for PDF conversion');
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                    };
+                    
+                    img.src = url;
+                    return;
+                }
+                
+                // Download PDF
+                const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
+                doc.save(filename);
+                
+                // Show success message
+                const successDiv = document.createElement('div');
+                successDiv.className = 'notice notice-success is-dismissible';
+                successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> PDF generated in your browser. Open in CorelDRAW to convert to editable vectors with all styles and material patterns preserved.</p>';
+                button.closest('.order-svg-download-section').appendChild(successDiv);
+                
+                setTimeout(() => successDiv.remove(), 10000);
+                button.disabled = false;
+                button.innerHTML = originalText;
+                
+            } catch (error) {
+                console.error('PDF generation error:', error);
+                alert('PDF generation failed: ' + error.message);
+                button.disabled = false;
+                button.innerHTML = originalText;
+            }
         }
         </script>
         <?php
