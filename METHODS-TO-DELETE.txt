@@ -1,0 +1,104 @@
+DANH SÁCH CÁC METHOD CẦN XÓA KHỎI freight-signs-customizer.php
+================================================================
+
+Các method này đã được tách ra các file riêng và cần xóa khỏi file gốc:
+
+=== ĐÃ CHUYỂN SANG includes/class-admin-pages.php ===
+- add_admin_menu() (line ~7615)
+- add_admin_submenus() (line ~7628) 
+- add_orders_menu() (line ~7705)
+- add_shipping_menu() (line ~7718)
+- orders_page() (line ~7731)
+- products_page() (line ~7749)
+- handle_bulk_delete() (line ~7778)
+- dashboard_page() (line ~7953)
+- templates_page() (line ~7970)
+- designer_page() (line ~7999)
+- materials_page() (line ~8098)
+- settings_page() (line ~8147)
+- shipping_prices_page() (line ~8156)
+
+=== ĐÃ CHUYỂN SANG includes/class-material-manager.php ===
+- handle_material_upload() (line ~8374)
+- handle_material_price_update() (line ~8467)
+- handle_material_deletion() (line ~8497)
+- get_material_categories() (line ~8528)
+- handle_add_material_category() (line ~8542)
+- handle_delete_material_category() (line ~8573)
+- handle_material_category_update() (line ~8593)
+- get_materials_list() (line ~8613)
+- get_material_filename() (line ~9796) [private method]
+
+=== ĐÃ CHUYỂN SANG includes/class-template-manager.php ===
+- duplicate_template() (line ~8961)
+- delete_template() (line ~9017)
+- upload_font() (line ~9043)
+- delete_font() (line ~9128)
+- remove_font_entry() (line ~9156) [private method]
+- save_template_design() (line ~9171)
+
+=== ĐÃ CHUYỂN SANG includes/class-rest-api.php ===
+- register_rest_routes() (line ~9259)
+- get_products_rest() (line ~9290)
+- get_single_product_rest() (line ~9334)
+
+=== ĐÃ CHUYỂN SANG includes/class-activation.php ===
+- activate() (line ~2778)
+- deactivate() (line ~2796)
+- create_tables() (line ~2801)
+- create_upload_directories() (line ~2826)
+- create_design_post_type() (line ~2843)
+- maybe_create_core_pages() (line ~6896) [private method]
+
+=== ĐÃ CHUYỂN SANG includes/class-ajax-handlers.php ===
+- save_customization() (line ~2270)
+- ajax_save_settings() (line ~2309)
+- ajax_get_orders() (line ~2402)
+- ajax_create_order() (line ~2423)
+- ajax_add_to_cart() (line ~2474)
+- ajax_get_cart() (line ~2524)
+- ajax_update_cart_item() (line ~2541)
+- ajax_remove_cart_item() (line ~2567)
+- ajax_clear_cart() (line ~2583)
+- ajax_get_materials() (line ~9673)
+- ajax_get_material_url() (line ~9699)
+- ajax_get_product_variants() (line ~9745)
+- save_customization_ajax() (line ~9641)
+
+TỔNG CỘng: ~50 methods cần xóa (~2500+ lines code)
+
+==================================================================
+CÁCH XÓA:
+==================================================================
+
+1. Dùng editor tìm từng method theo tên (Ctrl+F)
+2. Xóa toàn bộ method từ dòng "public function" đến dòng "}" cuối cùng của method đó
+3. Cẩn thận không xóa nhầm các method khác
+
+HOẶC:
+
+Có thể search theo pattern trong editor:
+- Search: "public function add_admin_menu"
+- Xóa từ dòng này đến hết method
+
+==================================================================
+SAU KHI XÓA XONG:
+==================================================================
+
+1. Kiểm tra file có còn khoảng ~8000-8500 lines (giảm ~2500 lines)
+2. Test lại website xem có lỗi không
+3. Kiểm tra:
+   - Admin pages vẫn load được
+   - Materials vẫn upload được
+   - Template vẫn duplicate/delete được
+   - Cart vẫn hoạt động
+   - REST API vẫn trả về data
+
+==================================================================
+LƯU Ý:
+==================================================================
+
+- Các method đã được chuyển và hoạt động trong các class mới
+- Constructor đã được update để init các class mới
+- KHÔNG xóa các method khác chưa được liệt kê ở trên
+- Nếu có lỗi, check lại autoloader đã load đúng class chưa
