@@ -248,8 +248,22 @@ class APD_SVG_Processor
         
         error_log("APD PDF from SVG: Starting PDF export from customizer preview");
         
+        // Log incoming SVG info
+        $text_count_incoming = preg_match_all('/<text[^>]*>/i', $svg_content);
+        $pattern_count_incoming = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $pattern_refs_incoming = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        error_log("APD PDF from SVG: Incoming SVG - $text_count_incoming text elements, $pattern_count_incoming patterns, $pattern_refs_incoming pattern stroke references");
+        
         // Process SVG for PDF export (preserves material patterns, converts text to curves)
         $processed_svg = $this->make_pdf_compatible($svg_content, 0);
+        
+        // Log processed SVG info
+        if (!is_wp_error($processed_svg)) {
+            $text_count_processed = preg_match_all('/<text[^>]*>/i', $processed_svg);
+            $pattern_count_processed = preg_match_all('/<pattern[^>]*>/i', $processed_svg);
+            $pattern_refs_processed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']|stroke=["\']url\(#[^)]+\)["\']/i', $processed_svg);
+            error_log("APD PDF from SVG: Processed SVG - $text_count_processed text elements, $pattern_count_processed patterns, $pattern_refs_processed pattern references");
+        }
         
         if (is_wp_error($processed_svg)) {
             wp_send_json_error(array('message' => $processed_svg->get_error_message()));
@@ -2586,12 +2600,16 @@ class APD_SVG_Processor
         // Step 2: Convert strokes to paths (this converts stroke patterns to fill patterns)
         // Step 3: Ensure all patterns are preserved
         
+        // CRITICAL: Use proper Inkscape actions to convert text to paths AND preserve material outlines
+        // The issue: Material outline patterns are strokes, and we need to convert them to fills
+        // Solution: Use a two-step process with proper action sequence
+        
+        // Step 1: Convert text to paths (text shapes become paths, strokes remain)
+        // Step 2: Convert strokes to paths (material outline strokes become fill paths)
+        // This ensures material outline patterns are preserved as fills on path elements
+        
         // Try using --actions with proper sequence (Inkscape 1.0+)
-        // Sequence:
-        // 1. select-all:text - select all text elements
-        // 2. object-to-path - convert text shapes to paths (stroke patterns remain as stroke)
-        // 3. select-all - select all elements (including converted paths)
-        // 4. stroke-to-path - convert strokes to paths (material outline patterns become fills)
+        // Note: stroke-to-path converts strokes to paths, preserving pattern fills
         $command = escapeshellarg($inkscape_path) . 
                    ' --actions="select-all:text;object-to-path;select-all;stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
@@ -2599,9 +2617,16 @@ class APD_SVG_Processor
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
+        error_log("APD Text to Path - Order #$order_id: Running Inkscape command: " . $command);
+        
         $output = shell_exec($command);
         $return_code = 0;
         exec($command . '; echo $?', $output_array, $return_code);
+        
+        error_log("APD Text to Path - Order #$order_id: Inkscape return code: $return_code");
+        if ($output) {
+            error_log("APD Text to Path - Order #$order_id: Inkscape output: " . substr($output, 0, 500));
+        }
         
         // Check if conversion was successful
         $conversion_success = false;
@@ -2612,24 +2637,51 @@ class APD_SVG_Processor
             $path_count_check = preg_match_all('/<path[^>]*>/i', $converted_content);
             
             // Check if material outline patterns are preserved
-            $pattern_refs_check = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            // After stroke-to-path, patterns should be fills, not strokes
+            $pattern_fills_check = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            $pattern_strokes_check = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content);
             $pattern_defs_check = preg_match_all('/<pattern[^>]*>/i', $converted_content);
+            
+            error_log("APD Text to Path - Order #$order_id: Conversion verification:");
+            error_log("  - Text elements: $text_count_before -> $text_count_check");
+            error_log("  - Path elements: $path_count_check");
+            error_log("  - Pattern definitions: $pattern_defs_check");
+            error_log("  - Pattern fills (material outlines as fills): $pattern_fills_check");
+            error_log("  - Pattern strokes (remaining): $pattern_strokes_check");
             
             if ($text_count_check < $text_count_before && $path_count_check > 0) {
                 $conversion_success = true;
                 error_log("APD Text to Path - Order #$order_id: Method 1 (--actions) succeeded");
-                error_log("  - Text elements: $text_count_before -> $text_count_check");
-                error_log("  - Path elements: $path_count_check");
-                error_log("  - Pattern definitions: $pattern_defs_check");
-                error_log("  - Pattern references (fills): $pattern_refs_check");
                 
                 // Verify material outlines were converted to fills
-                if ($pattern_refs_check > 0) {
+                if ($pattern_fills_check > 0) {
                     error_log("  - ✅ Material outline patterns preserved as fills on paths");
+                } else if ($pattern_strokes_check > 0) {
+                    error_log("  - ⚠️ Material outlines still as strokes - stroke-to-path may not have worked");
+                    // Try to fix: run stroke-to-path again
+                    $temp_svg_fixed = $upload_dir['path'] . '/temp-text-fixed-' . $order_id . '-' . time() . '.svg';
+                    file_put_contents($temp_svg_fixed, $converted_content);
+                    $command_fix = escapeshellarg($inkscape_path) . 
+                                   ' --actions="select-all;stroke-to-path"' .
+                                   ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                                   ' --export-type=svg' .
+                                   ' ' . escapeshellarg($temp_svg_fixed) . 
+                                   ' 2>&1';
+                    shell_exec($command_fix);
+                    if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+                        $converted_content = file_get_contents($temp_svg_output);
+                        $pattern_fills_after_fix = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+                        if ($pattern_fills_after_fix > 0) {
+                            error_log("  - ✅ Fixed: Material outlines now preserved as fills");
+                        }
+                    }
+                    unlink($temp_svg_fixed);
                 } else {
-                    error_log("  - ⚠️ WARNING: No pattern fills found - material outlines may be lost!");
+                    error_log("  - ❌ ERROR: No pattern references found - material outlines are LOST!");
                 }
             }
+        } else {
+            error_log("APD Text to Path - Order #$order_id: Output file not created or empty");
         }
         
         // If that fails, try alternative method for older Inkscape versions
@@ -2695,16 +2747,35 @@ class APD_SVG_Processor
             $pattern_strokes_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
             $pattern_defs_after = preg_match_all('/<pattern[^>]*>/i', $converted_svg);
             error_log("  - Pattern definitions: $pattern_defs_after");
-            error_log("  - Pattern fills (material outlines converted): $pattern_fills_after");
+            error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
             // Material outlines should be fills after stroke-to-path conversion
             if ($pattern_fills_after > 0) {
                 error_log("  - ✅ Material outline patterns preserved as fills on paths");
             } else if ($pattern_strokes_after > 0) {
-                error_log("  - ⚠️ Material outlines still as strokes - may need additional conversion");
+                error_log("  - ⚠️ Material outlines still as strokes - stroke-to-path conversion incomplete");
+                // Try to fix by running stroke-to-path again on the converted SVG
+                $temp_svg_fixed = $upload_dir['path'] . '/temp-text-fixed-' . $order_id . '-' . time() . '.svg';
+                file_put_contents($temp_svg_fixed, $converted_svg);
+                $command_fix = escapeshellarg($inkscape_path) . 
+                               ' --actions="select-all;stroke-to-path"' .
+                               ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                               ' --export-type=svg' .
+                               ' ' . escapeshellarg($temp_svg_fixed) . 
+                               ' 2>&1';
+                shell_exec($command_fix);
+                if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+                    $converted_svg = file_get_contents($temp_svg_output);
+                    $pattern_fills_after_fix = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+                    if ($pattern_fills_after_fix > 0) {
+                        error_log("  - ✅ Fixed: Material outlines now preserved as fills after second pass");
+                    }
+                }
+                unlink($temp_svg_fixed);
             } else {
-                error_log("  - ⚠️ WARNING: No pattern references found - material outlines may be lost!");
+                error_log("  - ❌ ERROR: No pattern references found - material outlines are LOST!");
+                error_log("  - This means the material outline patterns were not preserved during conversion");
             }
             
             if ($text_count_after < $text_count_before && $path_count > 0) {
