@@ -580,6 +580,16 @@
                     embedFonts: true
                 });
                 
+                // Log SVG info before sending to server
+                const textCount = (svgContent.match(/<text[^>]*>/gi) || []).length;
+                const patternCount = (svgContent.match(/<pattern[^>]*>/gi) || []).length;
+                const patternRefs = (svgContent.match(/url\(#[^)]+\)/gi) || []).length;
+                console.log('📄 SVG prepared for server:');
+                console.log('  - Text elements: ' + textCount);
+                console.log('  - Pattern definitions: ' + patternCount);
+                console.log('  - Pattern references: ' + patternRefs);
+                console.log('  - SVG size: ' + svgContent.length + ' bytes');
+                
                 // Send SVG to server for PDF conversion with text-to-curves
                 const formData = new FormData();
                 formData.append('action', 'apd_export_pdf_from_svg');
@@ -588,17 +598,24 @@
                 
                 // Get ajaxurl from WordPress
                 const ajaxUrl = (typeof ajaxurl !== 'undefined') ? ajaxurl : '/wp-admin/admin-ajax.php';
+                console.log('📄 Sending SVG to server:', ajaxUrl);
+                console.log('📄 Action: apd_export_pdf_from_svg');
                 
                 const response = await fetch(ajaxUrl, {
                     method: 'POST',
                     body: formData
                 });
                 
+                console.log('📄 Server response status:', response.status, response.statusText);
+                
                 if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('📄 Server error response:', errorText);
                     throw new Error('Server error: ' + response.statusText);
                 }
                 
                 const result = await response.json();
+                console.log('📄 Server response:', result);
                 
                 if (result.success) {
                     // Download the PDF

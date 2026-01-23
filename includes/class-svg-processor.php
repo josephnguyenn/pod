@@ -238,7 +238,11 @@ class APD_SVG_Processor
         // Verify nonce (optional for customizer preview)
         // Allow any logged-in user to export PDF from customizer
         
+        error_log("APD PDF from SVG: ===== ENDPOINT CALLED =====");
+        error_log("APD PDF from SVG: POST data keys: " . implode(', ', array_keys($_POST)));
+        
         if (!isset($_POST['svg_content']) || empty($_POST['svg_content'])) {
+            error_log("APD PDF from SVG: ERROR - SVG content is missing");
             wp_send_json_error(array('message' => 'SVG content is required'));
             return;
         }
@@ -246,23 +250,36 @@ class APD_SVG_Processor
         $svg_content = wp_unslash($_POST['svg_content']);
         $filename = isset($_POST['filename']) ? sanitize_file_name($_POST['filename']) : 'design.pdf';
         
-        error_log("APD PDF from SVG: Starting PDF export from customizer preview");
+        error_log("APD PDF from SVG: ===== STARTING PDF EXPORT =====");
+        error_log("APD PDF from SVG: Filename: " . $filename);
+        error_log("APD PDF from SVG: SVG content length: " . strlen($svg_content) . " bytes");
         
         // Log incoming SVG info
         $text_count_incoming = preg_match_all('/<text[^>]*>/i', $svg_content);
         $pattern_count_incoming = preg_match_all('/<pattern[^>]*>/i', $svg_content);
         $pattern_refs_incoming = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
-        error_log("APD PDF from SVG: Incoming SVG - $text_count_incoming text elements, $pattern_count_incoming patterns, $pattern_refs_incoming pattern stroke references");
+        $apd_text_pattern = preg_match_all('/apdTextPattern/i', $svg_content);
+        error_log("APD PDF from SVG: ===== INCOMING SVG ANALYSIS =====");
+        error_log("APD PDF from SVG: Text elements: $text_count_incoming");
+        error_log("APD PDF from SVG: Pattern definitions: $pattern_count_incoming");
+        error_log("APD PDF from SVG: Pattern stroke references: $pattern_refs_incoming");
+        error_log("APD PDF from SVG: apdTextPattern references: $apd_text_pattern");
         
         // Process SVG for PDF export (preserves material patterns, converts text to curves)
+        error_log("APD PDF from SVG: Calling make_pdf_compatible()...");
         $processed_svg = $this->make_pdf_compatible($svg_content, 0);
         
-        // Log processed SVG info
-        if (!is_wp_error($processed_svg)) {
+        if (is_wp_error($processed_svg)) {
+            error_log("APD PDF from SVG: ERROR in make_pdf_compatible: " . $processed_svg->get_error_message());
+        } else {
+            // Log processed SVG info
             $text_count_processed = preg_match_all('/<text[^>]*>/i', $processed_svg);
             $pattern_count_processed = preg_match_all('/<pattern[^>]*>/i', $processed_svg);
             $pattern_refs_processed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']|stroke=["\']url\(#[^)]+\)["\']/i', $processed_svg);
-            error_log("APD PDF from SVG: Processed SVG - $text_count_processed text elements, $pattern_count_processed patterns, $pattern_refs_processed pattern references");
+            error_log("APD PDF from SVG: ===== PROCESSED SVG ANALYSIS =====");
+            error_log("APD PDF from SVG: Text elements: $text_count_processed (was $text_count_incoming)");
+            error_log("APD PDF from SVG: Pattern definitions: $pattern_count_processed (was $pattern_count_incoming)");
+            error_log("APD PDF from SVG: Pattern references: $pattern_refs_processed (was $pattern_refs_incoming)");
         }
         
         if (is_wp_error($processed_svg)) {
@@ -271,12 +288,16 @@ class APD_SVG_Processor
         }
         
         // Convert to PDF
+        error_log("APD PDF from SVG: Calling svg_to_pdf()...");
         $pdf_result = $this->svg_to_pdf($processed_svg, 0);
         
         if (is_wp_error($pdf_result)) {
-            // Check if client-side fallback is needed
+            error_log("APD PDF from SVG: ERROR in svg_to_pdf: " . $pdf_result->get_error_message());
             $error_data = $pdf_result->get_error_data();
+            
+            // Check if client-side fallback is needed
             if (isset($error_data['use_client_side']) && $error_data['use_client_side']) {
+                error_log("APD PDF from SVG: Returning client-side fallback flag");
                 wp_send_json_success(array(
                     'use_client_side' => true,
                     'svg_content' => $processed_svg
@@ -284,17 +305,28 @@ class APD_SVG_Processor
                 return;
             }
             
+            error_log("APD PDF from SVG: Sending error response");
             wp_send_json_error(array('message' => $pdf_result->get_error_message()));
             return;
         }
         
         // Save PDF file
+        error_log("APD PDF from SVG: PDF generated successfully, saving file...");
         $upload_dir = wp_upload_dir();
         $pdf_filename = 'pdf-' . time() . '-' . $filename;
         $pdf_path = $upload_dir['path'] . '/' . $pdf_filename;
         $pdf_url = $upload_dir['url'] . '/' . $pdf_filename;
         
-        file_put_contents($pdf_path, $pdf_result);
+        $saved = file_put_contents($pdf_path, $pdf_result);
+        if ($saved === false) {
+            error_log("APD PDF from SVG: ERROR - Failed to save PDF file");
+            wp_send_json_error(array('message' => 'Failed to save PDF file'));
+            return;
+        }
+        
+        error_log("APD PDF from SVG: ===== SUCCESS =====");
+        error_log("APD PDF from SVG: PDF saved: $pdf_filename (" . strlen($pdf_result) . " bytes)");
+        error_log("APD PDF from SVG: PDF URL: $pdf_url");
         
         wp_send_json_success(array(
             'pdf_url' => $pdf_url,
