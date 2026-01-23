@@ -2123,10 +2123,28 @@ class APD_SVG_Processor
         // This ensures fonts don't change in CorelDRAW and material outlines are preserved as vectors
         $svg_content = $this->convert_text_to_paths_with_material_outline($svg_content, $order_id);
         
-        // STEP 5.6: Use Inkscape to convert ALL text to curves/paths with material outlines preserved
+        // STEP 5.6: Verify pattern definitions are present before conversion
+        $pattern_defs_before = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $pattern_refs_before = preg_match_all('/url\(#[^)]+\)/i', $svg_content);
+        error_log("APD PDF Compatible - Order #$order_id: Before conversion - $pattern_defs_before pattern definitions, $pattern_refs_before pattern references");
+        
+        if ($pattern_defs_before === 0 && $pattern_refs_before > 0) {
+            error_log("APD PDF Compatible - Order #$order_id: ⚠️ WARNING - Pattern references found but no pattern definitions! Material outlines may be lost.");
+        }
+        
+        // STEP 5.7: Use Inkscape to convert ALL text to curves/paths with material outlines preserved
         // CRITICAL: This converts text to paths AND converts material outline strokes to fills
         // This ensures material outline patterns are preserved as fills on path elements
         $svg_content = $this->inkscape_convert_all_to_curves($svg_content, $order_id);
+        
+        // STEP 5.8: Verify pattern definitions are still present after conversion
+        $pattern_defs_after = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $pattern_refs_after = preg_match_all('/url\(#[^)]+\)/i', $svg_content);
+        error_log("APD PDF Compatible - Order #$order_id: After conversion - $pattern_defs_after pattern definitions, $pattern_refs_after pattern references");
+        
+        if ($pattern_defs_after < $pattern_defs_before) {
+            error_log("APD PDF Compatible - Order #$order_id: ⚠️ WARNING - Pattern definitions lost during conversion! ($pattern_defs_before -> $pattern_defs_after)");
+        }
         
         // STEP 6: Ensure proper XML declaration with UTF-8
         $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);

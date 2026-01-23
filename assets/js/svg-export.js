@@ -92,7 +92,45 @@
             // Add defs section for patterns, gradients, clipPaths
             svg += `  <defs>\n`;
             
-            // Add material patterns if available
+            // CRITICAL: Collect ALL pattern definitions from the DOM first
+            // This includes material outline patterns from text elements
+            const allPatterns = new Map();
+            
+            // Get patterns from main SVG
+            const mainSvg = previewArea.querySelector('svg');
+            if (mainSvg) {
+                const mainDefs = mainSvg.querySelector('defs');
+                if (mainDefs) {
+                    mainDefs.querySelectorAll('pattern').forEach(pattern => {
+                        const patternId = pattern.getAttribute('id');
+                        if (patternId) {
+                            allPatterns.set(patternId, pattern.cloneNode(true));
+                        }
+                    });
+                }
+            }
+            
+            // Get patterns from text SVG containers (material outline patterns)
+            const textSvgContainers = document.querySelectorAll('.apd-text-svg');
+            textSvgContainers.forEach(container => {
+                const containerDefs = container.querySelector('defs');
+                if (containerDefs) {
+                    containerDefs.querySelectorAll('pattern').forEach(pattern => {
+                        const patternId = pattern.getAttribute('id');
+                        if (patternId && !allPatterns.has(patternId)) {
+                            allPatterns.set(patternId, pattern.cloneNode(true));
+                        }
+                    });
+                }
+            });
+            
+            // Add all collected patterns to defs
+            allPatterns.forEach((pattern, patternId) => {
+                svg += `    ${pattern.outerHTML}\n`;
+                console.log('✅ Added pattern to defs:', patternId);
+            });
+            
+            // Add material patterns if available (fallback)
             const materialPatterns = await this._generateMaterialPatterns();
             if (materialPatterns) {
                 svg += materialPatterns;
@@ -286,26 +324,8 @@
                 const finalX = containerX + parseFloat(x);
                 const finalY = containerY + parseFloat(y);
                 
-                // Get pattern definitions from the container's defs
-                const containerDefs = textSvgContainer.querySelector('defs');
-                let patternDefs = '';
-                if (containerDefs) {
-                    // Clone pattern definitions
-                    const patterns = containerDefs.querySelectorAll('pattern');
-                    patterns.forEach(pattern => {
-                        const patternId = pattern.getAttribute('id');
-                        if (patternId) {
-                            // Clone the pattern with its content
-                            const clonedPattern = pattern.cloneNode(true);
-                            patternDefs += `      ${clonedPattern.outerHTML}\n`;
-                        }
-                    });
-                }
-                
-                // Add pattern definitions if any
-                if (patternDefs) {
-                    textSVG += patternDefs;
-                }
+                // Pattern definitions are already in main defs section
+                // No need to add them here again
                 
                 // Build text element with all attributes preserved (including material outline)
                 textSVG += `      <text x="${finalX}" y="${finalY}"`;
