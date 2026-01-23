@@ -509,10 +509,29 @@ class APD_SVG_Processor
             $source
         ));
 
+        // Verify text was converted to curves
+        $text_count_final = preg_match_all('/<text[^>]*>/i', $pdf_svg);
+        $pattern_count_final = preg_match_all('/<pattern[^>]*>/i', $pdf_svg);
+        $pattern_fills_final = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $pdf_svg);
+        
+        error_log("APD PDF Export - Order #$order_id: Final verification - $text_count_final text elements, $pattern_count_final patterns, $pattern_fills_final pattern fills");
+        
+        if ($text_count_final === 0) {
+            $message = 'Vector PDF generated successfully. ALL text converted to curves. Material outline patterns preserved. Open in CorelDRAW - all elements are vectors ready for editing.';
+            error_log("APD PDF Export - Order #$order_id: ✅ SUCCESS - All text converted to curves");
+        } else {
+            $message = 'Vector PDF generated successfully. ' . $text_count_final . ' text elements remain (may not be converted to curves). Material outline patterns preserved. Open in CorelDRAW to convert remaining text to curves.';
+            error_log("APD PDF Export - Order #$order_id: ⚠️ WARNING - $text_count_final text elements still present");
+        }
+        
         wp_send_json_success(array(
             'file_url' => $file_url,
             'filename' => $filename,
-            'message' => 'Vector PDF generated successfully. Open in CorelDRAW to convert to editable vectors with all styles and material patterns preserved.'
+            'message' => $message,
+            'text_converted' => $text_count_final === 0,
+            'text_count' => $text_count_final,
+            'pattern_count' => $pattern_count_final,
+            'pattern_fills' => $pattern_fills_final
         ));
     }
 
