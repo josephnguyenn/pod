@@ -663,36 +663,60 @@ class APD_Order_Admin_Handler
                 });
             });
 
-            // Download PDF functionality
+            // Download PDF functionality - Use proper SVG export with text-to-curves
             const downloadPdfBtn = document.getElementById('download-design-pdf-btn');
             if (downloadPdfBtn) {
-                downloadPdfBtn.addEventListener('click', function(){
-                    const img = document.getElementById('preview-image');
-                    if (!img) {
-                        alert('No image found to download');
-                        return;
+                downloadPdfBtn.addEventListener('click', async function(){
+                    const button = this;
+                    const originalText = button.innerHTML;
+                    button.disabled = true;
+                    button.innerHTML = 'Generating PDF...';
+                    
+                    try {
+                        // Use FSC_SVGExport to generate PDF with text-to-curves
+                        if (window.FSC_SVGExport && typeof window.FSC_SVGExport.exportPDF === 'function') {
+                            const success = await window.FSC_SVGExport.exportPDF('order-' + orderId + '-design.pdf');
+                            if (success) {
+                                console.log('✅ PDF exported successfully with text-to-curves');
+                            } else {
+                                alert('PDF export failed. Please try again.');
+                            }
+                        } else {
+                            // Fallback to image-based PDF
+                            const img = document.getElementById('preview-image');
+                            if (!img) {
+                                alert('No image found to download');
+                                return;
+                            }
+                            
+                            // Create a temporary canvas to get image data
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            canvas.width = img.naturalWidth || img.width;
+                            canvas.height = img.naturalHeight || img.height;
+                            ctx.drawImage(img, 0, 0);
+                            
+                            // Convert to data URL
+                            const imgData = canvas.toDataURL('image/png');
+                            
+                            // Create PDF using jsPDF
+                            const { jsPDF } = window.jspdf;
+                            const pdf = new jsPDF({
+                                orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                                unit: 'px',
+                                format: [canvas.width, canvas.height]
+                            });
+                            
+                            pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                            pdf.save('order-' + orderId + '-design.pdf');
+                        }
+                    } catch (error) {
+                        console.error('PDF export error:', error);
+                        alert('PDF export failed: ' + error.message);
+                    } finally {
+                        button.disabled = false;
+                        button.innerHTML = originalText;
                     }
-                    
-                    // Create a temporary canvas to get image data
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    canvas.width = img.naturalWidth || img.width;
-                    canvas.height = img.naturalHeight || img.height;
-                    ctx.drawImage(img, 0, 0);
-                    
-                    // Convert to data URL
-                    const imgData = canvas.toDataURL('image/png');
-                    
-                    // Create PDF using jsPDF
-                    const { jsPDF } = window.jspdf;
-                    const pdf = new jsPDF({
-                        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
-                        unit: 'px',
-                        format: [canvas.width, canvas.height]
-                    });
-                    
-                    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-                    pdf.save('order-' + orderId + '-design.pdf');
                 });
             }
 

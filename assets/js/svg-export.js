@@ -189,9 +189,36 @@
                 // Set fill color
                 text.setAttribute('fill', colorValue);
                 
-                // Set stroke based on material
-                if (currentMaterial && currentMaterial !== 'None' && currentMaterial !== 'Solid') {
-                    // Use material pattern as stroke
+                // CRITICAL: Get material outline pattern from original text element
+                // Check if text has material outline pattern in the original DOM
+                const originalText = logoElement.querySelectorAll('text')[index];
+                if (originalText) {
+                    const originalStroke = originalText.getAttribute('stroke');
+                    const originalStrokeWidth = originalText.getAttribute('stroke-width');
+                    
+                    // If original has material outline pattern, preserve it
+                    if (originalStroke && originalStroke.indexOf('url(#') !== -1 && originalStrokeWidth) {
+                        text.setAttribute('stroke', originalStroke);
+                        text.setAttribute('stroke-width', originalStrokeWidth);
+                        text.setAttribute('stroke-linecap', originalText.getAttribute('stroke-linecap') || 'round');
+                        text.setAttribute('stroke-linejoin', originalText.getAttribute('stroke-linejoin') || 'round');
+                        text.setAttribute('paint-order', originalText.getAttribute('paint-order') || 'stroke fill');
+                        text.setAttribute('vector-effect', originalText.getAttribute('vector-effect') || 'non-scaling-stroke');
+                    } else if (currentMaterial && currentMaterial !== 'None' && currentMaterial !== 'Solid') {
+                        // Use material pattern as stroke
+                        text.setAttribute('stroke', 'url(#material-stroke-pattern)');
+                        text.setAttribute('stroke-width', strokeWidth.toString());
+                        text.setAttribute('stroke-linecap', 'round');
+                        text.setAttribute('stroke-linejoin', 'round');
+                        text.setAttribute('paint-order', 'stroke fill');
+                        text.setAttribute('vector-effect', 'non-scaling-stroke');
+                    } else {
+                        // No stroke for solid color
+                        text.setAttribute('stroke', 'none');
+                        text.setAttribute('stroke-width', '0');
+                    }
+                } else if (currentMaterial && currentMaterial !== 'None' && currentMaterial !== 'Solid') {
+                    // Fallback: Use material pattern as stroke
                     text.setAttribute('stroke', 'url(#material-stroke-pattern)');
                     text.setAttribute('stroke-width', strokeWidth.toString());
                     text.setAttribute('stroke-linecap', 'round');
@@ -214,7 +241,7 @@
         },
         
         /**
-         * Process text layer with proper positioning
+         * Process text layer with proper positioning and material outlines
          */
         _processTextLayer: async function(textContainer, config) {
             let textSVG = '';
@@ -222,10 +249,87 @@
             textSVG += `    <!-- Text Layer -->\n`;
             textSVG += `    <g id="text-layer">\n`;
             
-            // Get all text elements
-            const textElements = textContainer.querySelectorAll('.fsc-text-item, [class*="text"]');
+            // CRITICAL: Get text elements from .apd-text-svg containers (where material outlines are applied)
+            const textSvgContainers = document.querySelectorAll('.apd-text-svg, .fsc-text-container svg');
             
-            textElements.forEach((textEl, index) => {
+            textSvgContainers.forEach((textSvgContainer, containerIndex) => {
+                // Get the text element inside this SVG container
+                const textElement = textSvgContainer.querySelector('text');
+                if (!textElement) return;
+                
+                // Get text content
+                const text = textElement.textContent || textElement.innerText;
+                if (!text) return;
+                
+                // Get all attributes from the original text element (preserves material outline)
+                const fill = textElement.getAttribute('fill') || '#000000';
+                const stroke = textElement.getAttribute('stroke') || 'none';
+                const strokeWidth = textElement.getAttribute('stroke-width') || '0';
+                const strokeLinejoin = textElement.getAttribute('stroke-linejoin') || 'round';
+                const strokeLinecap = textElement.getAttribute('stroke-linecap') || 'round';
+                const paintOrder = textElement.getAttribute('paint-order') || 'stroke fill';
+                const vectorEffect = textElement.getAttribute('vector-effect') || 'non-scaling-stroke';
+                const fontSize = textElement.getAttribute('font-size') || '28';
+                const fontFamily = textElement.getAttribute('font-family') || 'Arial';
+                const fontWeight = textElement.getAttribute('font-weight') || 'normal';
+                const x = textElement.getAttribute('x') || '0';
+                const y = textElement.getAttribute('y') || '0';
+                const textAnchor = textElement.getAttribute('text-anchor') || 'start';
+                const dominantBaseline = textElement.getAttribute('dominant-baseline') || 'hanging';
+                
+                // Get transform from parent SVG container
+                const containerTransform = textSvgContainer.getAttribute('transform') || '';
+                const containerX = parseFloat(textSvgContainer.getAttribute('x') || '0');
+                const containerY = parseFloat(textSvgContainer.getAttribute('y') || '0');
+                
+                // Calculate final position
+                const finalX = containerX + parseFloat(x);
+                const finalY = containerY + parseFloat(y);
+                
+                // Get pattern definitions from the container's defs
+                const containerDefs = textSvgContainer.querySelector('defs');
+                let patternDefs = '';
+                if (containerDefs) {
+                    // Clone pattern definitions
+                    const patterns = containerDefs.querySelectorAll('pattern');
+                    patterns.forEach(pattern => {
+                        const patternId = pattern.getAttribute('id');
+                        if (patternId) {
+                            // Clone the pattern with its content
+                            const clonedPattern = pattern.cloneNode(true);
+                            patternDefs += `      ${clonedPattern.outerHTML}\n`;
+                        }
+                    });
+                }
+                
+                // Add pattern definitions if any
+                if (patternDefs) {
+                    textSVG += patternDefs;
+                }
+                
+                // Build text element with all attributes preserved (including material outline)
+                textSVG += `      <text x="${finalX}" y="${finalY}"`;
+                textSVG += ` font-family="${fontFamily}"`;
+                textSVG += ` font-size="${fontSize}"`;
+                textSVG += ` font-weight="${fontWeight}"`;
+                textSVG += ` fill="${fill}"`;
+                textSVG += ` stroke="${stroke}"`;
+                textSVG += ` stroke-width="${strokeWidth}"`;
+                textSVG += ` stroke-linejoin="${strokeLinejoin}"`;
+                textSVG += ` stroke-linecap="${strokeLinecap}"`;
+                textSVG += ` paint-order="${paintOrder}"`;
+                textSVG += ` vector-effect="${vectorEffect}"`;
+                textSVG += ` text-anchor="${textAnchor}"`;
+                textSVG += ` dominant-baseline="${dominantBaseline}"`;
+                if (containerTransform) {
+                    textSVG += ` transform="${containerTransform}"`;
+                }
+                textSVG += `>${this._escapeXML(text)}</text>\n`;
+            });
+            
+            // Fallback: Also check for text in other containers
+            const fallbackTextElements = textContainer.querySelectorAll('.fsc-text-item, [class*="text"]:not(.apd-text-svg)');
+            fallbackTextElements.forEach((textEl, index) => {
                 const text = textEl.textContent || textEl.innerText;
                 if (!text) return;
                 
@@ -235,7 +339,6 @@
                 const fontFamily = computedStyle.fontFamily || 'Arial';
                 const fontWeight = computedStyle.fontWeight || 'normal';
                 const color = computedStyle.color || '#000000';
-                const textAlign = computedStyle.textAlign || 'center';
                 
                 // Get position
                 const rect = textEl.getBoundingClientRect();
@@ -243,19 +346,14 @@
                 const x = rect.left - containerRect.left + (rect.width / 2);
                 const y = rect.top - containerRect.top + fontSize;
                 
-                if (config.convertTextToPaths) {
-                    // TODO: Convert text to paths for better compatibility
-                    textSVG += `      <!-- Text converted to path -->\n`;
-                } else {
-                    // Keep as text element
-                    textSVG += `      <text x="${x}" y="${y}"`;
-                    textSVG += ` font-family="${fontFamily}"`;
-                    textSVG += ` font-size="${fontSize}"`;
-                    textSVG += ` font-weight="${fontWeight}"`;
-                    textSVG += ` fill="${color}"`;
-                    textSVG += ` text-anchor="middle"`;
-                    textSVG += `>${this._escapeXML(text)}</text>\n`;
-                }
+                // Keep as text element
+                textSVG += `      <text x="${x}" y="${y}"`;
+                textSVG += ` font-family="${fontFamily}"`;
+                textSVG += ` font-size="${fontSize}"`;
+                textSVG += ` font-weight="${fontWeight}"`;
+                textSVG += ` fill="${color}"`;
+                textSVG += ` text-anchor="middle"`;
+                textSVG += `>${this._escapeXML(text)}</text>\n`;
             });
             
             textSVG += `    </g>\n`;
@@ -444,6 +542,161 @@
             } catch (error) {
                 console.error('❌ Failed to generate SVG data URL:', error);
                 return null;
+            }
+        },
+        
+        /**
+         * Export PDF with text converted to curves and material outlines preserved
+         * Uses server-side processing for proper text-to-curves conversion
+         */
+        exportPDF: async function(filename = 'freight-sign-design.pdf') {
+            try {
+                console.log('📄 Starting PDF export with text-to-curves conversion...');
+                
+                // Get SVG content with material outlines preserved
+                const svgContent = await this.exportDesign({
+                    dpi: 300,
+                    convertTextToPaths: false, // Server will convert
+                    embedFonts: true
+                });
+                
+                // Send SVG to server for PDF conversion with text-to-curves
+                const formData = new FormData();
+                formData.append('action', 'apd_export_pdf_from_svg');
+                formData.append('svg_content', svgContent);
+                formData.append('filename', filename);
+                
+                const response = await fetch(ajaxurl, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Server error: ' + response.statusText);
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Download the PDF
+                    if (result.data.pdf_url) {
+                        const link = document.createElement('a');
+                        link.href = result.data.pdf_url;
+                        link.download = filename;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        console.log('✅ PDF exported:', filename);
+                        return true;
+                    } else if (result.data.use_client_side) {
+                        // Fallback to client-side generation
+                        console.log('⚠️ Using client-side PDF generation fallback');
+                        return await this._generateClientSidePDF(svgContent, filename);
+                    }
+                } else {
+                    throw new Error(result.data?.message || 'PDF export failed');
+                }
+                
+            } catch (error) {
+                console.error('❌ PDF export failed:', error);
+                // Fallback to client-side generation
+                try {
+                    const svgContent = await this.exportDesign({
+                        dpi: 300,
+                        convertTextToPaths: false,
+                        embedFonts: true
+                    });
+                    return await this._generateClientSidePDF(svgContent, filename);
+                } catch (fallbackError) {
+                    console.error('❌ Client-side PDF fallback also failed:', fallbackError);
+                    alert('PDF export failed: ' + error.message);
+                    return false;
+                }
+            }
+        },
+        
+        /**
+         * Generate PDF client-side (fallback)
+         */
+        _generateClientSidePDF: async function(svgContent, filename) {
+            try {
+                // Check if jsPDF is available
+                if (typeof window.jspdf === 'undefined') {
+                    throw new Error('jsPDF library not loaded');
+                }
+                
+                const { jsPDF } = window.jspdf;
+                
+                // Parse SVG to get dimensions
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                const svgElement = svgDoc.documentElement;
+                
+                // Get SVG dimensions
+                let width = parseFloat(svgElement.getAttribute('width')) || 800;
+                let height = parseFloat(svgElement.getAttribute('height')) || 600;
+                
+                const viewBox = svgElement.getAttribute('viewBox');
+                if (viewBox) {
+                    const vb = viewBox.split(/\s+/);
+                    if (vb.length >= 4) {
+                        width = parseFloat(vb[2]) || width;
+                        height = parseFloat(vb[3]) || height;
+                    }
+                }
+                
+                // Convert pixels to mm
+                const widthMM = (width / 96) * 25.4;
+                const heightMM = (height / 96) * 25.4;
+                
+                // Create PDF
+                const doc = new jsPDF({
+                    orientation: widthMM > heightMM ? 'landscape' : 'portrait',
+                    unit: 'mm',
+                    format: [widthMM, heightMM],
+                    compress: true
+                });
+                
+                // Try to use svg2pdf if available
+                if (typeof window.svg2pdf !== 'undefined' && window.svg2pdf.svg2pdf) {
+                    await window.svg2pdf.svg2pdf(svgElement, doc, {
+                        xOffset: 0,
+                        yOffset: 0,
+                        scale: 1
+                    });
+                } else {
+                    // Fallback: Convert SVG to image
+                    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+                    const svgUrl = URL.createObjectURL(svgBlob);
+                    const img = new Image();
+                    
+                    await new Promise((resolve, reject) => {
+                        img.onload = function() {
+                            const dpi = 300;
+                            const scale = dpi / 96;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = this.width * scale;
+                            canvas.height = this.height * scale;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(this, 0, 0, canvas.width, canvas.height);
+                            const imgData = canvas.toDataURL('image/png', 1.0);
+                            doc.addImage(imgData, 'PNG', 0, 0, widthMM, heightMM);
+                            URL.revokeObjectURL(svgUrl);
+                            resolve();
+                        };
+                        img.onerror = reject;
+                        img.src = svgUrl;
+                    });
+                }
+                
+                // Save PDF
+                doc.save(filename);
+                console.log('✅ Client-side PDF generated:', filename);
+                return true;
+                
+            } catch (error) {
+                console.error('❌ Client-side PDF generation failed:', error);
+                throw error;
             }
         }
     };

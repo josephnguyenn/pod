@@ -37,6 +37,7 @@ class APD_SVG_Processor
     {
         add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
         add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
+        add_action('wp_ajax_apd_export_pdf_from_svg', array($this, 'apd_export_pdf_from_svg'));
     }
 
     public function apd_process_cut_ready_svg()
@@ -2236,23 +2237,19 @@ class APD_SVG_Processor
         file_put_contents($temp_svg, $svg_content);
         
         // Use Inkscape to convert SVG to PDF with vector preservation
-        // CRITICAL: Even if text was converted to paths, we still use --export-text-to-path
-        // as a safety measure to ensure ALL text is converted, and to preserve strokes
+        // Note: Text should already be converted to paths by inkscape_convert_text_to_paths()
         // --export-type=pdf ensures vector format
         // --export-area-drawing exports the entire drawing area
         // --export-pdf-version=1.4 for CorelDRAW compatibility
-        // --export-text-to-path ensures any remaining text is converted (safety measure)
+        // We don't need --export-text-to-path here since text is already converted to paths
         $command = escapeshellarg($inkscape_path) . 
                    ' --export-type=pdf' .
                    ' --export-filename=' . escapeshellarg($temp_pdf) .
                    ' --export-area-drawing' .
-                   ' --export-text-to-path' .
                    ' --export-ignore-filters' .
                    ' --export-pdf-version=1.4' .
                    ' ' . escapeshellarg($temp_svg) . 
                    ' 2>&1';
-        
-        error_log("APD PDF - Order #$order_id: Converting to PDF with command: " . $command);
         
         $output = shell_exec($command);
         $return_code = 0;
@@ -2513,12 +2510,10 @@ class APD_SVG_Processor
         // Note: object-stroke-to-path converts strokes to paths, preserving material patterns
         
         // Try using --actions first (Inkscape 1.0+)
-        // CRITICAL: We need to convert text to paths AND preserve strokes (material outlines)
-        // Step 1: Convert text to paths (this keeps the stroke attributes)
-        // Step 2: Convert strokes to paths (this preserves material outline patterns as actual paths)
-        
-        // Method 1A: Use --actions with proper sequence
-        // First convert text to paths, then convert strokes to paths
+        // select-all:text - selects all text elements
+        // object-to-path - converts text to paths
+        // select-all - selects all (including the converted paths)
+        // object-stroke-to-path - converts strokes to paths (preserves material outline patterns)
         $command = escapeshellarg($inkscape_path) . 
                    ' --actions="select-all:text;object-to-path;select-all;object-stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
@@ -2526,11 +2521,9 @@ class APD_SVG_Processor
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
-        error_log("APD Text to Path - Order #$order_id: Executing command: " . $command);
         $output = shell_exec($command);
         $return_code = 0;
         exec($command . '; echo $?', $output_array, $return_code);
-        error_log("APD Text to Path - Order #$order_id: Return code: $return_code, Output: " . substr($output, 0, 500));
         
         // Check if conversion was successful
         $conversion_success = false;
@@ -2604,30 +2597,17 @@ class APD_SVG_Processor
             // Verify material outline patterns are preserved
             $pattern_refs_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
             $pattern_defs_after = preg_match_all('/<pattern[^>]*>/i', $converted_svg);
-            $path_with_stroke = preg_match_all('/<path[^>]*\s+stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
             error_log("  - Material outline pattern references: $pattern_refs_after");
             error_log("  - Pattern definitions: $pattern_defs_after");
-            error_log("  - Paths with material outline stroke: $path_with_stroke");
             
             if ($text_count_after < $text_count_before && $path_count > 0) {
                 // Text was converted successfully to paths
-                // But we need to ensure material outlines are preserved
-                // If patterns are missing, try to restore them
-                if ($pattern_refs_after === 0 && $path_with_stroke === 0) {
-                    error_log("APD Text to Path - Order #$order_id: WARNING - Material outline patterns may have been lost during conversion");
-                    error_log("APD Text to Path - Order #$order_id: Attempting to restore material outline patterns...");
-                    
-                    // Try to restore material outline patterns from original SVG
-                    $converted_svg = $this->restore_material_outlines_on_paths($converted_svg, $svg_content, $order_id);
-                }
-                
                 error_log("APD Text to Path - Order #$order_id: ✅ SUCCESS - Text converted to curves/paths");
                 unlink($temp_svg_input);
                 unlink($temp_svg_output);
                 return $converted_svg;
             } else {
                 error_log("APD Text to Path - Order #$order_id: WARNING - Text conversion may have failed, using original SVG");
-                error_log("  - Text before: $text_count_before, Text after: $text_count_after, Paths: $path_count");
                 unlink($temp_svg_input);
                 unlink($temp_svg_output);
                 return $svg_content;
@@ -2638,65 +2618,6 @@ class APD_SVG_Processor
             if (file_exists($temp_svg_output)) unlink($temp_svg_output);
             return $svg_content;
         }
-    }
-
-    /**
-     * Restore material outline patterns on paths after text-to-path conversion
-     * Sometimes Inkscape loses pattern references when converting, so we restore them
-     * 
-     * @param string $converted_svg SVG with converted paths
-     * @param string $original_svg Original SVG with text elements
-     * @param int $order_id Order ID for logging
-     * @return string SVG with restored material outline patterns
-     */
-    private function restore_material_outlines_on_paths($converted_svg, $original_svg, $order_id = 0)
-    {
-        error_log("APD Restore Patterns - Order #$order_id: Attempting to restore material outline patterns");
-        
-        // Extract pattern definitions from original SVG
-        preg_match_all('/<pattern([^>]*)>(.*?)<\/pattern>/is', $original_svg, $pattern_matches, PREG_SET_ORDER);
-        
-        // Extract text elements with material outline from original
-        preg_match_all('/<text([^>]*)\s+stroke=["\']url\(([^)]+)\)["\']([^>]*)>/i', $original_svg, $text_matches, PREG_SET_ORDER);
-        
-        if (empty($pattern_matches) || empty($text_matches)) {
-            error_log("APD Restore Patterns - Order #$order_id: No patterns or text with material outline found in original");
-            return $converted_svg;
-        }
-        
-        // Ensure pattern definitions exist in converted SVG
-        foreach ($pattern_matches as $pattern_match) {
-            $pattern_id = '';
-            if (preg_match('/id=["\']([^"\']+)["\']/', $pattern_match[1], $id_match)) {
-                $pattern_id = $id_match[1];
-                
-                // Check if pattern exists in converted SVG
-                if (strpos($converted_svg, 'id="' . $pattern_id . '"') === false && 
-                    strpos($converted_svg, "id='" . $pattern_id . "'") === false) {
-                    // Add pattern definition to converted SVG
-                    $pattern_def = '<pattern' . $pattern_match[1] . '>' . $pattern_match[2] . '</pattern>';
-                    
-                    // Insert into defs section
-                    if (preg_match('/<defs([^>]*)>/i', $converted_svg, $defs_match)) {
-                        $converted_svg = str_replace($defs_match[0], $defs_match[0] . "\n  " . $pattern_def, $converted_svg);
-                        error_log("APD Restore Patterns - Order #$order_id: Restored pattern definition: $pattern_id");
-                    } elseif (preg_match('/<svg([^>]*)>/i', $converted_svg, $svg_match)) {
-                        // Add defs section if it doesn't exist
-                        $converted_svg = str_replace($svg_match[0], $svg_match[0] . "\n  <defs>\n    " . $pattern_def . "\n  </defs>", $converted_svg);
-                        error_log("APD Restore Patterns - Order #$order_id: Added defs section and pattern: $pattern_id");
-                    }
-                }
-            }
-        }
-        
-        // Try to match converted paths with original text positions and restore strokes
-        // This is a simplified approach - we'll add stroke to paths that don't have it
-        // but should have material outline based on position
-        
-        // For now, just ensure pattern definitions are present
-        // The actual stroke restoration would require more complex matching
-        
-        return $converted_svg;
     }
 
     /**
