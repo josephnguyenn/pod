@@ -865,14 +865,17 @@ class APD_Order_Admin_Handler
 
         // Export Vector PDF (preserves all styles and material patterns)
         window.exportVectorPDF = function(orderId) {
+            console.log('📄 ===== STARTING PDF EXPORT =====');
+            console.log('📄 Order ID:', orderId);
+            
             const button = event.target.closest('button');
             const originalText = button.innerHTML;
             button.disabled = true;
             button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
 
-            console.log('📄 PDF Export: Sending request to server for Order #' + orderId);
-            console.log('📄 PDF Export: Action: apd_export_pdf');
-            console.log('📄 PDF Export: AJAX URL:', ajaxurl);
+            console.log('📄 Sending request to server for PDF generation...');
+            console.log('📄 Action: apd_export_pdf');
+            console.log('📄 URL:', ajaxurl);
 
             jQuery.ajax({
                 url: ajaxurl,
@@ -883,41 +886,35 @@ class APD_Order_Admin_Handler
                     _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
                 },
                 success: function(response) {
-                    console.log('📄 PDF Export: Server response received:', response);
-                    
+                    console.log('📄 Server response received:', response);
                     if (response.success) {
-                        console.log('📄 PDF Export: Success response');
+                        console.log('📄 ✅ Server response: SUCCESS');
                         
-                        if (response.data.use_client_side) {
-                            console.warn('📄 PDF Export: ⚠️ Server returned client-side fallback');
-                            console.warn('📄 PDF Export: This means Inkscape/ImageMagick are not available on server');
-                            console.warn('📄 PDF Export: Text will NOT be converted to curves');
-                        } else {
-                            console.log('📄 PDF Export: ✅ Server-side PDF generated successfully');
-                        }
-                    } else {
-                        console.error('📄 PDF Export: Server returned error:', response.data);
-                    }
-                    if (response.success) {
                         // Check if we need to generate PDF client-side
                         if (response.data.use_client_side && response.data.svg_content) {
-                            console.warn('⚠️ CLIENT-SIDE FALLBACK: Server-side PDF generation not available');
-                            console.warn('⚠️ WARNING: Text will NOT be converted to curves in client-side PDF');
-                            console.warn('⚠️ WARNING: Material outlines may be lost when opening PDF in CorelDRAW');
-                            console.warn('💡 SOLUTION: Install Inkscape on server for proper text-to-curves conversion');
+                            console.log('📄 ⚠️ WARNING: Using CLIENT-SIDE fallback (server-side conversion not available)');
+                            console.log('📄 ⚠️ Client-side CANNOT convert text to curves - text will remain as text');
+                            console.log('📄 ⚠️ Material outline may be lost in CorelDRAW');
+                            console.log('📄 Solution: Install Inkscape on server for proper text-to-curves conversion');
                             
-                            // Show warning to user
-                            const warningDiv = document.createElement('div');
-                            warningDiv.className = 'notice notice-warning is-dismissible';
-                            warningDiv.innerHTML = '<p><strong>⚠️ Warning:</strong> Server-side PDF conversion not available. Text will remain as text (not curves) and material outlines may be lost. <strong>For best results, install Inkscape on the server.</strong></p>';
-                            button.closest('.order-svg-download-section').appendChild(warningDiv);
-                            setTimeout(() => warningDiv.remove(), 15000);
+                            // Analyze SVG before client-side generation
+                            const parser = new DOMParser();
+                            const svgDoc = parser.parseFromString(response.data.svg_content, 'image/svg+xml');
+                            const svgElement = svgDoc.documentElement;
+                            const textCount = svgElement.querySelectorAll('text').length;
+                            const patternCount = svgElement.querySelectorAll('pattern').length;
+                            const patternRefs = (response.data.svg_content.match(/url\(#[^)]+\)/g) || []).length;
+                            
+                            console.log('📄 SVG Analysis (client-side fallback):');
+                            console.log('  - Text elements:', textCount, '(will NOT be converted to curves)');
+                            console.log('  - Pattern definitions:', patternCount);
+                            console.log('  - Pattern references:', patternRefs);
                             
                             // Generate PDF using client-side library
                             try {
                                 generateClientSidePDF(response.data.svg_content, orderId, button);
                             } catch (error) {
-                                console.error('Client-side PDF generation failed:', error);
+                                console.error('📄 ❌ Client-side PDF generation failed:', error);
                                 alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
                                 button.disabled = false;
                                 button.innerHTML = originalText;
@@ -926,6 +923,38 @@ class APD_Order_Admin_Handler
                         }
                         
                         // Server-side generated PDF - download it
+                        console.log('📄 ✅ Server-side PDF generated successfully');
+                        console.log('📄 PDF URL:', response.data.file_url);
+                        console.log('📄 Filename:', response.data.filename);
+                        console.log('📄 Message:', response.data.message);
+                        
+                        // Analyze the generated PDF if possible
+                        console.log('📄 PDF Generation Results:');
+                        if (response.data.text_converted !== undefined) {
+                            if (response.data.text_converted) {
+                                console.log('📄 ✅ Text converted to curves: YES');
+                            } else {
+                                console.log('📄 ⚠️ Text converted to curves: NO (' + response.data.text_count + ' text elements remain)');
+                            }
+                        }
+                        if (response.data.text_count !== undefined) {
+                            console.log('📄 Text elements in final PDF:', response.data.text_count);
+                        }
+                        if (response.data.pattern_count !== undefined) {
+                            console.log('📄 Pattern definitions:', response.data.pattern_count);
+                        }
+                        if (response.data.pattern_fills !== undefined) {
+                            console.log('📄 Pattern fills (material outlines):', response.data.pattern_fills);
+                            if (response.data.pattern_fills > 0) {
+                                console.log('📄 ✅ Material outline patterns: PRESERVED');
+                            } else {
+                                console.log('📄 ⚠️ Material outline patterns: NOT FOUND (may be lost)');
+                            }
+                        }
+                        if (response.data.message) {
+                            console.log('📄 Server message:', response.data.message);
+                        }
+                        
                         const a = document.createElement('a');
                         a.href = response.data.file_url;
                         a.download = response.data.filename;
@@ -940,11 +969,18 @@ class APD_Order_Admin_Handler
                         button.closest('.order-svg-download-section').appendChild(successDiv);
                         
                         setTimeout(() => successDiv.remove(), 10000);
+                        console.log('📄 ===== PDF EXPORT COMPLETE =====');
                     } else {
+                        console.error('📄 ❌ Server response: ERROR');
+                        console.error('📄 Error data:', response.data);
                         alert('Error: ' + (response.data || 'Failed to generate PDF'));
                     }
                 },
                 error: function(xhr, status, error) {
+                    console.error('📄 ❌ Network error occurred while generating PDF');
+                    console.error('📄 Status:', status);
+                    console.error('📄 Error:', error);
+                    console.error('📄 XHR:', xhr);
                     alert('Network error occurred while generating PDF: ' + error);
                 },
                 complete: function() {
@@ -956,6 +992,9 @@ class APD_Order_Admin_Handler
 
         // Client-side PDF generation - creates PDF with embedded SVG for CorelDRAW
         function generateClientSidePDF(svgContent, orderId, button) {
+            console.log('📄 ===== CLIENT-SIDE PDF GENERATION =====');
+            console.log('📄 ⚠️ WARNING: This is a FALLBACK - text will NOT be converted to curves');
+            
             const originalText = button.innerHTML;
             
             try {
@@ -970,12 +1009,30 @@ class APD_Order_Admin_Handler
                     throw new Error('Invalid SVG content');
                 }
                 
+                // Analyze SVG before processing
+                const textCountBefore = svgElement.querySelectorAll('text').length;
+                const patternCountBefore = svgElement.querySelectorAll('pattern').length;
+                const patternRefsBefore = (svgContent.match(/url\(#[^)]+\)/g) || []).length;
+                
+                console.log('📄 SVG Analysis (before processing):');
+                console.log('  - Text elements:', textCountBefore);
+                console.log('  - Pattern definitions:', patternCountBefore);
+                console.log('  - Pattern references:', patternRefsBefore);
+                
                 // CRITICAL: Convert text to paths BEFORE PDF generation
                 // This ensures fonts don't change in CorelDRAW and material outlines are preserved
+                console.log('📄 Preparing text elements (client-side cannot convert to curves)...');
                 convertTextToPathsWithMaterialOutline(svgDoc, svgElement);
                 
                 // Update svgContent after text conversion
                 svgContent = new XMLSerializer().serializeToString(svgElement);
+                
+                // Analyze SVG after processing
+                const textCountAfter = svgElement.querySelectorAll('text').length;
+                console.log('📄 SVG Analysis (after processing):');
+                console.log('  - Text elements:', textCountAfter, '(still text, NOT converted to curves)');
+                console.log('  - ⚠️ Text conversion: FAILED (client-side cannot convert)');
+                console.log('  - ⚠️ Material outline: May be lost in CorelDRAW');
                 
                 // Get SVG dimensions
                 let width = parseFloat(svgElement.getAttribute('width')) || 800;
