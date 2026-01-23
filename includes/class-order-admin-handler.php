@@ -870,6 +870,10 @@ class APD_Order_Admin_Handler
             button.disabled = true;
             button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
 
+            console.log('📄 PDF Export: Sending request to server for Order #' + orderId);
+            console.log('📄 PDF Export: Action: apd_export_pdf');
+            console.log('📄 PDF Export: AJAX URL:', ajaxurl);
+
             jQuery.ajax({
                 url: ajaxurl,
                 type: 'POST',
@@ -879,6 +883,21 @@ class APD_Order_Admin_Handler
                     _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
                 },
                 success: function(response) {
+                    console.log('📄 PDF Export: Server response received:', response);
+                    
+                    if (response.success) {
+                        console.log('📄 PDF Export: Success response');
+                        
+                        if (response.data.use_client_side) {
+                            console.warn('📄 PDF Export: ⚠️ Server returned client-side fallback');
+                            console.warn('📄 PDF Export: This means Inkscape/ImageMagick are not available on server');
+                            console.warn('📄 PDF Export: Text will NOT be converted to curves');
+                        } else {
+                            console.log('📄 PDF Export: ✅ Server-side PDF generated successfully');
+                        }
+                    } else {
+                        console.error('📄 PDF Export: Server returned error:', response.data);
+                    }
                     if (response.success) {
                         // Check if we need to generate PDF client-side
                         if (response.data.use_client_side && response.data.svg_content) {

@@ -2312,17 +2312,19 @@ class APD_SVG_Processor
     {
         // For CorelDRAW compatibility, we'll use Inkscape if available, or create a PDF that embeds SVG
         // Check if Inkscape is available (best option for vector preservation)
+        error_log("APD PDF Create - Order #$order_id: Checking for Inkscape...");
         $inkscape_path = $this->find_inkscape();
         
         if ($inkscape_path) {
+            error_log("APD PDF Create - Order #$order_id: ✅ Inkscape found, using for PDF generation");
             return $this->convert_svg_to_pdf_with_inkscape($svg_content, $width, $height, $order_id, $inkscape_path);
         }
+        
+        error_log("APD PDF Create - Order #$order_id: ❌ Inkscape not found, trying ImageMagick fallback...");
         
         // Fallback: Create PDF with embedded SVG using a library or custom method
         // For now, we'll create a simple PDF that references the SVG
         // Note: This is a simplified approach. For production, consider using TCPDF or similar library
-        
-        error_log("APD PDF - Order #$order_id: Inkscape not found, using fallback method");
         
         // Save SVG temporarily
         $upload_dir = wp_upload_dir();
@@ -2342,22 +2344,39 @@ class APD_SVG_Processor
                 unlink($temp_svg);
                 
                 if ($pdf_content) {
-                    error_log("APD PDF - Order #$order_id: Generated PDF using ImageMagick");
+                    error_log("APD PDF Create - Order #$order_id: ✅ Generated PDF using ImageMagick");
                     return $pdf_content;
+                } else {
+                    error_log("APD PDF Create - Order #$order_id: ❌ ImageMagick returned empty PDF");
                 }
             } catch (Exception $e) {
-                error_log("APD PDF - Order #$order_id: ImageMagick failed: " . $e->getMessage());
+                error_log("APD PDF Create - Order #$order_id: ❌ ImageMagick failed: " . $e->getMessage());
             }
+        } else {
+            error_log("APD PDF Create - Order #$order_id: ❌ ImageMagick extension not loaded");
         }
         
         // Final fallback: Use client-side JavaScript conversion (no server dependencies)
         // Return special marker that triggers client-side PDF generation
         unlink($temp_svg);
         
-        error_log("APD PDF - Order #$order_id: No server-side tools available, using client-side conversion");
+        error_log("APD SVG to PDF - Order #$order_id: ===== NO SERVER-SIDE TOOLS AVAILABLE =====");
+        error_log("APD SVG to PDF - Order #$order_id: ❌ Inkscape: NOT AVAILABLE");
+        error_log("APD SVG to PDF - Order #$order_id: ❌ ImageMagick: NOT AVAILABLE");
+        error_log("APD SVG to PDF - Order #$order_id: ⚠️ Falling back to client-side PDF generation");
+        error_log("APD SVG to PDF - Order #$order_id: ⚠️ WARNING: Client-side cannot convert text to curves!");
+        error_log("APD SVG to PDF - Order #$order_id: ⚠️ WARNING: Material outlines may be lost in PDF!");
+        error_log("APD SVG to PDF - Order #$order_id: 💡 SOLUTION: Install Inkscape on server for proper text-to-curves conversion");
+        
+        // Check text count in SVG being returned
+        $text_count_in_fallback = preg_match_all('/<text[^>]*>/i', $svg_content);
+        error_log("APD SVG to PDF - Order #$order_id: Text elements in fallback SVG: $text_count_in_fallback");
+        if ($text_count_in_fallback > 0) {
+            error_log("APD SVG to PDF - Order #$order_id: ❌ ERROR: Text elements still present! They will NOT be converted to curves in client-side PDF.");
+        }
         
         // Return special WP_Error with client-side flag (will be handled in apd_export_pdf)
-        $error = new WP_Error('use_client_side', 'Client-side PDF generation required');
+        $error = new WP_Error('use_client_side', 'Client-side PDF generation required - Inkscape/ImageMagick not available');
         $error->add_data(array(
             'use_client_side' => true,
             'svg_content' => $svg_content,
