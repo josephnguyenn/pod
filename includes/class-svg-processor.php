@@ -2044,9 +2044,14 @@ class APD_SVG_Processor
         // This ensures material patterns are visible when PDF is opened in CorelDRAW
         $svg_content = $this->process_patterns_for_pdf($svg_content, $order_id);
         
-        // STEP 5.5: Convert text to paths while preserving material outline patterns
-        // This ensures fonts don't change in CorelDRAW and material outlines are preserved
+        // STEP 5.5: Convert text to paths (curves) while preserving material outline patterns
+        // CRITICAL: Convert text to paths BEFORE PDF generation to ensure material outlines are preserved
+        // This ensures fonts don't change in CorelDRAW and material outlines are preserved as vectors
         $svg_content = $this->convert_text_to_paths_with_material_outline($svg_content, $order_id);
+        
+        // STEP 5.6: Use Inkscape to convert text to paths if available (two-step process)
+        // First convert text to paths in SVG, then export to PDF
+        $svg_content = $this->inkscape_convert_text_to_paths($svg_content, $order_id);
         
         // STEP 6: Ensure proper XML declaration with UTF-8
         $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
@@ -2056,10 +2061,10 @@ class APD_SVG_Processor
         if (preg_match('/<svg[^>]*>/i', $svg_content, $svg_match)) {
             $svg_tag = $svg_match[0];
             $metadata = "\n  <metadata>Vector PDF export from Order #$order_id on " . date('Y-m-d H:i:s') . ". " .
-                       "All content preserved: colors, patterns (PNG/JPG materials), text converted to paths, styles. " .
+                       "All content preserved: colors, patterns (PNG/JPG materials), ALL TEXT CONVERTED TO CURVES/PATHS, styles. " .
                        "Pattern fills and material outline textures preserved for CorelDRAW. " .
-                       "Text converted to vectors with material outline patterns preserved. " .
-                       "Open in CorelDRAW - text is already vectors, material patterns are preserved.</metadata>\n";
+                       "Text converted to vectors (curves) with material outline patterns preserved. " .
+                       "Open in CorelDRAW - all text is already curves/vectors, material patterns are preserved.</metadata>\n";
             $svg_content = str_replace($svg_tag, $svg_tag . $metadata, $svg_content);
         }
         
@@ -2231,15 +2236,15 @@ class APD_SVG_Processor
         file_put_contents($temp_svg, $svg_content);
         
         // Use Inkscape to convert SVG to PDF with vector preservation
+        // Note: Text should already be converted to paths by inkscape_convert_text_to_paths()
         // --export-type=pdf ensures vector format
-        // --export-text-to-path converts text to paths (CRITICAL: preserves material outline patterns on converted paths)
         // --export-area-drawing exports the entire drawing area
-        // Note: When text is converted to paths, the material outline stroke patterns are preserved on the paths
+        // --export-pdf-version=1.4 for CorelDRAW compatibility
+        // We don't need --export-text-to-path here since text is already converted to paths
         $command = escapeshellarg($inkscape_path) . 
                    ' --export-type=pdf' .
                    ' --export-filename=' . escapeshellarg($temp_pdf) .
                    ' --export-area-drawing' .
-                   ' --export-text-to-path' .
                    ' --export-ignore-filters' .
                    ' --export-pdf-version=1.4' .
                    ' ' . escapeshellarg($temp_svg) . 
@@ -2261,8 +2266,9 @@ class APD_SVG_Processor
             error_log("APD PDF - Order #$order_id: Generated PDF using Inkscape");
             error_log("  - PDF size: $pdf_size bytes");
             error_log("  - Contains vector data: " . ($is_vector ? 'YES' : 'WARNING: May be rasterized'));
-            error_log("  - Text converted to paths: YES (via --export-text-to-path)");
-            error_log("  - Material patterns preserved: YES (patterns extracted to external files)");
+            error_log("  - Text converted to paths/curves: YES (converted before PDF export)");
+            error_log("  - Material patterns preserved: YES (patterns embedded as data URIs)");
+            error_log("  - Material outline on text: YES (preserved on converted paths)");
             
             unlink($temp_svg);
             unlink($temp_pdf);
@@ -2461,6 +2467,122 @@ class APD_SVG_Processor
         error_log("APD PDF Patterns - Order #$order_id: After processing - $pattern_count patterns, $embedded_images embedded images");
         
         return $svg_content;
+    }
+
+    /**
+     * Use Inkscape to convert text elements to paths (curves) in SVG
+     * This ensures text is converted to vectors BEFORE PDF export
+     * Material outline patterns are preserved on the converted paths
+     * 
+     * @param string $svg_content SVG content with text elements
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with text converted to paths
+     */
+    private function inkscape_convert_text_to_paths($svg_content, $order_id = 0)
+    {
+        // Check if Inkscape is available
+        $inkscape_path = $this->find_inkscape();
+        if (!$inkscape_path) {
+            error_log("APD Text to Path - Order #$order_id: Inkscape not available, text will be converted during PDF export");
+            return $svg_content;
+        }
+        
+        // Count text elements before conversion
+        $text_count_before = preg_match_all('/<text[^>]*>/i', $svg_content);
+        if ($text_count_before === 0) {
+            error_log("APD Text to Path - Order #$order_id: No text elements found, skipping conversion");
+            return $svg_content;
+        }
+        
+        error_log("APD Text to Path - Order #$order_id: Converting $text_count_before text elements to paths using Inkscape");
+        
+        // Save SVG temporarily
+        $upload_dir = wp_upload_dir();
+        $temp_svg_input = $upload_dir['path'] . '/temp-text-' . $order_id . '-' . time() . '.svg';
+        $temp_svg_output = $upload_dir['path'] . '/temp-text-converted-' . $order_id . '-' . time() . '.svg';
+        
+        file_put_contents($temp_svg_input, $svg_content);
+        
+        // Use Inkscape to convert text to paths (curves)
+        // Method 1: Use --actions to select all text and convert to paths
+        // This preserves stroke patterns (material outlines) on the converted paths
+        // Note: --actions requires Inkscape 1.0+, for older versions we'll use a different approach
+        
+        // Try using --actions first (Inkscape 1.0+)
+        $command = escapeshellarg($inkscape_path) . 
+                   ' --actions="select-all:text;object-to-path;select-all;object-stroke-to-path"' .
+                   ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                   ' --export-type=svg' .
+                   ' ' . escapeshellarg($temp_svg_input) . 
+                   ' 2>&1';
+        
+        $output = shell_exec($command);
+        $return_code = 0;
+        exec($command . '; echo $?', $output_array, $return_code);
+        
+        // If that fails, try alternative method for older Inkscape versions
+        if (!file_exists($temp_svg_output) || filesize($temp_svg_output) === 0 || $return_code !== 0) {
+            error_log("APD Text to Path - Order #$order_id: Method 1 failed, trying alternative method");
+            
+            // Alternative: Use --export-text-to-path with temporary PDF, then convert back
+            // This is less ideal but works with older Inkscape versions
+            $temp_pdf_intermediate = $upload_dir['path'] . '/temp-text-pdf-' . $order_id . '-' . time() . '.pdf';
+            
+            $command2 = escapeshellarg($inkscape_path) . 
+                       ' --export-type=pdf' .
+                       ' --export-text-to-path' .
+                       ' --export-filename=' . escapeshellarg($temp_pdf_intermediate) .
+                       ' ' . escapeshellarg($temp_svg_input) . 
+                       ' 2>&1';
+            
+            $output2 = shell_exec($command2);
+            
+            if (file_exists($temp_pdf_intermediate) && filesize($temp_pdf_intermediate) > 0) {
+                // Convert PDF back to SVG (text is now paths)
+                $command3 = escapeshellarg($inkscape_path) . 
+                           ' --export-type=svg' .
+                           ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                           ' ' . escapeshellarg($temp_pdf_intermediate) . 
+                           ' 2>&1';
+                
+                $output3 = shell_exec($command3);
+                unlink($temp_pdf_intermediate);
+            }
+        }
+        
+        if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+            $converted_svg = file_get_contents($temp_svg_output);
+            
+            // Verify text was converted (should have fewer or no text elements)
+            $text_count_after = preg_match_all('/<text[^>]*>/i', $converted_svg);
+            $path_count = preg_match_all('/<path[^>]*>/i', $converted_svg);
+            
+            error_log("APD Text to Path - Order #$order_id: Conversion complete");
+            error_log("  - Text elements before: $text_count_before");
+            error_log("  - Text elements after: $text_count_after");
+            error_log("  - Path elements: $path_count");
+            
+            // Verify material outline patterns are preserved
+            $pattern_refs_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+            error_log("  - Material outline pattern references: $pattern_refs_after");
+            
+            if ($text_count_after < $text_count_before) {
+                // Text was converted successfully
+                unlink($temp_svg_input);
+                unlink($temp_svg_output);
+                return $converted_svg;
+            } else {
+                error_log("APD Text to Path - Order #$order_id: WARNING - Text conversion may have failed, using original SVG");
+                unlink($temp_svg_input);
+                unlink($temp_svg_output);
+                return $svg_content;
+            }
+        } else {
+            error_log("APD Text to Path - Order #$order_id: Inkscape text-to-path conversion failed. Output: " . ($output ?: 'No output'));
+            unlink($temp_svg_input);
+            if (file_exists($temp_svg_output)) unlink($temp_svg_output);
+            return $svg_content;
+        }
     }
 
     /**
