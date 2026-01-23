@@ -312,7 +312,7 @@ class APD_Admin_Pages
         $GLOBALS['apd_template'] = $template;
         
         // Get materials for the template
-        $materials_data = $this->plugin->get_materials($template_id);
+        $materials_data = APD_Helpers::get_materials($template_id);
         $materials = array();
         foreach ($materials_data as $name => $data) {
             $materials[$name] = is_array($data) ? $data['url'] : $data;

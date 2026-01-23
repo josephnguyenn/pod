@@ -300,8 +300,11 @@ class APD_Order_Admin_Handler
             echo '<button type="button" class="button button-secondary" onclick="processCutReadySVG(' . $order_id . ')" style="background: #2271b1; color: white; border-color: #2271b1;">';
             echo '<span class="dashicons dashicons-media-code" style="margin-top: 3px;"></span> Export Cut-Ready SVG';
             echo '</button>';
+            echo '<button type="button" class="button button-secondary" onclick="exportVectorPDF(' . $order_id . ')" style="background: #d63638; color: white; border-color: #d63638;">';
+            echo '<span class="dashicons dashicons-media-document" style="margin-top: 3px;"></span> Export Vector PDF';
+            echo '</button>';
             echo '</div>';
-            echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers).</p>';
+            echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers). Vector PDF preserves all styles and material patterns - open in CorelDRAW to convert to editable vectors.</p>';
             echo '</div>';
         }
 
@@ -817,6 +820,52 @@ class APD_Order_Admin_Handler
                         const successDiv = document.createElement('div');
                         successDiv.className = 'notice notice-success is-dismissible';
                         successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
+
+        // Export Vector PDF (preserves all styles and material patterns)
+        function exportVectorPDF(orderId) {
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
+
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'apd_export_pdf',
+                    order_id: orderId,
+                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Download the PDF file
+                        const a = document.createElement('a');
+                        a.href = response.data.file_url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 10000);
+                    } else {
+                        alert('Error: ' + (response.data || 'Failed to generate PDF'));
+                    }
+                },
+                error: function(xhr, status, error) {
+                    alert('Network error occurred while generating PDF: ' + error);
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
                         button.closest('.order-svg-download-section').appendChild(successDiv);
                         
                         setTimeout(() => successDiv.remove(), 8000);

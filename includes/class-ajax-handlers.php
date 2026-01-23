@@ -399,7 +399,7 @@ class APD_AJAX_Handlers
     public function ajax_get_materials()
     {
         $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
-        $materials = $this->plugin->get_materials($template_id);
+        $materials = APD_Helpers::get_materials($template_id);
         
         // Format materials for response
         $formatted_materials = array();
@@ -427,7 +427,7 @@ class APD_AJAX_Handlers
         $material_name = sanitize_text_field($_POST['material_name']);
         $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
         
-        $materials = $this->plugin->get_materials($template_id);
+        $materials = APD_Helpers::get_materials($template_id);
         
         if (isset($materials[$material_name])) {
             $material_data = $materials[$material_name];

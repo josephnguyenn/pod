@@ -62,10 +62,10 @@ class APD_Frontend_Shortcodes
         error_log('APD Shortcode: Called with atts: ' . print_r($atts, true));
         error_log('APD Shortcode: Product ID from shortcode: ' . $atts['product_id']);
 
-        $this->plugin->enqueue_frontend_scripts();
+        APD_Assets::enqueue_frontend_scripts();
 
         ob_start();
-        $this->plugin->render_customizer($atts['product_id']);
+        $this->plugin->meta_boxes->render_customizer($atts['product_id']);
         return ob_get_clean();
     }
 
@@ -83,10 +83,10 @@ class APD_Frontend_Shortcodes
             'items_per_page' => '12'
         ), $atts);
 
-        $this->plugin->enqueue_frontend_scripts();
+        APD_Assets::enqueue_frontend_scripts();
 
         ob_start();
-        $this->plugin->render_product_list($atts);
+        $this->plugin->meta_boxes->render_product_list($atts);
         return ob_get_clean();
     }
 
@@ -106,10 +106,10 @@ class APD_Frontend_Shortcodes
             'hide_header' => 'false'
         ), $atts);
 
-        $this->plugin->enqueue_frontend_scripts();
+        APD_Assets::enqueue_frontend_scripts();
 
         ob_start();
-        $this->plugin->render_products_by_company($atts);
+        $this->plugin->meta_boxes->render_products_by_company($atts);
         return ob_get_clean();
     }
 

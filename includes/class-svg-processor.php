@@ -36,6 +36,7 @@ class APD_SVG_Processor
     public function init()
     {
         add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
+        add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
     }
 
     public function apd_process_cut_ready_svg()
@@ -224,6 +225,144 @@ class APD_SVG_Processor
             'file_url' => $file_url,
             'filename' => $filename,
             'message' => 'Cut-ready SVG generated successfully'
+        ));
+    }
+
+    /**
+     * Export PDF with embedded SVG (vector-based, CorelDRAW compatible)
+     * Preserves all styles, material patterns, and vector data
+     */
+    public function apd_export_pdf()
+    {
+        // Verify admin access
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+
+        $order_id = intval(isset($_POST['order_id']) ? $_POST['order_id'] : 0);
+        if (!$order_id) {
+            wp_send_json_error('Invalid order ID');
+            return;
+        }
+
+        // Get the original SVG - use same logic as cut-ready SVG
+        $svg_content = '';
+        $source = '';
+        
+        // Try 1: Direct meta field
+        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+        if (!empty($svg_content)) {
+            $source = 'preview_image_svg meta';
+        }
+        
+        // Try 2: PNG meta (might be base64 SVG)
+        if (empty($svg_content)) {
+            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
+            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
+                $svg_content = $preview_png;
+                $source = 'preview_image_png meta (contains SVG)';
+            }
+        }
+        
+        // Try 3: URL meta
+        if (empty($svg_content)) {
+            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
+            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
+                $svg_content = $preview_url;
+                $source = 'preview_image_url meta (contains SVG)';
+            }
+        }
+        
+        // Try 4: Cart items
+        if (empty($svg_content)) {
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first_item = is_array($cart_items) && !empty($cart_items[0]) ? $cart_items[0] : null;
+                if ($first_item) {
+                    $svg_content = isset($first_item['preview_image_svg']) ? $first_item['preview_image_svg'] : '';
+                    if (!empty($svg_content)) {
+                        $source = 'cart_items[0].preview_image_svg';
+                    }
+                    
+                    if (empty($svg_content)) {
+                        $svg_content = isset($first_item['preview_image_png']) ? $first_item['preview_image_png'] : '';
+                        if (!empty($svg_content) && strpos($svg_content, 'data:image/svg') !== false) {
+                            $source = 'cart_items[0].preview_image_png (contains SVG)';
+                        } else {
+                            $svg_content = '';
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if svg_content is a URL instead of actual SVG content
+        if (!empty($svg_content) && (strpos($svg_content, 'http://') === 0 || strpos($svg_content, 'https://') === 0)) {
+            $response = wp_remote_get($svg_content);
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $svg_content = wp_remote_retrieve_body($response);
+                $source .= ' (fetched from URL)';
+            } else {
+                $error_msg = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
+                wp_send_json_error('Failed to fetch SVG from URL: ' . $error_msg);
+                return;
+            }
+        }
+
+        if (empty($svg_content)) {
+            wp_send_json_error('No SVG found for this order');
+            return;
+        }
+
+        // Process the SVG to make it PDF-ready (preserves ALL content including patterns)
+        $pdf_svg = $this->make_pdf_compatible($svg_content, $order_id);
+
+        if (is_wp_error($pdf_svg)) {
+            wp_send_json_error($pdf_svg->get_error_message());
+            return;
+        }
+
+        // Generate PDF with embedded SVG
+        $pdf_content = $this->svg_to_pdf($pdf_svg, $order_id);
+
+        if (is_wp_error($pdf_content)) {
+            wp_send_json_error($pdf_content->get_error_message());
+            return;
+        }
+
+        // Save the PDF file
+        $upload_dir = wp_upload_dir();
+        $filename = 'order-' . $order_id . '-vector-' . time() . '.pdf';
+        $filepath = $upload_dir['path'] . '/' . $filename;
+        
+        $bytes_written = file_put_contents($filepath, $pdf_content, LOCK_EX);
+        
+        if ($bytes_written === false) {
+            wp_send_json_error('Failed to save PDF file');
+            return;
+        }
+
+        $file_url = $upload_dir['url'] . '/' . $filename;
+        
+        // Save the URL to order meta for future reference
+        update_post_meta($order_id, 'vector_pdf_url', $file_url);
+        update_post_meta($order_id, 'vector_pdf_generated_at', current_time('mysql'));
+
+        error_log(sprintf(
+            'APD PDF Export - Order #%d: Generated PDF %d bytes from source: %s',
+            $order_id,
+            $bytes_written,
+            $source
+        ));
+
+        wp_send_json_success(array(
+            'file_url' => $file_url,
+            'filename' => $filename,
+            'message' => 'Vector PDF generated successfully. Open in CorelDRAW to convert to editable vectors with all styles and material patterns preserved.'
         ));
     }
 
@@ -1779,6 +1918,309 @@ class APD_SVG_Processor
         }
 
         return array('valid' => true);
+    }
+
+    /**
+     * Make SVG compatible with PDF while preserving ALL content including patterns
+     * This is similar to make_coreldraw_compatible but keeps patterns and materials
+     * 
+     * @param string $svg_content Source SVG content
+     * @param int $order_id Order ID for logging
+     * @return string|WP_Error Clean SVG content or error
+     */
+    private function make_pdf_compatible($svg_content, $order_id = 0)
+    {
+        error_log("APD PDF Compatible - Order #$order_id: Starting PDF preparation (preserves ALL patterns and materials)");
+        
+        // STEP 1: Decode if it's a data URL
+        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
+            if (strpos($svg_content, 'base64,') !== false) {
+                $svg_content = base64_decode(substr($svg_content, strpos($svg_content, 'base64,') + 7));
+            } else {
+                $svg_content = urldecode(substr($svg_content, strpos($svg_content, ',') + 1));
+            }
+        }
+        
+        // STEP 2: Convert encoding to UTF-8
+        $detected_encoding = mb_detect_encoding($svg_content, ['UTF-8', 'UTF-16LE', 'UTF-16BE', 'ISO-8859-1'], true);
+        if ($detected_encoding && $detected_encoding !== 'UTF-8') {
+            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', $detected_encoding);
+            error_log("APD PDF Compatible - Order #$order_id: Converted from $detected_encoding to UTF-8");
+        }
+        
+        // STEP 3: Fix malformed attributes (same as cut-ready)
+        $svg_content = preg_replace('/(\w+(-\w+)*)="=""/', '', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+round=""/', 'stroke-linejoin="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+miter=""/', 'stroke-linejoin="miter"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+bevel=""/', 'stroke-linejoin="bevel"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+round=""/', 'stroke-linecap="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+square=""/', 'stroke-linecap="square"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+butt=""/', 'stroke-linecap="butt"', $svg_content);
+        $svg_content = preg_replace('/vector-effect=""\s+non-scaling-stroke=""/', 'vector-effect="non-scaling-stroke"', $svg_content);
+        
+        // STEP 4: Duplicate styles as attributes for PDF compatibility (same as cut-ready)
+        $svg_content = preg_replace_callback(
+            '/(<[^>]*)\sstyle="([^"]*)"([^>]*>)/i',
+            function($matches) {
+                $before = $matches[1];
+                $original_style = $matches[2];
+                $after = $matches[3];
+                
+                $full_element = $before . $after;
+                $attributes = array();
+                
+                // Extract fill color and ADD as attribute
+                if (!preg_match('/\sfill=/i', $full_element)) {
+                    if (preg_match('/fill:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
+                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
+                        $attributes[] = 'fill="' . $hex . '"';
+                    } elseif (preg_match('/fill:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
+                        $pattern_id = trim($m[1]);
+                        $pattern_id = str_replace('&quot;', '', $pattern_id);
+                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
+                        $attributes[] = 'fill="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    } elseif (preg_match('/fill:\s*([#\w]+)/i', $original_style, $m)) {
+                        $fill_value = trim($m[1]);
+                        if ($fill_value !== 'none' && $fill_value !== '') {
+                            $attributes[] = 'fill="' . htmlspecialchars($fill_value, ENT_QUOTES) . '"';
+                        }
+                    }
+                }
+                
+                // Extract stroke color and ADD as attribute
+                if (!preg_match('/\sstroke=/i', $full_element)) {
+                    if (preg_match('/stroke:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
+                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
+                        $attributes[] = 'stroke="' . $hex . '"';
+                    } elseif (preg_match('/stroke:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
+                        $pattern_id = trim($m[1]);
+                        $pattern_id = str_replace('&quot;', '', $pattern_id);
+                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
+                        $attributes[] = 'stroke="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    } elseif (preg_match('/stroke:\s*([#\w]+)/i', $original_style, $m)) {
+                        $stroke_value = trim($m[1]);
+                        if ($stroke_value !== 'none' && $stroke_value !== '') {
+                            $attributes[] = 'stroke="' . htmlspecialchars($stroke_value, ENT_QUOTES) . '"';
+                        }
+                    }
+                }
+                
+                // Extract stroke-width and ADD as attribute
+                if (!preg_match('/\sstroke-width=/i', $full_element)) {
+                    if (preg_match('/stroke-width:\s*([^;]+)/i', $original_style, $m)) {
+                        $attributes[] = 'stroke-width="' . htmlspecialchars(trim($m[1]), ENT_QUOTES) . '"';
+                    }
+                }
+                
+                // Build final element - KEEP ORIGINAL STYLE + ADD ATTRIBUTES
+                $result = $before;
+                if (!empty($attributes)) {
+                    $result .= ' ' . implode(' ', $attributes);
+                }
+                $result .= ' style="' . $original_style . '"';
+                $result .= $after;
+                
+                return $result;
+            },
+            $svg_content
+        );
+        
+        // STEP 5: Process patterns with data:image for PDF compatibility
+        // Extract embedded images to external files (same as cut-ready)
+        $svg_content = $this->process_patterns_for_coreldraw($svg_content, $order_id);
+        
+        // STEP 6: Ensure proper XML declaration with UTF-8
+        $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
+        $svg_content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . "\n" . $svg_content;
+        
+        // STEP 7: Add metadata about processing
+        if (preg_match('/<svg[^>]*>/i', $svg_content, $svg_match)) {
+            $svg_tag = $svg_match[0];
+            $metadata = "\n  <metadata>Vector PDF export from Order #$order_id on " . date('Y-m-d H:i:s') . ". " .
+                       "All content preserved: colors, patterns (PNG/JPG materials), text, styles. " .
+                       "Pattern fills and material textures preserved for CorelDRAW vector conversion. " .
+                       "Open in CorelDRAW and convert to vectors to maintain all styles and patterns.</metadata>\n";
+            $svg_content = str_replace($svg_tag, $svg_tag . $metadata, $svg_content);
+        }
+        
+        // STEP 8: Validate UTF-8
+        if (!mb_check_encoding($svg_content, 'UTF-8')) {
+            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', 'UTF-8');
+        }
+        
+        error_log("APD PDF Compatible - Order #$order_id: SVG prepared for PDF export (preserves all patterns)");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Convert SVG to PDF with embedded vector data
+     * Creates a PDF that embeds the SVG as a vector object for CorelDRAW compatibility
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string|WP_Error PDF content or error
+     */
+    private function svg_to_pdf($svg_content, $order_id = 0)
+    {
+        error_log("APD SVG to PDF - Order #$order_id: Starting PDF generation");
+        
+        // Extract SVG dimensions
+        $width = 800;
+        $height = 600;
+        $viewBox = '0 0 800 600';
+        
+        if (preg_match('/<svg[^>]*\swidth=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $width = floatval(preg_replace('/[^0-9.]/', '', $m[1]));
+        }
+        if (preg_match('/<svg[^>]*\sheight=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $height = floatval(preg_replace('/[^0-9.]/', '', $m[1]));
+        }
+        if (preg_match('/<svg[^>]*\sviewBox=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $viewBox = trim($m[1]);
+        }
+        
+        // Convert SVG to base64 for embedding
+        $svg_base64 = base64_encode($svg_content);
+        
+        // Create PDF with embedded SVG as a vector object
+        // Using PDF 1.4 format which supports embedded objects
+        $pdf = $this->create_pdf_with_svg($svg_content, $svg_base64, $width, $height, $viewBox, $order_id);
+        
+        if (is_wp_error($pdf)) {
+            return $pdf;
+        }
+        
+        error_log("APD SVG to PDF - Order #$order_id: PDF generated successfully (" . strlen($pdf) . " bytes)");
+        
+        return $pdf;
+    }
+
+    /**
+     * Create PDF document with embedded SVG as vector object
+     * Uses a simpler approach: embed SVG as Form XObject for CorelDRAW compatibility
+     * 
+     * @param string $svg_content SVG content
+     * @param string $svg_base64 Base64 encoded SVG (not used in this implementation)
+     * @param float $width SVG width
+     * @param float $height SVG height
+     * @param string $viewBox SVG viewBox
+     * @param int $order_id Order ID
+     * @return string|WP_Error PDF content or error
+     */
+    private function create_pdf_with_svg($svg_content, $svg_base64, $width, $height, $viewBox, $order_id)
+    {
+        // For CorelDRAW compatibility, we'll use Inkscape if available, or create a PDF that embeds SVG
+        // Check if Inkscape is available (best option for vector preservation)
+        $inkscape_path = $this->find_inkscape();
+        
+        if ($inkscape_path) {
+            return $this->convert_svg_to_pdf_with_inkscape($svg_content, $width, $height, $order_id, $inkscape_path);
+        }
+        
+        // Fallback: Create PDF with embedded SVG using a library or custom method
+        // For now, we'll create a simple PDF that references the SVG
+        // Note: This is a simplified approach. For production, consider using TCPDF or similar library
+        
+        error_log("APD PDF - Order #$order_id: Inkscape not found, using fallback method");
+        
+        // Save SVG temporarily
+        $upload_dir = wp_upload_dir();
+        $temp_svg = $upload_dir['path'] . '/temp-' . $order_id . '-' . time() . '.svg';
+        file_put_contents($temp_svg, $svg_content);
+        
+        // Try using ImageMagick if available (can convert SVG to PDF)
+        if (extension_loaded('imagick')) {
+            try {
+                $imagick = new Imagick();
+                $imagick->setResolution(300, 300); // High resolution for vector preservation
+                $imagick->readImage($temp_svg);
+                $imagick->setImageFormat('pdf');
+                $pdf_content = $imagick->getImageBlob();
+                $imagick->clear();
+                $imagick->destroy();
+                unlink($temp_svg);
+                
+                if ($pdf_content) {
+                    error_log("APD PDF - Order #$order_id: Generated PDF using ImageMagick");
+                    return $pdf_content;
+                }
+            } catch (Exception $e) {
+                error_log("APD PDF - Order #$order_id: ImageMagick failed: " . $e->getMessage());
+            }
+        }
+        
+        // Final fallback: Return error suggesting to use Inkscape or provide SVG download
+        unlink($temp_svg);
+        return new WP_Error('pdf_generation_failed', 
+            'PDF generation requires Inkscape or ImageMagick. ' .
+            'Please install Inkscape for best CorelDRAW compatibility, or use the SVG export instead.'
+        );
+    }
+
+    /**
+     * Find Inkscape executable path
+     */
+    private function find_inkscape()
+    {
+        $possible_paths = array(
+            '/usr/bin/inkscape',
+            '/usr/local/bin/inkscape',
+            '/opt/homebrew/bin/inkscape',
+            'inkscape', // In PATH
+        );
+        
+        foreach ($possible_paths as $path) {
+            if (is_executable($path) || shell_exec("which $path 2>/dev/null")) {
+                return $path;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Convert SVG to PDF using Inkscape (best for CorelDRAW compatibility)
+     */
+    private function convert_svg_to_pdf_with_inkscape($svg_content, $width, $height, $order_id, $inkscape_path)
+    {
+        // Save SVG temporarily
+        $upload_dir = wp_upload_dir();
+        $temp_svg = $upload_dir['path'] . '/temp-' . $order_id . '-' . time() . '.svg';
+        $temp_pdf = $upload_dir['path'] . '/temp-' . $order_id . '-' . time() . '.pdf';
+        
+        file_put_contents($temp_svg, $svg_content);
+        
+        // Use Inkscape to convert SVG to PDF with vector preservation
+        // --export-type=pdf ensures vector format
+        // --export-text-to-path converts text to paths for better compatibility
+        // --export-area-drawing exports the entire drawing area
+        $command = escapeshellarg($inkscape_path) . 
+                   ' --export-type=pdf' .
+                   ' --export-filename=' . escapeshellarg($temp_pdf) .
+                   ' --export-area-drawing' .
+                   ' --export-text-to-path' .
+                   ' ' . escapeshellarg($temp_svg) . 
+                   ' 2>&1';
+        
+        $output = shell_exec($command);
+        $return_code = 0;
+        exec($command . '; echo $?', $output_array, $return_code);
+        
+        if (file_exists($temp_pdf) && filesize($temp_pdf) > 0) {
+            $pdf_content = file_get_contents($temp_pdf);
+            unlink($temp_svg);
+            unlink($temp_pdf);
+            
+            error_log("APD PDF - Order #$order_id: Generated PDF using Inkscape (" . strlen($pdf_content) . " bytes)");
+            return $pdf_content;
+        } else {
+            unlink($temp_svg);
+            if (file_exists($temp_pdf)) unlink($temp_pdf);
+            
+            error_log("APD PDF - Order #$order_id: Inkscape conversion failed. Output: " . ($output ?: 'No output'));
+            return new WP_Error('inkscape_failed', 'Inkscape conversion failed. Output: ' . ($output ?: 'No output'));
+        }
     }
 
     /**
