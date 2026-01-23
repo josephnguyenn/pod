@@ -820,9 +820,25 @@ class APD_Order_Admin_Handler
                         const successDiv = document.createElement('div');
                         successDiv.className = 'notice notice-success is-dismissible';
                         successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 8000);
+                    } else {
+                        alert('Error: ' + (response.data || 'Failed to process SVG'));
+                    }
+                },
+                error: function(xhr, status, error) {
+                    alert('Network error occurred while processing SVG: ' + error);
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
 
         // Export Vector PDF (preserves all styles and material patterns)
-        function exportVectorPDF(orderId) {
+        window.exportVectorPDF = function(orderId) {
             const button = event.target.closest('button');
             const originalText = button.innerHTML;
             button.disabled = true;
@@ -859,22 +875,6 @@ class APD_Order_Admin_Handler
                 },
                 error: function(xhr, status, error) {
                     alert('Network error occurred while generating PDF: ' + error);
-                },
-                complete: function() {
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                }
-            });
-        }
-                        button.closest('.order-svg-download-section').appendChild(successDiv);
-                        
-                        setTimeout(() => successDiv.remove(), 8000);
-                    } else {
-                        alert('Error: ' + (response.data || 'Failed to process SVG'));
-                    }
-                },
-                error: function(xhr, status, error) {
-                    alert('Network error occurred while processing SVG: ' + error);
                 },
                 complete: function() {
                     button.disabled = false;
