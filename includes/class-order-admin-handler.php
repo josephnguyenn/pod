@@ -511,6 +511,9 @@ class APD_Order_Admin_Handler
         <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
         <script>
+        window.exportVectorPDF = function(){ console.warn('PDF export loading...'); };
+        </script>
+        <script>
         (function(){
             const orderId = <?php echo (int) $order_id; ?>;
             document.getElementById('apd-save-status').addEventListener('click', function(){
@@ -879,7 +882,7 @@ class APD_Order_Admin_Handler
                 const svgElement = svgDoc.documentElement;
                 
                 // Check for parse errors
-                const parseError = svgElement.querySelector('parsererror');
+                const parseError = svgDoc.querySelector('parsererror');
                 if (parseError) {
                     throw new Error('SVG parse error: ' + parseError.textContent);
                 }
@@ -928,55 +931,108 @@ class APD_Order_Admin_Handler
                     }
                 }
                 
-                // Create PDF
-                const { jsPDF } = window.jspdf;
-                const pdf = new jsPDF({
+                var JsPDF = (window.jspdf && window.jspdf.jsPDF) || (typeof jspdf !== 'undefined' && jspdf.jsPDF);
+                if (!JsPDF) JsPDF = window.jspdf && (window.jspdf.jsPDF || window.jspdf);
+                var pdf = new JsPDF({
                     orientation: width > height ? 'landscape' : 'portrait',
                     unit: 'px',
+                    format: [width, height],
                     compress: true
                 });
                 
-                // Set PDF size to match SVG
-                pdf.setPage([width, height]);
-                
-                // Try to use svg2pdf.js for vector rendering
-                let useSvg2Pdf = false;
-                if (typeof svg2pdf !== 'undefined') {
-                    try {
-                        useSvg2Pdf = true;
-                        await svg2pdf(svgElement, pdf, {
-                            xOffset: 0,
-                            yOffset: 0,
-                            width: width,
-                            height: height
-                        });
-                        console.log('📄 ✅ PDF generated using svg2pdf.js (vector)');
-                    } catch (svg2pdfError) {
-                        console.warn('📄 svg2pdf.js failed, using fallback:', svg2pdfError);
-                        useSvg2Pdf = false;
-                    }
+                // svg2pdf.js 2.2+ exports svg2pdf object/methods, NOT a standalone function
+                // It adds .svg() method to jsPDF instance
+                try {
+                    // Use built-in svg2pdf method on jsPDF instance
+                    // Requires svg2pdf.js loaded after jsPDF (which we do)
+                    const svgPromise = pdf.svg(svgElement, { x: 0, y: 0, width: width, height: height });
+                    if (svgPromise && typeof svgPromise.then === 'function') await svgPromise;
+                    const fn = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
+                    pdf.save(fn);
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                    console.log('📄 ✅ PDF generated (svg2pdf.js vector): ' + fn);
+                    return;
+                } catch (svgError) {
+                    console.warn('📄 svg2pdf failed, using PNG fallback:', svgError);
+                    // svg2pdf might fail due to missing SVG elements or unsupported features
                 }
                 
-                // Fallback: Embed SVG as image if svg2pdf fails
-                function useImageFallback() {
+                // Fallback: Convert SVG to high-resolution PNG first
+                try {
+                    // Create canvas for high-resolution conversion
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Parse SVG to get actual dimensions
+                    const parser = new DOMParser();
+                    const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                    const svgEl = svgDoc.documentElement;
+                    
+                    // Get actual SVG dimensions (use viewBox if available, otherwise width/height)
+                    let actualWidth = parseFloat(svgEl.getAttribute('width')) || 800;
+                    let actualHeight = parseFloat(svgEl.getAttribute('height')) || 600;
+                    const viewBox = svgEl.getAttribute('viewBox');
+                    if (viewBox) {
+                        const vb = viewBox.split(/\s+/);
+                        if (vb.length >= 4) {
+                            actualWidth = parseFloat(vb[2]) || actualWidth;
+                            actualHeight = parseFloat(vb[3]) || actualHeight;
+                        }
+                    }
+                    
+                    // Set canvas size at high DPI (300 DPI for print quality)
+                    const dpi = 300;
+                    const scale = dpi / 96; // 96 is screen DPI
+                    canvas.width = actualWidth * scale;
+                    canvas.height = actualHeight * scale;
+                    
+                    // Draw SVG to canvas at high resolution
+                    // We need to convert SVG to canvas data
                     const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
                     const svgUrl = URL.createObjectURL(svgBlob);
+                    
                     const img = new Image();
                     img.onload = function() {
-                        pdf.addImage(img, 'SVG', 0, 0, width, height);
-                        const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
-                        pdf.save(filename);
-                        URL.revokeObjectURL(svgUrl);
-                        button.disabled = false;
-                        button.innerHTML = originalText;
-                        console.log('📄 ✅ PDF generated (image fallback)');
+                        try {
+                            // Draw image to canvas at high resolution
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            
+                            // Convert canvas to PNG
+                            const pngData = canvas.toDataURL('image/png', 1.0);
+                            
+                            // Add PNG to PDF
+                            pdf.addImage(pngData, 'PNG', 0, 0, width, height, undefined, 'FAST');
+                            
+                            // Save PDF
+                            const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
+                            pdf.save(filename);
+                            
+                            // Cleanup
+                            URL.revokeObjectURL(svgUrl);
+                            button.disabled = false;
+                            button.innerHTML = originalText;
+                            console.log('📄 ✅ PDF generated (PNG fallback): ' + filename);
+                            
+                        } catch (err) {
+                            console.error('📄 Error drawing canvas:', err);
+                            URL.revokeObjectURL(svgUrl);
+                            throw err;
+                        }
                     };
                     img.onerror = function() {
                         URL.revokeObjectURL(svgUrl);
-                        throw new Error('Failed to load SVG as image');
+                        throw new Error('Failed to load SVG as PNG for PDF fallback');
                     };
                     img.src = svgUrl;
+                    
+                } catch (imgError) {
+                    console.error('📄 Image fallback failed:', imgError);
+                    throw new Error('Failed to convert SVG to PNG for PDF');
                 }
+                
+                button.disabled = false;
+                button.innerHTML = originalText;
                 
                 // Use fallback if svg2pdf not available or failed
                 if (!useSvg2Pdf) {
@@ -1031,8 +1087,9 @@ class APD_Order_Admin_Handler
                                 }
                                 
                                 // Load font with opentype.js
-                                if (typeof opentype !== 'undefined') {
-                                    const font = opentype.parse(bytes.buffer);
+                                var ot = (typeof window !== 'undefined' && window.opentype) || (typeof opentype !== 'undefined' ? opentype : null);
+                                if (ot) {
+                                    const font = ot.parse(bytes.buffer);
                                     fontCache.set(fontFamily, font);
                                     console.log('📄 Loaded font:', fontFamily);
                                 }
@@ -1100,24 +1157,32 @@ class APD_Order_Admin_Handler
                     }
                     
                     // Convert text to path using opentype.js
-                    if (font && typeof opentype !== 'undefined') {
+                    var ot = (typeof window !== 'undefined' && window.opentype) || (typeof opentype !== 'undefined' ? opentype : null);
+                    if (font && ot) {
                         // Use opentype.js to convert text to path
                         try {
-                            // Calculate x position based on text-anchor
+                            // opentype.js getPath() uses baseline at Y coordinate
+                            // SVG text y position varies by dominant-baseline
+                            // We need to convert SVG y to opentype.js baseline y
+                            
                             let textX = x;
                             let textY = y;
                             
-                            // Adjust y position based on baseline
+                            // Adjust Y for baseline conversion
+                            // SVG 'hanging': y is top of text
+                            // SVG 'middle': y is middle of text  
+                            // SVG 'alphabetic'/'auto': y is baseline
+                            // opentype.js: always uses baseline
                             if (dominantBaseline === 'hanging') {
-                                textY = y + fontSize * 0.2;
+                                // Top to baseline: approximately fontSize * 0.8 (depends on font)
+                                textY = y + fontSize * 0.8;
                             } else if (dominantBaseline === 'middle') {
-                                textY = y - fontSize * 0.5;
-                            } else if (dominantBaseline === 'alphabetic' || dominantBaseline === 'auto') {
-                                // Default: text baseline is at y
-                                textY = y;
+                                // Middle to baseline: approximately fontSize * 0.4
+                                textY = y + fontSize * 0.4;
                             }
+                            // else: y is already baseline (alphabetic/auto)
                             
-                            // Get path from font
+                            // Get path from font (opentype.js generates path at baseline)
                             const path = font.getPath(text, textX, textY, fontSize);
                             const pathData = path.toPathData();
                             
@@ -1125,14 +1190,26 @@ class APD_Order_Admin_Handler
                             const bbox = path.getBoundingBox();
                             const textWidth = bbox.x2 - bbox.x1;
                             
-                            // Adjust for text-anchor by translating the group
-                            if (textAnchor === 'middle') {
-                                const currentTransform = group.getAttribute('transform') || '';
-                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth / 2) + ', 0)');
-                            } else if (textAnchor === 'end') {
-                                const currentTransform = group.getAttribute('transform') || '';
-                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth) + ', 0)');
+                            // Build transform: original transform + text-anchor adjustment
+                            let groupTransform = '';
+                            if (transform) {
+                                groupTransform = transform;
                             }
+                            
+                            // Adjust for text-anchor
+                            if (textAnchor === 'middle') {
+                                if (groupTransform) groupTransform += ' ';
+                                groupTransform += 'translate(' + (-textWidth / 2) + ', 0)';
+                            } else if (textAnchor === 'end') {
+                                if (groupTransform) groupTransform += ' ';
+                                groupTransform += 'translate(' + (-textWidth) + ', 0)';
+                            }
+                            
+                            if (groupTransform) {
+                                group.setAttribute('transform', groupTransform);
+                            }
+                            
+                            console.log('📄 Text position: original y=' + y + ', adjusted y=' + textY + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
                             
                             // Create fill path (text shape)
                             const fillPath = document.createElementNS(namespace, 'path');
@@ -1143,18 +1220,13 @@ class APD_Order_Admin_Handler
                             
                             // Create outline path (material outline) if stroke exists
                             if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
-                                // CRITICAL: For material outline, we need to create a path that represents the stroke
-                                // The best approach is to use opentype.js to get the outline path
-                                // Then convert the stroke to a fill path with the material pattern
-                                
+                                // CRITICAL: For CorelDRAW compatibility, we need stroke with pattern
+                                // PDF/CorelDRAW should support pattern strokes, but we'll ensure it's set correctly
                                 try {
-                                    // Get the path outline (stroke outline) using opentype.js
-                                    // We'll create a wider path that represents the stroke
                                     const outlinePath = document.createElementNS(namespace, 'path');
-                                    
-                                    // Use the same path but with stroke properties
-                                    // The material pattern will be applied as stroke
                                     outlinePath.setAttribute('d', pathData);
+                                    
+                                    // Use stroke with material pattern - CorelDRAW should support this
                                     outlinePath.setAttribute('fill', 'none');
                                     outlinePath.setAttribute('stroke', stroke); // Material pattern URL
                                     outlinePath.setAttribute('stroke-width', strokeWidth);
@@ -1162,14 +1234,17 @@ class APD_Order_Admin_Handler
                                     outlinePath.setAttribute('stroke-linecap', strokeLinecap);
                                     outlinePath.setAttribute('paint-order', paintOrder);
                                     
-                                    // Insert outline before fill (so fill is on top, outline behind)
+                                    // Also set in style to ensure it's preserved
+                                    outlinePath.setAttribute('style', 'stroke: ' + stroke + '; stroke-width: ' + strokeWidth + '; stroke-linejoin: ' + strokeLinejoin + '; stroke-linecap: ' + strokeLinecap + '; fill: none;');
+                                    
+                                    // Insert outline BEFORE fill (so fill renders on top)
                                     group.insertBefore(outlinePath, fillPath);
                                     
                                     console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
-                                    console.log('📄 ✅ Material outline preserved as stroke on path: ' + stroke);
+                                    console.log('📄 ✅ Material outline preserved: stroke="' + stroke + '", width=' + strokeWidth);
+                                    console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
                                 } catch (e) {
                                     console.warn('📄 Failed to create material outline path:', e);
-                                    // Still add the fill path even if outline fails
                                 }
                             } else {
                                 console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
@@ -1250,34 +1325,15 @@ class APD_Order_Admin_Handler
                         
                         // Check if we need to generate PDF client-side
                         if (response.data.use_client_side && response.data.svg_content) {
-                            console.log('📄 ⚠️ WARNING: Using CLIENT-SIDE fallback (server-side conversion not available)');
-                            console.log('📄 ⚠️ Now converting text to curves using opentype.js...');
+                            exportVectorPDF._clientSide = true;
+                            console.log('📄 ⚠️ Using CLIENT-SIDE (text→curves via opentype.js)');
                             
-                            // Analyze SVG before client-side generation
-                            const parser = new DOMParser();
-                            const svgDoc = parser.parseFromString(response.data.svg_content, 'image/svg+xml');
-                            const svgElement = svgDoc.documentElement;
-                            const textCount = svgElement.querySelectorAll('text').length;
-                            const patternCount = svgElement.querySelectorAll('pattern').length;
-                            const patternRefs = (response.data.svg_content.match(/url\(#[^)]+\)/g) || []).length;
+                            var parser = new DOMParser();
+                            var svgDoc = parser.parseFromString(response.data.svg_content, 'image/svg+xml');
+                            var svgEl = svgDoc.documentElement;
+                            console.log('📄 SVG: ' + svgEl.querySelectorAll('text').length + ' text, ' + svgEl.querySelectorAll('pattern').length + ' patterns');
                             
-                            console.log('📄 SVG Analysis (client-side fallback):');
-                            console.log('  - Text elements:', textCount, '(will be converted to curves)');
-                            console.log('  - Pattern definitions:', patternCount);
-                            console.log('  - Pattern references:', patternRefs);
-                            
-                            // Generate PDF using client-side library with text-to-curves conversion
-                            // Use Promise to handle async function
-                            generateClientSidePDF(response.data.svg_content, orderId, button)
-                                .then(function() {
-                                    console.log('📄 ✅ PDF generation completed');
-                                })
-                                .catch(function(error) {
-                                    console.error('📄 ❌ Client-side PDF generation failed:', error);
-                                    alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
-                                    button.disabled = false;
-                                    button.innerHTML = originalText;
-                                });
+                            runClientSidePDF(response.data.svg_content, orderId, button, originalText);
                             return;
                         }
                         
@@ -1343,240 +1399,31 @@ class APD_Order_Admin_Handler
                     alert('Network error occurred while generating PDF: ' + error);
                 },
                 complete: function() {
+                    if (exportVectorPDF._clientSide) {
+                        exportVectorPDF._clientSide = false;
+                        return;
+                    }
                     button.disabled = false;
                     button.innerHTML = originalText;
                 }
             });
         }
 
-        // Convert text elements to paths (curves) while preserving material outline patterns
-        // Uses opentype.js to convert text to paths, then converts strokes to fills to preserve material outlines
-        async function convertTextToPathsWithMaterialOutline(svgDoc, svgElement) {
-            const namespace = 'http://www.w3.org/2000/svg';
-            const textElements = Array.from(svgElement.querySelectorAll('text'));
-            
-            if (textElements.length === 0) {
-                return; // No text to convert
+        function runClientSidePDF(svgContent, orderId, button, originalText) {
+            if (typeof generateClientSidePDF !== 'function') {
+                alert('PDF export error: generateClientSidePDF not found.');
+                button.disabled = false;
+                button.innerHTML = originalText;
+                return;
             }
-            
-            console.log('📄 Converting ' + textElements.length + ' text elements to curves with material outlines...');
-            
-            // Step 1: Extract font data from SVG @font-face
-            const fontCache = new Map();
-            const styleElements = svgElement.querySelectorAll('style');
-            
-            for (const styleEl of styleElements) {
-                const styleText = styleEl.textContent || styleEl.innerText;
-                const fontFaceMatches = styleText.match(/@font-face\s*\{[^}]*\}/g);
-                
-                if (fontFaceMatches) {
-                    for (const fontFace of fontFaceMatches) {
-                        // Extract font-family
-                        const familyMatch = fontFace.match(/font-family:\s*['"]?([^;'"]+)['"]?/i);
-                        if (!familyMatch) continue;
-                        const fontFamily = familyMatch[1].trim().replace(/['"]/g, '');
-                        
-                        // Extract base64 font data
-                        const base64Match = fontFace.match(/src:\s*url\(data:application\/[^;]+;base64,([^)]+)\)/i);
-                        if (base64Match) {
-                            const base64Data = base64Match[1];
-                            try {
-                                // Decode base64 to binary
-                                const binaryString = atob(base64Data);
-                                const bytes = new Uint8Array(binaryString.length);
-                                for (let i = 0; i < binaryString.length; i++) {
-                                    bytes[i] = binaryString.charCodeAt(i);
-                                }
-                                
-                                // Load font with opentype.js
-                                if (typeof opentype !== 'undefined') {
-                                    const font = opentype.parse(bytes.buffer);
-                                    fontCache.set(fontFamily, font);
-                                    console.log('📄 Loaded font:', fontFamily);
-                                }
-                            } catch (e) {
-                                console.warn('📄 Failed to load font ' + fontFamily + ':', e);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Step 2: Convert each text element to paths
-            const convertedElements = [];
-            
-            for (let i = 0; i < textElements.length; i++) {
-                const textEl = textElements[i];
-                try {
-                    const text = textEl.textContent || textEl.innerText;
-                    if (!text || !text.trim()) continue;
-                    
-                    // Get text properties
-                    const fill = textEl.getAttribute('fill') || '#000000';
-                    const stroke = textEl.getAttribute('stroke') || 'none';
-                    const strokeWidth = parseFloat(textEl.getAttribute('stroke-width') || '0');
-                    const strokeLinejoin = textEl.getAttribute('stroke-linejoin') || 'round';
-                    const strokeLinecap = textEl.getAttribute('stroke-linecap') || 'round';
-                    const paintOrder = textEl.getAttribute('paint-order') || 'stroke fill';
-                    const fontSize = parseFloat(textEl.getAttribute('font-size') || '16');
-                    const fontFamily = (textEl.getAttribute('font-family') || 'Arial').replace(/['"]/g, '');
-                    const fontWeight = textEl.getAttribute('font-weight') || 'normal';
-                    const x = parseFloat(textEl.getAttribute('x') || '0');
-                    const y = parseFloat(textEl.getAttribute('y') || '0');
-                    const textAnchor = textEl.getAttribute('text-anchor') || 'start';
-                    const dominantBaseline = textEl.getAttribute('dominant-baseline') || 'auto';
-                    const transform = textEl.getAttribute('transform') || '';
-                    
-                    // Get parent for replacement
-                    const parent = textEl.parentNode;
-                    if (!parent) continue;
-                    
-                    // Create group to hold converted paths
-                    const group = document.createElementNS(namespace, 'g');
-                    if (transform) {
-                        group.setAttribute('transform', transform);
-                    }
-                    
-                    // Try to get font from cache
-                    let font = fontCache.get(fontFamily);
-                    if (!font) {
-                        // Try case-insensitive match
-                        for (const [cachedFamily, cachedFont] of fontCache.entries()) {
-                            if (cachedFamily.toLowerCase() === fontFamily.toLowerCase()) {
-                                font = cachedFont;
-                                console.log('📄 Found font (case-insensitive match):', cachedFamily);
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (!font) {
-                        console.warn('📄 Font not found in cache:', fontFamily);
-                        console.warn('📄 Available fonts:', Array.from(fontCache.keys()));
-                        // Continue without conversion - text will remain as text
-                        continue;
-                    }
-                    
-                    // Convert text to path using opentype.js
-                    if (font && typeof opentype !== 'undefined') {
-                        // Use opentype.js to convert text to path
-                        try {
-                            // Calculate x position based on text-anchor
-                            let textX = x;
-                            let textY = y;
-                            
-                            // Adjust y position based on baseline
-                            if (dominantBaseline === 'hanging') {
-                                textY = y + fontSize * 0.2;
-                            } else if (dominantBaseline === 'middle') {
-                                textY = y - fontSize * 0.5;
-                            } else if (dominantBaseline === 'alphabetic' || dominantBaseline === 'auto') {
-                                // Default: text baseline is at y
-                                textY = y;
-                            }
-                            
-                            // Get path from font
-                            const path = font.getPath(text, textX, textY, fontSize);
-                            const pathData = path.toPathData();
-                            
-                            // Get bounding box for text-anchor adjustment
-                            const bbox = path.getBoundingBox();
-                            const textWidth = bbox.x2 - bbox.x1;
-                            
-                            // Adjust for text-anchor by translating the group
-                            if (textAnchor === 'middle') {
-                                const currentTransform = group.getAttribute('transform') || '';
-                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth / 2) + ', 0)');
-                            } else if (textAnchor === 'end') {
-                                const currentTransform = group.getAttribute('transform') || '';
-                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth) + ', 0)');
-                            }
-                            
-                            // Create fill path (text shape)
-                            const fillPath = document.createElementNS(namespace, 'path');
-                            fillPath.setAttribute('d', pathData);
-                            fillPath.setAttribute('fill', fill);
-                            fillPath.setAttribute('stroke', 'none');
-                            group.appendChild(fillPath);
-                            
-                            // Create outline path (material outline) if stroke exists
-                            if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
-                                // CRITICAL: For material outline, we need to create a path that represents the stroke
-                                // The best approach is to use opentype.js to get the outline path
-                                // Then convert the stroke to a fill path with the material pattern
-                                
-                                try {
-                                    // Get the path outline (stroke outline) using opentype.js
-                                    // We'll create a wider path that represents the stroke
-                                    const outlinePath = document.createElementNS(namespace, 'path');
-                                    
-                                    // Use the same path but with stroke properties
-                                    // The material pattern will be applied as stroke
-                                    outlinePath.setAttribute('d', pathData);
-                                    outlinePath.setAttribute('fill', 'none');
-                                    outlinePath.setAttribute('stroke', stroke); // Material pattern URL
-                                    outlinePath.setAttribute('stroke-width', strokeWidth);
-                                    outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
-                                    outlinePath.setAttribute('stroke-linecap', strokeLinecap);
-                                    outlinePath.setAttribute('paint-order', paintOrder);
-                                    
-                                    // Insert outline before fill (so fill is on top, outline behind)
-                                    group.insertBefore(outlinePath, fillPath);
-                                    
-                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
-                                    console.log('📄 ✅ Material outline preserved as stroke on path: ' + stroke);
-                                } catch (e) {
-                                    console.warn('📄 Failed to create material outline path:', e);
-                                    // Still add the fill path even if outline fails
-                                }
-                            } else {
-                                console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
-                            }
-                            
-                            // Replace text with group
-                            parent.replaceChild(group, textEl);
-                            convertedElements.push(i);
-                            
-                        } catch (e) {
-                            console.warn('📄 Failed to convert text element ' + (i + 1) + ' with opentype.js:', e);
-                            // Keep original text element if conversion fails
-                        }
-                    } else {
-                        // Font not available - cannot convert
-                        console.warn('📄 Font not available for text element ' + (i + 1) + ':', fontFamily);
-                        console.warn('📄 Text element will remain as text (not converted to curves)');
-                        // Keep text element - will be handled by svg2pdf but won't be curves
-                    }
-                    
-                } catch (error) {
-                    console.warn('📄 Error processing text element ' + (i + 1) + ':', error);
-                }
-            }
-            
-            if (convertedElements.length > 0) {
-                console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
-                console.log('📄 ✅ Material outline patterns preserved on converted paths');
-                
-                // Verify patterns are still in SVG
-                const patternCount = svgElement.querySelectorAll('pattern').length;
-                const patternRefs = (new XMLSerializer().serializeToString(svgElement).match(/url\(#[^)]+\)/g) || []).length;
-                console.log('📄 Pattern verification:');
-                console.log('  - Pattern definitions:', patternCount);
-                console.log('  - Pattern references:', patternRefs);
-                
-                if (patternRefs > 0) {
-                    console.log('📄 ✅ Material outline patterns are preserved in converted paths');
-                } else {
-                    console.warn('📄 ⚠️ WARNING: No pattern references found - material outlines may be lost');
-                }
-            } else {
-                console.warn('📄 ⚠️ No text elements were converted to curves');
-                console.warn('📄 ⚠️ Possible reasons:');
-                console.warn('  - Fonts not found in SVG @font-face');
-                console.warn('  - opentype.js library not loaded');
-                console.warn('  - Font format not supported');
-                console.warn('📄 Text elements will remain as text (not curves)');
-            }
+            generateClientSidePDF(svgContent, orderId, button).then(function() {
+                console.log('📄 ✅ PDF generation completed');
+            }).catch(function(err) {
+                console.error('📄 ❌ Client-side PDF failed:', err);
+                alert('PDF generation failed: ' + (err && err.message) + '. Try SVG export instead.');
+                button.disabled = false;
+                button.innerHTML = originalText;
+            });
         }
         </script>
         <?php
