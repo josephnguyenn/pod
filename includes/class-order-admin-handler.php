@@ -1054,11 +1054,6 @@ class APD_Order_Admin_Handler
             const namespace = 'http://www.w3.org/2000/svg';
             const textElements = Array.from(svgElement.querySelectorAll('text'));
             
-            // Configuration: Điều chỉnh độ mở rộng của material outline
-            // Giá trị nhỏ hơn = outline sát với text hơn
-            // Giá trị lớn hơn = outline rộng hơn
-            const OUTLINE_EXPANSION_RATIO = 0.8; // 80% của strokeWidth (có thể điều chỉnh: 0.5-1.5)
-            
             if (textElements.length === 0) {
                 return; // No text to convert
             }
@@ -1241,8 +1236,7 @@ class APD_Order_Admin_Handler
                             group.appendChild(fillPath);
                             
                             // Create outline path (material outline) if stroke exists
-                            // SOLUTION: Create expanded path by scaling from center, then mask to create outline
-                            // This creates outline that follows the EXACT shape of text curves (not rectangle!)
+                            // Material outline is PNG/JPEG image pattern - keep it simple!
                             if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
                                 try {
                                     // Verify pattern exists in defs
@@ -1253,94 +1247,39 @@ class APD_Order_Admin_Handler
                                         console.warn('📄 ⚠️ Pattern ' + patternId + ' not found in defs - material outline may be lost');
                                     } else {
                                         const patternImages = patternDef.querySelectorAll('image');
-                                        console.log('📄 Pattern ' + patternId + ' has ' + patternImages.length + ' image(s) - creating curve-shaped outline');
+                                        console.log('📄 Pattern ' + patternId + ' has ' + patternImages.length + ' image(s) - material outline will be preserved');
                                     }
                                     
-                                    // Get bounding box to calculate center and scale
-                                    const bbox = path.getBoundingBox();
-                                    const centerX = (bbox.x1 + bbox.x2) / 2;
-                                    const centerY = (bbox.y1 + bbox.y2) / 2;
-                                    
-                                    // Calculate scale factor - UNIFORM SCALING để không bị méo
-                                    // Scale đều cả chiều ngang và dọc (giữ nguyên tỷ lệ)
-                                    const width = bbox.x2 - bbox.x1;
-                                    const height = bbox.y2 - bbox.y1;
-                                    const avgSize = (width + height) / 2; // Average size để scale đều
-                                    
-                                    // Expand chỉ đủ để tạo outline - dùng configurable ratio
-                                    const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                                    // Scale factor đều cho cả X và Y (uniform scaling - không méo)
-                                    const scaleFactor = 1 + (expansionAmount * 2) / avgSize;
-                                    
-                                    // Ensure defs exists
-                                    let defs = svgElement.querySelector('defs');
-                                    if (!defs) {
-                                        defs = document.createElementNS(namespace, 'defs');
-                                        svgElement.insertBefore(defs, svgElement.firstChild);
-                                    }
-                                    
-                                    // Create expanded path group with UNIFORM SCALE transform
-                                    // scale(sx, sy) với sx = sy để đảm bảo không bị méo
-                                    const expandedPathGroup = document.createElementNS(namespace, 'g');
-                                    expandedPathGroup.setAttribute('transform', 
-                                        'translate(' + centerX + ',' + centerY + ') ' +
-                                        'scale(' + scaleFactor + ',' + scaleFactor + ') ' + // Uniform scale: sx = sy
-                                        'translate(' + (-centerX) + ',' + (-centerY) + ')'
-                                    );
-                                    
-                                    // Create expanded path (scaled version of original)
-                                    const expandedPath = document.createElementNS(namespace, 'path');
-                                    expandedPath.setAttribute('d', pathData);
-                                    expandedPath.setAttribute('fill', stroke); // Pattern fill (CorelDRAW compatible!)
-                                    expandedPath.setAttribute('stroke', 'none');
-                                    expandedPathGroup.appendChild(expandedPath);
-                                    
-                                    // Create mask to cut out center (original text shape)
-                                    const maskId = 'outline-mask-' + i + '-' + Date.now();
-                                    const mask = document.createElementNS(namespace, 'mask');
-                                    mask.setAttribute('id', maskId);
-                                    
-                                    // White background (show all) - large enough to cover expanded path
-                                    const maskBg = document.createElementNS(namespace, 'rect');
-                                    maskBg.setAttribute('x', bbox.x1 - strokeWidth * 3);
-                                    maskBg.setAttribute('y', bbox.y1 - strokeWidth * 3);
-                                    maskBg.setAttribute('width', (bbox.x2 - bbox.x1) + strokeWidth * 6);
-                                    maskBg.setAttribute('height', (bbox.y2 - bbox.y1) + strokeWidth * 6);
-                                    maskBg.setAttribute('fill', 'white');
-                                    mask.appendChild(maskBg);
-                                    
-                                    // Black path (cut out center - original text shape)
-                                    const maskPath = fillPath.cloneNode(true);
-                                    maskPath.setAttribute('fill', 'black');
-                                    maskPath.setAttribute('stroke', 'none');
-                                    mask.appendChild(maskPath);
-                                    
-                                    defs.appendChild(mask);
-                                    
-                                    // Apply mask to expanded path group (creates outline effect following text shape!)
-                                    expandedPathGroup.setAttribute('mask', 'url(#' + maskId + ')');
-                                    
-                                    // Insert expanded path BEFORE fill (so fill renders on top)
-                                    group.insertBefore(expandedPathGroup, fillPath);
-                                    
-                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves with curve-shaped outline');
-                                    console.log('📄 ✅ Material outline follows text curve shape (chỉ lớn hơn curves một chút)');
-                                    console.log('📄 ✅ Uniform scale: ' + scaleFactor.toFixed(3) + 'x (đều cả X và Y - không bị méo)');
-                                    console.log('📄 ✅ Expands by ~' + expansionAmount.toFixed(1) + 'px mỗi bên (cả chiều ngang và dọc)');
-                                    console.log('📄 ✅ Created using uniform scaled path + mask (works in CorelDRAW!)');
-                                    console.log('📄 ✅ No Inkscape needed - pure JavaScript solution');
-                                    console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
-                                } catch (e) {
-                                    console.warn('📄 Failed to create curve-shaped outline, falling back to stroke:', e);
-                                    // Fallback: use simple pattern stroke
+                                    // Create outline path with stroke using pattern (PNG/JPEG image)
                                     const outlinePath = document.createElementNS(namespace, 'path');
                                     outlinePath.setAttribute('d', pathData);
+                                    
+                                    // Set stroke with pattern URL - this is the simple way!
                                     outlinePath.setAttribute('fill', 'none');
-                                    outlinePath.setAttribute('stroke', stroke);
+                                    outlinePath.setAttribute('stroke', stroke); // url(#apdTextPattern) with PNG/JPEG image
                                     outlinePath.setAttribute('stroke-width', strokeWidth);
                                     outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
                                     outlinePath.setAttribute('stroke-linecap', strokeLinecap);
+                                    outlinePath.setAttribute('paint-order', paintOrder);
+                                    
+                                    // Set in both attributes AND style to ensure PDF/CorelDRAW sees it
+                                    outlinePath.setAttribute('style', 
+                                        'stroke: ' + stroke + '; ' +
+                                        'stroke-width: ' + strokeWidth + '; ' +
+                                        'stroke-linejoin: ' + strokeLinejoin + '; ' +
+                                        'stroke-linecap: ' + strokeLinecap + '; ' +
+                                        'fill: none; ' +
+                                        'paint-order: ' + paintOrder + ';'
+                                    );
+                                    
+                                    // Insert outline BEFORE fill (so fill renders on top, outline behind)
                                     group.insertBefore(outlinePath, fillPath);
+                                    
+                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
+                                    console.log('📄 ✅ Material outline (PNG/JPEG pattern) preserved: ' + stroke);
+                                    console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
+                                } catch (e) {
+                                    console.warn('📄 Failed to create material outline path:', e);
                                 }
                             } else {
                                 console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
@@ -1368,38 +1307,24 @@ class APD_Order_Admin_Handler
             
             if (convertedElements.length > 0) {
                 console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
-                console.log('📄 ✅ Material outline created using scaled path + mask (follows text curve shape!)');
+                console.log('📄 ✅ Material outline patterns preserved on converted paths');
                 
                 // Verify patterns (with PNG/JPEG images) are still in SVG
                 const patternCount = svgElement.querySelectorAll('pattern').length;
                 const patternRefs = (new XMLSerializer().serializeToString(svgElement).match(/url\(#[^)]+\)/g) || []).length;
                 const patternImages = svgElement.querySelectorAll('pattern image').length;
-                const patternFills = (new XMLSerializer().serializeToString(svgElement).match(/fill=["\']url\(#[^)]+\)["\']/g) || []).length;
-                const maskCount = svgElement.querySelectorAll('mask').length;
-                const scaledPaths = svgElement.querySelectorAll('g[mask] path[fill*="url(#"]').length;
                 
-                console.log('📄 Pattern verification (Curve-shaped material outlines):');
+                console.log('📄 Pattern verification (PNG/JPEG material outlines):');
                 console.log('  - Pattern definitions:', patternCount);
                 console.log('  - Pattern images (PNG/JPEG):', patternImages);
-                console.log('  - Pattern references (total):', patternRefs);
-                console.log('  - Pattern FILLS (CorelDRAW compatible):', patternFills);
-                console.log('  - SVG masks created:', maskCount);
-                console.log('  - Scaled outline paths:', scaledPaths);
+                console.log('  - Pattern references:', patternRefs);
                 
-                if (patternRefs > 0 && patternImages > 0 && patternFills > 0 && maskCount > 0 && scaledPaths > 0) {
-                    console.log('📄 ✅ Material outline patterns are preserved as FILLS on scaled paths');
-                    console.log('📄 ✅ Outline follows EXACT text curve shape (not rectangle!)');
-                    console.log('📄 ✅ CorelDRAW WILL display material outline correctly in PDF');
-                    console.log('📄 ✅ No Inkscape required - pure JavaScript solution!');
-                    console.log('📄 ✅ Pattern-filled paths work in PDF format (unlike pattern-stroked paths)');
+                if (patternRefs > 0 && patternImages > 0) {
+                    console.log('📄 ✅ Material outline patterns (PNG/JPEG) are preserved in converted paths');
+                    console.log('📄 ✅ CorelDRAW should display material outline correctly');
                 } else if (patternRefs > 0 && patternImages === 0) {
                     console.warn('📄 ⚠️ WARNING: Pattern references found but no PNG/JPEG images in patterns!');
                     console.warn('📄 ⚠️ Material outlines may be lost - patterns need image elements');
-                } else if (patternRefs > 0 && patternFills === 0) {
-                    console.warn('📄 ⚠️ WARNING: Patterns found but not applied as fills!');
-                    console.warn('📄 ⚠️ Material outlines may not render in CorelDRAW - need pattern FILLS not just strokes');
-                } else if (maskCount === 0 || scaledPaths === 0) {
-                    console.warn('📄 ⚠️ WARNING: No masks or scaled paths created - outline effect may not work');
                 } else {
                     console.warn('📄 ⚠️ WARNING: No pattern references found - material outlines may be lost');
                 }
@@ -1444,34 +1369,11 @@ class APD_Order_Admin_Handler
                         if (response.data.use_client_side && response.data.svg_content) {
                             exportVectorPDF._clientSide = true;
                             console.log('📄 ⚠️ Using CLIENT-SIDE (text→curves via opentype.js)');
-                            console.log('📄 ⚠️ WARNING: Material outlines may not display in CorelDRAW');
-                            console.log('📄 💡 SOLUTION: Ask admin to install Inkscape on server for proper material outline support');
                             
                             var parser = new DOMParser();
                             var svgDoc = parser.parseFromString(response.data.svg_content, 'image/svg+xml');
                             var svgEl = svgDoc.documentElement;
                             console.log('📄 SVG: ' + svgEl.querySelectorAll('text').length + ' text, ' + svgEl.querySelectorAll('pattern').length + ' patterns');
-                            
-                            // Check if SVG has material outline patterns
-                            var hasPatternStrokes = svgEl.querySelector('[stroke*="url(#"]') !== null;
-                            if (hasPatternStrokes) {
-                                // Show warning banner about material outlines
-                                var warningDiv = document.createElement('div');
-                                warningDiv.className = 'notice notice-warning is-dismissible';
-                                warningDiv.style.marginTop = '10px';
-                                warningDiv.innerHTML = '<p><strong>⚠️ Material Outline Compatibility Warning</strong></p>' +
-                                    '<p>Material outlines may not display when opening this PDF in CorelDRAW.</p>' +
-                                    '<p><strong>Solutions:</strong></p>' +
-                                    '<ul style="margin-left: 20px;">' +
-                                    '<li>✅ <strong>Best:</strong> Ask server admin to install <code>Inkscape</code> - material outlines will work automatically</li>' +
-                                    '<li>✅ <strong>Alternative:</strong> Use <strong>Cut-Ready SVG</strong> export button instead (opens directly in CorelDRAW)</li>' +
-                                    '<li>ℹ️ Material outlines <em>will</em> display in PDF viewers and browsers correctly</li>' +
-                                    '</ul>';
-                                button.closest('.order-svg-download-section').insertBefore(warningDiv, button.closest('.order-svg-download-section').firstChild);
-                                
-                                // Auto-dismiss after 15 seconds
-                                setTimeout(() => warningDiv.style.display = 'none', 15000);
-                            }
                             
                             runClientSidePDF(response.data.svg_content, orderId, button, originalText);
                             return;
