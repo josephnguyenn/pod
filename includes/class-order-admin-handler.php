@@ -1049,6 +1049,7 @@ class APD_Order_Admin_Handler
 
         // Convert text elements to paths (curves) while preserving material outline patterns
         // Uses opentype.js to convert text to paths, then converts strokes to fills to preserve material outlines
+        // Material outline patterns are PNG/JPEG images in <pattern><image> elements
         async function convertTextToPathsWithMaterialOutline(svgDoc, svgElement) {
             const namespace = 'http://www.w3.org/2000/svg';
             const textElements = Array.from(svgElement.querySelectorAll('text'));
@@ -1058,6 +1059,22 @@ class APD_Order_Admin_Handler
             }
             
             console.log('📄 Converting ' + textElements.length + ' text elements to curves with material outlines...');
+            
+            // CRITICAL: Ensure pattern definitions (with PNG/JPEG images) are preserved
+            // Check if defs exists, if not create it
+            let defs = svgElement.querySelector('defs');
+            if (!defs) {
+                defs = document.createElementNS(namespace, 'defs');
+                svgElement.insertBefore(defs, svgElement.firstChild);
+            }
+            
+            // Count existing patterns (should have PNG/JPEG images)
+            const existingPatterns = defs.querySelectorAll('pattern');
+            console.log('📄 Pattern definitions in SVG:', existingPatterns.length);
+            existingPatterns.forEach(function(pat, idx) {
+                const images = pat.querySelectorAll('image');
+                console.log('📄 Pattern ' + (idx + 1) + ' (id=' + pat.getAttribute('id') + '): ' + images.length + ' image(s)');
+            });
             
             // Step 1: Extract font data from SVG @font-face
             const fontCache = new Map();
@@ -1219,29 +1236,47 @@ class APD_Order_Admin_Handler
                             group.appendChild(fillPath);
                             
                             // Create outline path (material outline) if stroke exists
+                            // Material outline is PNG/JPEG image pattern - keep it simple!
                             if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
-                                // CRITICAL: For CorelDRAW compatibility, we need stroke with pattern
-                                // PDF/CorelDRAW should support pattern strokes, but we'll ensure it's set correctly
                                 try {
+                                    // Verify pattern exists in defs
+                                    const patternId = stroke.match(/url\(#([^)]+)\)/)[1];
+                                    const patternDef = svgElement.querySelector('defs pattern#' + patternId);
+                                    
+                                    if (!patternDef) {
+                                        console.warn('📄 ⚠️ Pattern ' + patternId + ' not found in defs - material outline may be lost');
+                                    } else {
+                                        const patternImages = patternDef.querySelectorAll('image');
+                                        console.log('📄 Pattern ' + patternId + ' has ' + patternImages.length + ' image(s) - material outline will be preserved');
+                                    }
+                                    
+                                    // Create outline path with stroke using pattern (PNG/JPEG image)
                                     const outlinePath = document.createElementNS(namespace, 'path');
                                     outlinePath.setAttribute('d', pathData);
                                     
-                                    // Use stroke with material pattern - CorelDRAW should support this
+                                    // Set stroke with pattern URL - this is the simple way!
                                     outlinePath.setAttribute('fill', 'none');
-                                    outlinePath.setAttribute('stroke', stroke); // Material pattern URL
+                                    outlinePath.setAttribute('stroke', stroke); // url(#apdTextPattern) with PNG/JPEG image
                                     outlinePath.setAttribute('stroke-width', strokeWidth);
                                     outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
                                     outlinePath.setAttribute('stroke-linecap', strokeLinecap);
                                     outlinePath.setAttribute('paint-order', paintOrder);
                                     
-                                    // Also set in style to ensure it's preserved
-                                    outlinePath.setAttribute('style', 'stroke: ' + stroke + '; stroke-width: ' + strokeWidth + '; stroke-linejoin: ' + strokeLinejoin + '; stroke-linecap: ' + strokeLinecap + '; fill: none;');
+                                    // Set in both attributes AND style to ensure PDF/CorelDRAW sees it
+                                    outlinePath.setAttribute('style', 
+                                        'stroke: ' + stroke + '; ' +
+                                        'stroke-width: ' + strokeWidth + '; ' +
+                                        'stroke-linejoin: ' + strokeLinejoin + '; ' +
+                                        'stroke-linecap: ' + strokeLinecap + '; ' +
+                                        'fill: none; ' +
+                                        'paint-order: ' + paintOrder + ';'
+                                    );
                                     
-                                    // Insert outline BEFORE fill (so fill renders on top)
+                                    // Insert outline BEFORE fill (so fill renders on top, outline behind)
                                     group.insertBefore(outlinePath, fillPath);
                                     
                                     console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
-                                    console.log('📄 ✅ Material outline preserved: stroke="' + stroke + '", width=' + strokeWidth);
+                                    console.log('📄 ✅ Material outline (PNG/JPEG pattern) preserved: ' + stroke);
                                     console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
                                 } catch (e) {
                                     console.warn('📄 Failed to create material outline path:', e);
@@ -1274,15 +1309,22 @@ class APD_Order_Admin_Handler
                 console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
                 console.log('📄 ✅ Material outline patterns preserved on converted paths');
                 
-                // Verify patterns are still in SVG
+                // Verify patterns (with PNG/JPEG images) are still in SVG
                 const patternCount = svgElement.querySelectorAll('pattern').length;
                 const patternRefs = (new XMLSerializer().serializeToString(svgElement).match(/url\(#[^)]+\)/g) || []).length;
-                console.log('📄 Pattern verification:');
+                const patternImages = svgElement.querySelectorAll('pattern image').length;
+                
+                console.log('📄 Pattern verification (PNG/JPEG material outlines):');
                 console.log('  - Pattern definitions:', patternCount);
+                console.log('  - Pattern images (PNG/JPEG):', patternImages);
                 console.log('  - Pattern references:', patternRefs);
                 
-                if (patternRefs > 0) {
-                    console.log('📄 ✅ Material outline patterns are preserved in converted paths');
+                if (patternRefs > 0 && patternImages > 0) {
+                    console.log('📄 ✅ Material outline patterns (PNG/JPEG) are preserved in converted paths');
+                    console.log('📄 ✅ CorelDRAW should display material outline correctly');
+                } else if (patternRefs > 0 && patternImages === 0) {
+                    console.warn('📄 ⚠️ WARNING: Pattern references found but no PNG/JPEG images in patterns!');
+                    console.warn('📄 ⚠️ Material outlines may be lost - patterns need image elements');
                 } else {
                     console.warn('📄 ⚠️ WARNING: No pattern references found - material outlines may be lost');
                 }
