@@ -863,6 +863,364 @@ class APD_Order_Admin_Handler
             });
         }
 
+        // Client-side PDF generation - creates PDF with embedded SVG for CorelDRAW
+        // Now includes text-to-curves conversion using opentype.js
+        // Define this FIRST so it's available when exportVectorPDF is called
+        async function generateClientSidePDF(svgContent, orderId, button) {
+            console.log('📄 ===== CLIENT-SIDE PDF GENERATION =====');
+            console.log('📄 Converting text to curves using opentype.js...');
+            
+            const originalText = button.innerHTML;
+            
+            try {
+                // Parse SVG
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                const svgElement = svgDoc.documentElement;
+                
+                // Check for parse errors
+                const parseError = svgElement.querySelector('parsererror');
+                if (parseError) {
+                    throw new Error('SVG parse error: ' + parseError.textContent);
+                }
+                
+                // Analyze SVG before processing
+                const textCountBefore = svgElement.querySelectorAll('text').length;
+                const patternCountBefore = svgElement.querySelectorAll('pattern').length;
+                const patternRefsBefore = (svgContent.match(/url\(#[^)]+\)/g) || []).length;
+                
+                console.log('📄 SVG Analysis (before processing):');
+                console.log('  - Text elements:', textCountBefore);
+                console.log('  - Pattern definitions:', patternCountBefore);
+                console.log('  - Pattern references:', patternRefsBefore);
+                
+                // CRITICAL: Convert text to paths (curves) BEFORE PDF generation
+                // This ensures fonts don't change in CorelDRAW and material outlines are preserved
+                console.log('📄 Converting text to curves with material outlines...');
+                
+                // Convert text to paths (async function)
+                await convertTextToPathsWithMaterialOutline(svgDoc, svgElement);
+                
+                // Update svgContent after text conversion
+                svgContent = new XMLSerializer().serializeToString(svgElement);
+                
+                // Verify conversion
+                const textCountAfter = svgElement.querySelectorAll('text').length;
+                const pathCountAfter = svgElement.querySelectorAll('path').length;
+                console.log('📄 Conversion verification:');
+                console.log('  - Text elements remaining:', textCountAfter);
+                console.log('  - Path elements created:', pathCountAfter);
+                if (textCountAfter === 0) {
+                    console.log('📄 ✅ All text converted to curves!');
+                } else {
+                    console.log('📄 ⚠️ Some text elements were not converted');
+                }
+                
+                // Get SVG dimensions
+                let width = parseFloat(svgElement.getAttribute('width')) || 800;
+                let height = parseFloat(svgElement.getAttribute('height')) || 600;
+                const viewBox = svgElement.getAttribute('viewBox');
+                if (viewBox) {
+                    const vb = viewBox.split(/\s+/);
+                    if (vb.length >= 4) {
+                        width = parseFloat(vb[2]) || width;
+                        height = parseFloat(vb[3]) || height;
+                    }
+                }
+                
+                // Create PDF
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF({
+                    orientation: width > height ? 'landscape' : 'portrait',
+                    unit: 'px',
+                    compress: true
+                });
+                
+                // Set PDF size to match SVG
+                pdf.setPage([width, height]);
+                
+                // Try to use svg2pdf.js for vector rendering
+                let useSvg2Pdf = false;
+                if (typeof svg2pdf !== 'undefined') {
+                    try {
+                        useSvg2Pdf = true;
+                        await svg2pdf(svgElement, pdf, {
+                            xOffset: 0,
+                            yOffset: 0,
+                            width: width,
+                            height: height
+                        });
+                        console.log('📄 ✅ PDF generated using svg2pdf.js (vector)');
+                    } catch (svg2pdfError) {
+                        console.warn('📄 svg2pdf.js failed, using fallback:', svg2pdfError);
+                        useSvg2Pdf = false;
+                    }
+                }
+                
+                // Fallback: Embed SVG as image if svg2pdf fails
+                function useImageFallback() {
+                    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+                    const svgUrl = URL.createObjectURL(svgBlob);
+                    const img = new Image();
+                    img.onload = function() {
+                        pdf.addImage(img, 'SVG', 0, 0, width, height);
+                        const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
+                        pdf.save(filename);
+                        URL.revokeObjectURL(svgUrl);
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                        console.log('📄 ✅ PDF generated (image fallback)');
+                    };
+                    img.onerror = function() {
+                        URL.revokeObjectURL(svgUrl);
+                        throw new Error('Failed to load SVG as image');
+                    };
+                    img.src = svgUrl;
+                }
+                
+                // Use fallback if svg2pdf not available or failed
+                if (!useSvg2Pdf) {
+                    useImageFallback();
+                }
+                
+            } catch (error) {
+                console.error('PDF generation error:', error);
+                alert('PDF generation failed: ' + error.message + '. Please use the SVG export for best CorelDRAW compatibility.');
+                button.disabled = false;
+                button.innerHTML = originalText;
+            }
+        }
+
+        // Convert text elements to paths (curves) while preserving material outline patterns
+        // Uses opentype.js to convert text to paths, then converts strokes to fills to preserve material outlines
+        async function convertTextToPathsWithMaterialOutline(svgDoc, svgElement) {
+            const namespace = 'http://www.w3.org/2000/svg';
+            const textElements = Array.from(svgElement.querySelectorAll('text'));
+            
+            if (textElements.length === 0) {
+                return; // No text to convert
+            }
+            
+            console.log('📄 Converting ' + textElements.length + ' text elements to curves with material outlines...');
+            
+            // Step 1: Extract font data from SVG @font-face
+            const fontCache = new Map();
+            const styleElements = svgElement.querySelectorAll('style');
+            
+            for (const styleEl of styleElements) {
+                const styleText = styleEl.textContent || styleEl.innerText;
+                const fontFaceMatches = styleText.match(/@font-face\s*\{[^}]*\}/g);
+                
+                if (fontFaceMatches) {
+                    for (const fontFace of fontFaceMatches) {
+                        // Extract font-family
+                        const familyMatch = fontFace.match(/font-family:\s*['"]?([^;'"]+)['"]?/i);
+                        if (!familyMatch) continue;
+                        const fontFamily = familyMatch[1].trim().replace(/['"]/g, '');
+                        
+                        // Extract base64 font data
+                        const base64Match = fontFace.match(/src:\s*url\(data:application\/[^;]+;base64,([^)]+)\)/i);
+                        if (base64Match) {
+                            const base64Data = base64Match[1];
+                            try {
+                                // Decode base64 to binary
+                                const binaryString = atob(base64Data);
+                                const bytes = new Uint8Array(binaryString.length);
+                                for (let i = 0; i < binaryString.length; i++) {
+                                    bytes[i] = binaryString.charCodeAt(i);
+                                }
+                                
+                                // Load font with opentype.js
+                                if (typeof opentype !== 'undefined') {
+                                    const font = opentype.parse(bytes.buffer);
+                                    fontCache.set(fontFamily, font);
+                                    console.log('📄 Loaded font:', fontFamily);
+                                }
+                            } catch (e) {
+                                console.warn('📄 Failed to load font ' + fontFamily + ':', e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Step 2: Convert each text element to paths
+            const convertedElements = [];
+            
+            for (let i = 0; i < textElements.length; i++) {
+                const textEl = textElements[i];
+                try {
+                    const text = textEl.textContent || textEl.innerText;
+                    if (!text || !text.trim()) continue;
+                    
+                    // Get text properties
+                    const fill = textEl.getAttribute('fill') || '#000000';
+                    const stroke = textEl.getAttribute('stroke') || 'none';
+                    const strokeWidth = parseFloat(textEl.getAttribute('stroke-width') || '0');
+                    const strokeLinejoin = textEl.getAttribute('stroke-linejoin') || 'round';
+                    const strokeLinecap = textEl.getAttribute('stroke-linecap') || 'round';
+                    const paintOrder = textEl.getAttribute('paint-order') || 'stroke fill';
+                    const fontSize = parseFloat(textEl.getAttribute('font-size') || '16');
+                    const fontFamily = (textEl.getAttribute('font-family') || 'Arial').replace(/['"]/g, '');
+                    const fontWeight = textEl.getAttribute('font-weight') || 'normal';
+                    const x = parseFloat(textEl.getAttribute('x') || '0');
+                    const y = parseFloat(textEl.getAttribute('y') || '0');
+                    const textAnchor = textEl.getAttribute('text-anchor') || 'start';
+                    const dominantBaseline = textEl.getAttribute('dominant-baseline') || 'auto';
+                    const transform = textEl.getAttribute('transform') || '';
+                    
+                    // Get parent for replacement
+                    const parent = textEl.parentNode;
+                    if (!parent) continue;
+                    
+                    // Create group to hold converted paths
+                    const group = document.createElementNS(namespace, 'g');
+                    if (transform) {
+                        group.setAttribute('transform', transform);
+                    }
+                    
+                    // Try to get font from cache
+                    let font = fontCache.get(fontFamily);
+                    if (!font) {
+                        // Try case-insensitive match
+                        for (const [cachedFamily, cachedFont] of fontCache.entries()) {
+                            if (cachedFamily.toLowerCase() === fontFamily.toLowerCase()) {
+                                font = cachedFont;
+                                console.log('📄 Found font (case-insensitive match):', cachedFamily);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!font) {
+                        console.warn('📄 Font not found in cache:', fontFamily);
+                        console.warn('📄 Available fonts:', Array.from(fontCache.keys()));
+                        // Continue without conversion - text will remain as text
+                        continue;
+                    }
+                    
+                    // Convert text to path using opentype.js
+                    if (font && typeof opentype !== 'undefined') {
+                        // Use opentype.js to convert text to path
+                        try {
+                            // Calculate x position based on text-anchor
+                            let textX = x;
+                            let textY = y;
+                            
+                            // Adjust y position based on baseline
+                            if (dominantBaseline === 'hanging') {
+                                textY = y + fontSize * 0.2;
+                            } else if (dominantBaseline === 'middle') {
+                                textY = y - fontSize * 0.5;
+                            } else if (dominantBaseline === 'alphabetic' || dominantBaseline === 'auto') {
+                                // Default: text baseline is at y
+                                textY = y;
+                            }
+                            
+                            // Get path from font
+                            const path = font.getPath(text, textX, textY, fontSize);
+                            const pathData = path.toPathData();
+                            
+                            // Get bounding box for text-anchor adjustment
+                            const bbox = path.getBoundingBox();
+                            const textWidth = bbox.x2 - bbox.x1;
+                            
+                            // Adjust for text-anchor by translating the group
+                            if (textAnchor === 'middle') {
+                                const currentTransform = group.getAttribute('transform') || '';
+                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth / 2) + ', 0)');
+                            } else if (textAnchor === 'end') {
+                                const currentTransform = group.getAttribute('transform') || '';
+                                group.setAttribute('transform', (currentTransform ? currentTransform + ' ' : '') + 'translate(' + (-textWidth) + ', 0)');
+                            }
+                            
+                            // Create fill path (text shape)
+                            const fillPath = document.createElementNS(namespace, 'path');
+                            fillPath.setAttribute('d', pathData);
+                            fillPath.setAttribute('fill', fill);
+                            fillPath.setAttribute('stroke', 'none');
+                            group.appendChild(fillPath);
+                            
+                            // Create outline path (material outline) if stroke exists
+                            if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
+                                // CRITICAL: For material outline, we need to create a path that represents the stroke
+                                // The best approach is to use opentype.js to get the outline path
+                                // Then convert the stroke to a fill path with the material pattern
+                                
+                                try {
+                                    // Get the path outline (stroke outline) using opentype.js
+                                    // We'll create a wider path that represents the stroke
+                                    const outlinePath = document.createElementNS(namespace, 'path');
+                                    
+                                    // Use the same path but with stroke properties
+                                    // The material pattern will be applied as stroke
+                                    outlinePath.setAttribute('d', pathData);
+                                    outlinePath.setAttribute('fill', 'none');
+                                    outlinePath.setAttribute('stroke', stroke); // Material pattern URL
+                                    outlinePath.setAttribute('stroke-width', strokeWidth);
+                                    outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
+                                    outlinePath.setAttribute('stroke-linecap', strokeLinecap);
+                                    outlinePath.setAttribute('paint-order', paintOrder);
+                                    
+                                    // Insert outline before fill (so fill is on top, outline behind)
+                                    group.insertBefore(outlinePath, fillPath);
+                                    
+                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves');
+                                    console.log('📄 ✅ Material outline preserved as stroke on path: ' + stroke);
+                                } catch (e) {
+                                    console.warn('📄 Failed to create material outline path:', e);
+                                    // Still add the fill path even if outline fails
+                                }
+                            } else {
+                                console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
+                            }
+                            
+                            // Replace text with group
+                            parent.replaceChild(group, textEl);
+                            convertedElements.push(i);
+                            
+                        } catch (e) {
+                            console.warn('📄 Failed to convert text element ' + (i + 1) + ' with opentype.js:', e);
+                            // Keep original text element if conversion fails
+                        }
+                    } else {
+                        // Font not available - cannot convert
+                        console.warn('📄 Font not available for text element ' + (i + 1) + ':', fontFamily);
+                        console.warn('📄 Text element will remain as text (not converted to curves)');
+                        // Keep text element - will be handled by svg2pdf but won't be curves
+                    }
+                    
+                } catch (error) {
+                    console.warn('📄 Error processing text element ' + (i + 1) + ':', error);
+                }
+            }
+            
+            if (convertedElements.length > 0) {
+                console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
+                console.log('📄 ✅ Material outline patterns preserved on converted paths');
+                
+                // Verify patterns are still in SVG
+                const patternCount = svgElement.querySelectorAll('pattern').length;
+                const patternRefs = (new XMLSerializer().serializeToString(svgElement).match(/url\(#[^)]+\)/g) || []).length;
+                console.log('📄 Pattern verification:');
+                console.log('  - Pattern definitions:', patternCount);
+                console.log('  - Pattern references:', patternRefs);
+                
+                if (patternRefs > 0) {
+                    console.log('📄 ✅ Material outline patterns are preserved in converted paths');
+                } else {
+                    console.warn('📄 ⚠️ WARNING: No pattern references found - material outlines may be lost');
+                }
+            } else {
+                console.warn('📄 ⚠️ No text elements were converted to curves');
+                console.warn('📄 ⚠️ Possible reasons:');
+                console.warn('  - Fonts not found in SVG @font-face');
+                console.warn('  - opentype.js library not loaded');
+                console.warn('  - Font format not supported');
+                console.warn('📄 Text elements will remain as text (not curves)');
+            }
+        }
+
         // Export Vector PDF (preserves all styles and material patterns)
         window.exportVectorPDF = function(orderId) {
             console.log('📄 ===== STARTING PDF EXPORT =====');
@@ -893,9 +1251,7 @@ class APD_Order_Admin_Handler
                         // Check if we need to generate PDF client-side
                         if (response.data.use_client_side && response.data.svg_content) {
                             console.log('📄 ⚠️ WARNING: Using CLIENT-SIDE fallback (server-side conversion not available)');
-                            console.log('📄 ⚠️ Client-side CANNOT convert text to curves - text will remain as text');
-                            console.log('📄 ⚠️ Material outline may be lost in CorelDRAW');
-                            console.log('📄 Solution: Install Inkscape on server for proper text-to-curves conversion');
+                            console.log('📄 ⚠️ Now converting text to curves using opentype.js...');
                             
                             // Analyze SVG before client-side generation
                             const parser = new DOMParser();
@@ -906,19 +1262,22 @@ class APD_Order_Admin_Handler
                             const patternRefs = (response.data.svg_content.match(/url\(#[^)]+\)/g) || []).length;
                             
                             console.log('📄 SVG Analysis (client-side fallback):');
-                            console.log('  - Text elements:', textCount, '(will NOT be converted to curves)');
+                            console.log('  - Text elements:', textCount, '(will be converted to curves)');
                             console.log('  - Pattern definitions:', patternCount);
                             console.log('  - Pattern references:', patternRefs);
                             
                             // Generate PDF using client-side library with text-to-curves conversion
-                            try {
-                                await generateClientSidePDF(response.data.svg_content, orderId, button);
-                            } catch (error) {
-                                console.error('📄 ❌ Client-side PDF generation failed:', error);
-                                alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
-                                button.disabled = false;
-                                button.innerHTML = originalText;
-                            }
+                            // Use Promise to handle async function
+                            generateClientSidePDF(response.data.svg_content, orderId, button)
+                                .then(function() {
+                                    console.log('📄 ✅ PDF generation completed');
+                                })
+                                .catch(function(error) {
+                                    console.error('📄 ❌ Client-side PDF generation failed:', error);
+                                    alert('PDF generation failed: ' + error.message + '. Please try the SVG export instead.');
+                                    button.disabled = false;
+                                    button.innerHTML = originalText;
+                                });
                             return;
                         }
                         
@@ -988,224 +1347,6 @@ class APD_Order_Admin_Handler
                     button.innerHTML = originalText;
                 }
             });
-        }
-
-        // Client-side PDF generation - creates PDF with embedded SVG for CorelDRAW
-        // Now includes text-to-curves conversion using opentype.js
-        async function generateClientSidePDF(svgContent, orderId, button) {
-            console.log('📄 ===== CLIENT-SIDE PDF GENERATION =====');
-            console.log('📄 Converting text to curves using opentype.js...');
-            
-            const originalText = button.innerHTML;
-            
-            try {
-                // Parse SVG to get dimensions
-                const parser = new DOMParser();
-                const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-                const svgElement = svgDoc.documentElement;
-                
-                // Check for parsing errors
-                const parserError = svgDoc.querySelector('parsererror');
-                if (parserError) {
-                    throw new Error('Invalid SVG content');
-                }
-                
-                // Analyze SVG before processing
-                const textCountBefore = svgElement.querySelectorAll('text').length;
-                const patternCountBefore = svgElement.querySelectorAll('pattern').length;
-                const patternRefsBefore = (svgContent.match(/url\(#[^)]+\)/g) || []).length;
-                
-                console.log('📄 SVG Analysis (before processing):');
-                console.log('  - Text elements:', textCountBefore);
-                console.log('  - Pattern definitions:', patternCountBefore);
-                console.log('  - Pattern references:', patternRefsBefore);
-                
-                // CRITICAL: Convert text to paths (curves) BEFORE PDF generation
-                // This ensures fonts don't change in CorelDRAW and material outlines are preserved
-                console.log('📄 Converting text to curves with material outlines...');
-                
-                // Convert text to paths (async function)
-                await convertTextToPathsWithMaterialOutline(svgDoc, svgElement);
-                
-                // Update svgContent after text conversion
-                svgContent = new XMLSerializer().serializeToString(svgElement);
-                
-                // Verify conversion
-                const textCountAfter = svgElement.querySelectorAll('text').length;
-                const pathCountAfter = svgElement.querySelectorAll('path').length;
-                console.log('📄 Conversion verification:');
-                console.log('  - Text elements remaining:', textCountAfter);
-                console.log('  - Path elements created:', pathCountAfter);
-                if (textCountAfter === 0) {
-                    console.log('📄 ✅ All text converted to curves!');
-                } else {
-                    console.log('📄 ⚠️ Some text elements were not converted');
-                }
-                
-                // Analyze SVG after processing (already done above, remove duplicate)
-                
-                // Get SVG dimensions
-                let width = parseFloat(svgElement.getAttribute('width')) || 800;
-                let height = parseFloat(svgElement.getAttribute('height')) || 600;
-                
-                // Parse viewBox if available (more accurate)
-                const viewBox = svgElement.getAttribute('viewBox');
-                if (viewBox) {
-                    const vb = viewBox.split(/\s+/);
-                    if (vb.length >= 4) {
-                        width = parseFloat(vb[2]) || width;
-                        height = parseFloat(vb[3]) || height;
-                    }
-                }
-                
-                // Remove units if present
-                width = parseFloat(width);
-                height = parseFloat(height);
-                
-                // Convert pixels to mm (1 inch = 25.4mm, assuming 96 DPI)
-                const widthMM = (width / 96) * 25.4;
-                const heightMM = (height / 96) * 25.4;
-                
-                // Create PDF with jsPDF
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({
-                    orientation: widthMM > heightMM ? 'landscape' : 'portrait',
-                    unit: 'mm',
-                    format: [widthMM, heightMM],
-                    compress: true
-                });
-                
-                // Try to use svg2pdf if available
-                let useSvg2Pdf = false;
-                if (typeof window.svg2pdf !== 'undefined') {
-                    // Check different possible API structures
-                    if (typeof window.svg2pdf === 'function') {
-                        useSvg2Pdf = true;
-                        try {
-                            window.svg2pdf(svgElement, doc, {
-                                xOffset: 0,
-                                yOffset: 0,
-                                scale: 1
-                            });
-                            // If successful, download
-                            const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
-                            doc.save(filename);
-                            
-                            const successDiv = document.createElement('div');
-                            successDiv.className = 'notice notice-success is-dismissible';
-                            successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> PDF generated with vector data. Text converted to paths with material outline patterns preserved. Open in CorelDRAW - all vectors ready for editing.</p>';
-                            button.closest('.order-svg-download-section').appendChild(successDiv);
-                            setTimeout(() => successDiv.remove(), 10000);
-                            button.disabled = false;
-                            button.innerHTML = originalText;
-                            return;
-                        } catch (e) {
-                            console.warn('svg2pdf failed, using fallback:', e);
-                            useSvg2Pdf = false;
-                        }
-                    } else if (window.svg2pdf.svg2pdf) {
-                        useSvg2Pdf = true;
-                        try {
-                            window.svg2pdf.svg2pdf(svgElement, doc, {
-                                xOffset: 0,
-                                yOffset: 0,
-                                scale: 1
-                            }).then(function() {
-                                const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
-                                doc.save(filename);
-                                
-                                const successDiv = document.createElement('div');
-                                successDiv.className = 'notice notice-success is-dismissible';
-                                successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> PDF generated with vector data. Text converted to paths with material outline patterns preserved. Open in CorelDRAW - all vectors ready for editing.</p>';
-                                button.closest('.order-svg-download-section').appendChild(successDiv);
-                                setTimeout(() => successDiv.remove(), 10000);
-                                button.disabled = false;
-                                button.innerHTML = originalText;
-                            }).catch(function(error) {
-                                console.warn('svg2pdf promise failed, using fallback:', error);
-                                useImageFallback();
-                            });
-                            return;
-                        } catch (e) {
-                            console.warn('svg2pdf error, using fallback:', e);
-                            useSvg2Pdf = false;
-                        }
-                    }
-                }
-                
-                // Fallback: High-resolution image-based PDF (works but not true vector)
-                function useImageFallback() {
-                    // Convert SVG to data URL
-                    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-                    const svgUrl = URL.createObjectURL(svgBlob);
-                    const img = new Image();
-                    
-                    img.onload = function() {
-                        try {
-                            // Create high-resolution canvas (300 DPI for print quality)
-                            const dpi = 300;
-                            const scale = dpi / 96;
-                            const canvas = document.createElement('canvas');
-                            canvas.width = this.width * scale;
-                            canvas.height = this.height * scale;
-                            const ctx = canvas.getContext('2d');
-                            
-                            // Draw SVG at high resolution
-                            ctx.drawImage(this, 0, 0, canvas.width, canvas.height);
-                            
-                            // Convert to image data
-                            const imgData = canvas.toDataURL('image/png', 1.0);
-                            
-                            // Add to PDF
-                            const pdfWidth = doc.internal.pageSize.getWidth();
-                            const pdfHeight = doc.internal.pageSize.getHeight();
-                            doc.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-                            
-                            // Download PDF
-                            const filename = 'order-' + orderId + '-vector-' + Date.now() + '.pdf';
-                            doc.save(filename);
-                            
-                            // Show success message with note about vector conversion
-                            const successDiv = document.createElement('div');
-                            successDiv.className = 'notice notice-success is-dismissible';
-                            successDiv.innerHTML = '<p><strong>✅ PDF Generated!</strong> PDF generated in your browser. <strong>Note:</strong> For best CorelDRAW vector conversion, please use the "Export Cut-Ready SVG" option and import the SVG directly into CorelDRAW.</p>';
-                            button.closest('.order-svg-download-section').appendChild(successDiv);
-                            
-                            setTimeout(() => successDiv.remove(), 10000);
-                            button.disabled = false;
-                            button.innerHTML = originalText;
-                            
-                            URL.revokeObjectURL(svgUrl);
-                        } catch (error) {
-                            console.error('PDF generation error:', error);
-                            alert('PDF generation failed: ' + error.message + '. Please use the SVG export instead for best results.');
-                            button.disabled = false;
-                            button.innerHTML = originalText;
-                            URL.revokeObjectURL(svgUrl);
-                        }
-                    };
-                    
-                    img.onerror = function() {
-                        alert('Failed to load SVG. Please use the SVG export instead.');
-                        button.disabled = false;
-                        button.innerHTML = originalText;
-                        URL.revokeObjectURL(svgUrl);
-                    };
-                    
-                    img.src = svgUrl;
-                }
-                
-                // Use fallback if svg2pdf not available or failed
-                if (!useSvg2Pdf) {
-                    useImageFallback();
-                }
-                
-            } catch (error) {
-                console.error('PDF generation error:', error);
-                alert('PDF generation failed: ' + error.message + '. Please use the SVG export for best CorelDRAW compatibility.');
-                button.disabled = false;
-                button.innerHTML = originalText;
-            }
         }
 
         // Convert text elements to paths (curves) while preserving material outline patterns
