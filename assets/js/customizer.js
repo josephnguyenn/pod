@@ -1896,8 +1896,19 @@ jQuery(document).ready(function($) {
                     );
                 }
                 
+                // Final fallback: if no dual-layer logo, find ANY logo SVG and apply stroke to it
                 if ($logoOutlines.length === 0) {
-                    console.log('🎨 No logo outline layers found');
+                    console.log('🎨 No dual-layer logo found, looking for simple logo SVG...');
+                    $logoOutlines = $('.apd-logo-box svg, .fsc-logo-container svg, .apd-el svg').filter(function(){
+                        // Check if this SVG has logo-related content (paths with fill)
+                        return $(this).find('path[fill], polygon[fill]').length > 0 || 
+                               $(this).attr('id') && $(this).attr('id').toLowerCase().includes('logo');
+                    });
+                    console.log('🎨 Found', $logoOutlines.length, 'simple logo SVG elements');
+                }
+                
+                if ($logoOutlines.length === 0) {
+                    console.log('🎨 No logo SVG found for material outline');
                     return;
                 }
                 
@@ -2662,30 +2673,29 @@ jQuery(document).ready(function($) {
 						}
 					}
 					
-					// Handle boolean true, string "true", number 1, or any truthy value
-					if (rawValue !== undefined) {
-						fillLogoWithColor = rawValue === true || rawValue === 'true' || rawValue === 1 || rawValue === '1' || (typeof rawValue === 'string' && rawValue.toLowerCase() === 'true');
-					} else {
-						// Default to true if not specified (enable feature by default)
-						fillLogoWithColor = true;
-					}
-					
-					console.log('🎨 Fill logo with color check:', {
-						rawValue: rawValue,
-						typeof: typeof rawValue,
-						result: fillLogoWithColor,
-						templateDataKeys: Object.keys(templateData).slice(0, 10) // First 10 keys
-					});
+				// Handle boolean true, string "true", number 1, or any truthy value
+				if (rawValue !== undefined) {
+					fillLogoWithColor = rawValue === true || rawValue === 'true' || rawValue === 1 || rawValue === '1' || (typeof rawValue === 'string' && rawValue.toLowerCase() === 'true');
 				} else {
-					// No template data - default to true to enable feature
+					// Default to true if not specified (enable feature by default)
 					fillLogoWithColor = true;
-					console.log('🎨 No cached template data available, defaulting fillLogoWithColor to true');
 				}
 				
-				if (!fillLogoWithColor) {
-					console.log('🎨 Fill logo with color is disabled in template, skipping logo color update');
-					return;
-				}
+				console.log('🎨 Fill logo with color check:', {
+					rawValue: rawValue,
+					typeof: typeof rawValue,
+					result: fillLogoWithColor,
+					templateDataKeys: Object.keys(templateData).slice(0, 10) // First 10 keys
+				});
+			} else {
+				// No template data - default to true to enable feature
+				fillLogoWithColor = true;
+				console.log('🎨 No cached template data available, defaulting fillLogoWithColor to true');
+			}
+			
+			// ALWAYS try to apply color to logo - even if fillLogoWithColor is false in template
+			// This ensures logo color changes work for all products
+			console.log('🎨 Attempting to apply logo fill color (fillLogoWithColor setting:', fillLogoWithColor, ')');
 				
 				console.log('🎨 Setting logo fill color to:', color);
 				
