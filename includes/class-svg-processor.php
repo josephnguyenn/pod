@@ -3771,6 +3771,22 @@ class APD_SVG_Processor
         $temp_svg_input = $upload_dir['path'] . '/temp-outline-' . $order_id . '-' . time() . '.svg';
         $temp_svg_output = $upload_dir['path'] . '/temp-outline-converted-' . $order_id . '-' . time() . '.svg';
         
+        // CRITICAL: Backup custom text paths with strokes BEFORE stroke-to-path
+        // Inkscape may lose pattern fills on expanded paths, so we need to restore them
+        $custom_text_paths_before = array();
+        if (preg_match_all('/<path([^>]*stroke=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content, $custom_path_matches, PREG_SET_ORDER)) {
+            foreach ($custom_path_matches as $match) {
+                // Extract path data (d attribute) to identify paths after conversion
+                if (preg_match('/d=["\']([^"\']+)["\']/', $match[1], $d_match)) {
+                    $custom_text_paths_before[] = array(
+                        'path_data' => $d_match[1],
+                        'full_path' => $match[0]
+                    );
+                }
+            }
+            error_log("APD Apply Material Outline NEW - Order #$order_id: Backed up " . count($custom_text_paths_before) . " custom text paths with strokes before stroke-to-path");
+        }
+        
         file_put_contents($temp_svg_input, $svg_content);
         
         // Command: Convert strokes to paths (this creates expanded paths with pattern fills)
@@ -3806,6 +3822,68 @@ class APD_SVG_Processor
             error_log("  - Custom text (apdTextPattern) fills: $custom_text_fills_after");
             error_log("  - Custom text (apdTextPattern) strokes: $custom_text_strokes_after");
             error_log("  - Logo (logoMaterialPattern) fills: $logo_fills_after");
+            
+            // CRITICAL FIX: Restore custom text pattern fills if they were lost
+            // Inkscape's stroke-to-path may create expanded paths but lose pattern fills
+            // Strategy: Find paths without pattern fills and restore apdTextPattern (limited to reasonable count)
+            if (!empty($custom_text_paths_before) && $custom_text_fills_after === 0) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Custom text pattern fills were lost during stroke-to-path, attempting to restore...");
+                
+                // Count how many paths we need to restore (expanded paths = original paths + outline paths)
+                // For each custom text path with stroke, stroke-to-path creates: original path + expanded outline path
+                $expected_restored = count($custom_text_paths_before) * 2; // Original + expanded outline
+                $paths_restored = 0;
+                
+                // Find paths without pattern fills and restore apdTextPattern
+                $converted_content = preg_replace_callback(
+                    '/<path([^>]*)>/i',
+                    function($matches) use (&$paths_restored, $expected_restored, $order_id) {
+                        $attrs = $matches[1];
+                        
+                        // Skip if already has pattern fill
+                        if (preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                            return $matches[0];
+                        }
+                        
+                        // Skip if has mask (already processed)
+                        if (preg_match('/mask=/i', $attrs)) {
+                            return $matches[0];
+                        }
+                        
+                        // Restore apdTextPattern fill to paths without fills (likely expanded outline paths from custom text)
+                        if ($paths_restored < $expected_restored) {
+                            $new_attrs = $attrs;
+                            if (!preg_match('/fill=/i', $attrs)) {
+                                $new_attrs .= ' fill="url(#apdTextPattern)"';
+                            } else {
+                                $new_attrs = preg_replace('/fill=["\'][^"\']*["\']/', 'fill="url(#apdTextPattern)"', $new_attrs);
+                            }
+                            
+                            $paths_restored++;
+                            error_log("APD Apply Material Outline NEW - Order #$order_id: Restored apdTextPattern fill to expanded outline path #$paths_restored");
+                            
+                            return '<path' . $new_attrs . '>';
+                        }
+                        
+                        return $matches[0];
+                    },
+                    $converted_content,
+                    30 // Limit matches to avoid over-restoring
+                );
+                
+                // Verify restoration
+                $custom_text_fills_after_restore = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
+                error_log("APD Apply Material Outline NEW - Order #$order_id: After restoration - Custom text pattern fills: $custom_text_fills_after_restore (restored $paths_restored paths)");
+                
+                if ($custom_text_fills_after_restore > 0) {
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Custom text pattern fills restored to expanded outline paths");
+                } else {
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - Custom text pattern fills restoration may have failed");
+                }
+                
+                // Update counts after restoration
+                $custom_text_fills_after = $custom_text_fills_after_restore;
+            }
             
             if ($pattern_fills_after > $pattern_fills) {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ SUCCESS - Material outline applied as fills");
