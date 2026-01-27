@@ -189,6 +189,12 @@ class APD_Activation
                 'content' => '[apd_product_list]',
                 'template' => 'templates/page-product-list.php'
             ),
+            'apd_product_detail' => array(
+                'title' => 'Product Detail',
+                'slug' => 'product-detail',
+                'content' => '[apd_product_detail]',
+                'template' => 'templates/page-product-detail.php'
+            ),
         );
 
         foreach ($pages as $opt_key => $def) {

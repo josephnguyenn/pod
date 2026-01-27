@@ -2200,6 +2200,12 @@ class APD_Meta_Boxes
                 'content' => '[apd_product_list]',
                 'template' => 'templates/page-product-list.php'
             ),
+            'apd_product_detail' => array(
+                'title' => 'Product Detail',
+                'slug' => 'product-detail',
+                'content' => '[apd_product_detail]',
+                'template' => 'templates/page-product-detail.php'
+            ),
         );
         
         foreach ($pages as $opt_key => $def) {
@@ -2278,6 +2284,7 @@ class APD_Meta_Boxes
             get_option('apd_thankyou') => 'thank-you',
             get_option('apd_orders') => 'my-orders',
             get_option('apd_product_list') => 'products',
+            get_option('apd_product_detail') => 'product-detail',
         );
         
         $missing = false;
@@ -2299,7 +2306,8 @@ class APD_Meta_Boxes
     public function add_query_vars($vars)
     {
         $vars[] = 'customizer';
-        $vars[] = 'product_detail';
+        // Removed product_detail - using page instead
+        // $vars[] = 'product_detail';
         return $vars;
     }
 
@@ -2320,10 +2328,11 @@ class APD_Meta_Boxes
             exit;
         }
 
-        if (get_query_var('product_detail')) {
-            include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
-            exit;
-        }
+        // Removed product_detail redirect - using page instead
+        // if (get_query_var('product_detail')) {
+        //     include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
+        //     exit;
+        // }
     }
 
     public function load_single_product_template($template)

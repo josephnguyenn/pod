@@ -182,11 +182,12 @@ if (!class_exists('AdvancedProductDesigner')) {
             'top'
         );
 
-        add_rewrite_rule(
-            'product-detail/?$',
-            'index.php?product_detail=1',
-            'top'
-        );
+        // Removed product-detail rewrite rule - using page instead
+        // add_rewrite_rule(
+        //     'product-detail/?$',
+        //     'index.php?product_detail=1',
+        //     'top'
+        // );
 
         add_filter('query_vars', array($this, 'add_query_vars'));
         add_action('template_redirect', array($this, 'template_redirect'));
@@ -211,7 +212,8 @@ if (!class_exists('AdvancedProductDesigner')) {
     public function add_query_vars($vars)
     {
         $vars[] = 'customizer';
-        $vars[] = 'product_detail';
+        // Removed product_detail - using page instead
+        // $vars[] = 'product_detail';
         return $vars;
     }
 
@@ -238,10 +240,11 @@ if (!class_exists('AdvancedProductDesigner')) {
             exit;
         }
 
-        if (get_query_var('product_detail')) {
-            include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
-            exit;
-        }
+        // Removed product_detail redirect - using page instead
+        // if (get_query_var('product_detail')) {
+        //     include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
+        //     exit;
+        // }
     }
 
     /**
