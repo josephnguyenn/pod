@@ -2005,6 +2005,38 @@ class APD_Meta_Boxes
                         error_log('APD load_product: no _apd_template_data and empty post_content');
                     }
                 }
+                
+                // Ensure fillLogoWithColor is preserved in template data
+                // Check if it exists in nested structure and move to top level
+                if (is_array($template_data)) {
+                    // Check nested structure (data.fillLogoWithColor)
+                    if (isset($template_data['data']) && is_array($template_data['data']) && isset($template_data['data']['fillLogoWithColor'])) {
+                        if (!isset($template_data['fillLogoWithColor'])) {
+                            $template_data['fillLogoWithColor'] = $template_data['data']['fillLogoWithColor'];
+                        }
+                    }
+                    
+                    // Check in template property
+                    if (isset($template_data['template']) && is_array($template_data['template']) && isset($template_data['template']['fillLogoWithColor'])) {
+                        if (!isset($template_data['fillLogoWithColor'])) {
+                            $template_data['fillLogoWithColor'] = $template_data['template']['fillLogoWithColor'];
+                        }
+                    }
+                    
+                    // Check in elements (logo element properties)
+                    if (isset($template_data['elements']) && is_array($template_data['elements'])) {
+                        foreach ($template_data['elements'] as $element) {
+                            if (isset($element['type']) && ($element['type'] === 'logo' || $element['type'] === 'image')) {
+                                if (isset($element['properties']['fillLogoWithColor'])) {
+                                    if (!isset($template_data['fillLogoWithColor'])) {
+                                        $template_data['fillLogoWithColor'] = $element['properties']['fillLogoWithColor'];
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

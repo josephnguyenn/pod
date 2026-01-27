@@ -2489,18 +2489,42 @@ jQuery(document).ready(function($) {
 				let fillLogoWithColor = false;
 				
 				if (templateData) {
-					const rawValue = templateData.fillLogoWithColor;
+					// Check multiple possible locations for fillLogoWithColor
+					let rawValue = templateData.fillLogoWithColor;
+					
+					// Check nested structure (templateData.data.fillLogoWithColor)
+					if (rawValue === undefined && templateData.data && templateData.data.fillLogoWithColor !== undefined) {
+						rawValue = templateData.data.fillLogoWithColor;
+					}
+					
+					// Check in elements if it's a logo element property
+					if (rawValue === undefined && Array.isArray(templateData.elements)) {
+						const logoElement = templateData.elements.find(function(el) {
+							return el && (el.type === 'logo' || el.type === 'image');
+						});
+						if (logoElement && logoElement.properties && logoElement.properties.fillLogoWithColor !== undefined) {
+							rawValue = logoElement.properties.fillLogoWithColor;
+						}
+					}
+					
 					// Handle boolean true, string "true", number 1, or any truthy value
-					fillLogoWithColor = rawValue === true || rawValue === 'true' || rawValue === 1 || rawValue === '1' || (typeof rawValue === 'string' && rawValue.toLowerCase() === 'true');
+					if (rawValue !== undefined) {
+						fillLogoWithColor = rawValue === true || rawValue === 'true' || rawValue === 1 || rawValue === '1' || (typeof rawValue === 'string' && rawValue.toLowerCase() === 'true');
+					} else {
+						// Default to true if not specified (enable feature by default)
+						fillLogoWithColor = true;
+					}
 					
 					console.log('🎨 Fill logo with color check:', {
 						rawValue: rawValue,
 						typeof: typeof rawValue,
 						result: fillLogoWithColor,
-						templateDataKeys: Object.keys(templateData)
+						templateDataKeys: Object.keys(templateData).slice(0, 10) // First 10 keys
 					});
 				} else {
-					console.log('🎨 No cached template data available');
+					// No template data - default to true to enable feature
+					fillLogoWithColor = true;
+					console.log('🎨 No cached template data available, defaulting fillLogoWithColor to true');
 				}
 				
 				if (!fillLogoWithColor) {
