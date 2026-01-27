@@ -1882,7 +1882,28 @@ jQuery(document).ready(function($) {
         applyLogoMaterialOutline: function(){
             try {
                 const NS = 'http://www.w3.org/2000/svg';
-                const matUrl = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
+                
+                // Debug: log current material state
+                console.log('🎨 Logo outline - Material state:', {
+                    currentMaterial: FSC.currentMaterial,
+                    currentMaterialUrl: FSC.currentMaterialUrl,
+                    materialsMap: FSC.materialsMap
+                });
+                
+                // Try to get material URL from multiple sources
+                let matUrl = null;
+                if (FSC.currentMaterialUrl) {
+                    matUrl = FSC.currentMaterialUrl;
+                } else if (FSC.resolveSelectedMaterialUrl) {
+                    matUrl = FSC.resolveSelectedMaterialUrl();
+                } else if (FSC.getMaterialUrl && FSC.currentMaterial) {
+                    matUrl = FSC.getMaterialUrl(FSC.currentMaterial);
+                } else if (FSC.materialsMap && FSC.currentMaterial && FSC.materialsMap[FSC.currentMaterial]) {
+                    const materialData = FSC.materialsMap[FSC.currentMaterial];
+                    matUrl = typeof materialData === 'string' ? materialData : (materialData.url || null);
+                }
+                
+                console.log('🎨 Resolved material URL:', matUrl);
                 
                 // Find all logo outline layers - .logo-layer.logo-outline is the SVG element itself
                 let $logoOutlines = $('.apd-logo-box .logo-layer.logo-outline, .fsc-logo-container .logo-layer.logo-outline, .apd-el[data-el-type="logo"] .logo-layer.logo-outline');
