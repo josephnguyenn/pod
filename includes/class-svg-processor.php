@@ -2965,55 +2965,66 @@ class APD_SVG_Processor
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
-            // CRITICAL FIX: Manually convert ALL pattern strokes to fills for CorelDRAW compatibility
-            // This is needed because Inkscape's stroke-to-path doesn't work reliably across versions
-            // We do this ALWAYS if we have paths and pattern definitions, regardless of current state
-            if ($pattern_defs_after > 0 && $path_count > 0) {
-                error_log("  - 🔧 Applying pattern stroke-to-fill conversion for CorelDRAW compatibility");
+            // CRITICAL FIX: Restore pattern references if lost during Inkscape conversion
+            // Inkscape sometimes strips pattern references during text-to-path conversion
+            // We need to re-apply patterns to converted paths based on original pattern assignments
+            if ($pattern_defs_after > 0 && $pattern_fills_after == 0 && $pattern_strokes_after == 0) {
+                error_log("  - ⚠️ CRITICAL: All pattern references lost during conversion!");
+                error_log("  - Attempting to restore pattern references from backup...");
                 
-                // Find all paths with stroke patterns and add same pattern to fill
-                $converted_svg = preg_replace_callback(
-                    '/<path([^>]*)>/i',
-                    function($matches) {
-                        $attrs = $matches[1];
-                        $modified = false;
-                        
-                        // Check style attribute for stroke pattern
-                        if (preg_match('/style="([^"]*)"/i', $attrs, $style_match)) {
-                            $style = $style_match[1];
-                            if (preg_match('/stroke:\s*url\(([^)]+)\)/i', $style, $stroke_match)) {
-                                $pattern_ref = trim($stroke_match[1]);
-                                // Add pattern to fill in style
-                                if (!preg_match('/fill:\s*url\(/i', $style)) {
-                                    $style .= ' fill: url(' . $pattern_ref . ');';
-                                    $attrs = preg_replace('/style="[^"]*"/i', 'style="' . $style . '"', $attrs);
-                                    $modified = true;
+                // Try to identify which patterns should be applied to which elements
+                // Look for pattern definitions and apply the first pattern to all paths
+                $pattern_ids = array();
+                if (preg_match_all('/<pattern[^>]*id=["\']([^"\']+)["\']/', $converted_svg, $pattern_matches)) {
+                    $pattern_ids = $pattern_matches[1];
+                    error_log("  - Found pattern IDs: " . implode(', ', $pattern_ids));
+                }
+                
+                // Apply patterns to paths
+                // For text material outline, typically use apdTextPattern or logoMaterialPattern
+                $text_pattern = null;
+                foreach ($pattern_ids as $pid) {
+                    if (strpos($pid, 'Text') !== false || strpos($pid, 'text') !== false) {
+                        $text_pattern = $pid;
+                        break;
+                    }
+                }
+                if (!$text_pattern && !empty($pattern_ids)) {
+                    $text_pattern = $pattern_ids[0]; // Use first pattern as fallback
+                }
+                
+                if ($text_pattern) {
+                    error_log("  - Applying pattern to all paths: $text_pattern");
+                    
+                    $converted_svg = preg_replace_callback(
+                        '/<path([^>]*)>/i',
+                        function($matches) use ($text_pattern) {
+                            $attrs = $matches[1];
+                            
+                            // Add pattern as both fill and stroke for maximum compatibility
+                            if (!preg_match('/fill=["\']url\(/i', $attrs)) {
+                                $attrs .= ' fill="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
+                            }
+                            if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
+                                $attrs .= ' stroke="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
+                                // Also add stroke-width if not present
+                                if (!preg_match('/stroke-width=/i', $attrs)) {
+                                    $attrs .= ' stroke-width="6"';
                                 }
                             }
-                        }
-                        
-                        // Check stroke attribute for pattern
-                        if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
-                            $pattern_ref = trim($stroke_match[1]);
-                            // Add pattern to fill attribute
-                            if (!preg_match('/fill=["\']url\(/i', $attrs)) {
-                                $attrs .= ' fill="url(' . htmlspecialchars($pattern_ref, ENT_QUOTES) . ')"';
-                                $modified = true;
-                            }
-                        }
-                        
-                        return '<path' . $attrs . '>';
-                    },
-                    $converted_svg
-                );
-                
-                // Re-check after manual fix
-                $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
-                error_log("  - ✅ Pattern strokes copied to fills: $pattern_fills_fixed pattern fills created");
-                
-                // Update the file with fixed content
-                file_put_contents($temp_svg_output, $converted_svg);
-                $pattern_fills_after = $pattern_fills_fixed;
+                            
+                            return '<path' . $attrs . '>';
+                        },
+                        $converted_svg
+                    );
+                    
+                    // Re-check
+                    $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+                    error_log("  - ✅ Pattern references restored: $pattern_fills_fixed pattern fills");
+                    
+                    file_put_contents($temp_svg_output, $converted_svg);
+                    $pattern_fills_after = $pattern_fills_fixed;
+                }
             }
             
             // Material outlines should be fills after stroke-to-path conversion
