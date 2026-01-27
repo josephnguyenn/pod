@@ -2945,10 +2945,10 @@ class APD_SVG_Processor
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
-            // CRITICAL FIX: Restore pattern references if lost during Inkscape conversion
-            // Inkscape sometimes strips pattern references during text-to-path conversion
-            // We need to re-apply patterns to converted paths based on original pattern assignments
-            if ($pattern_defs_after > 0 && $pattern_fills_after == 0 && $pattern_strokes_after == 0) {
+            // CRITICAL FIX: ALWAYS restore/apply pattern references for CorelDRAW compatibility
+            // Inkscape text-to-path often loses pattern references, so we manually re-apply them
+            // This ensures custom text material outline is preserved
+            if ($pattern_defs_after > 0 && $pattern_fills_after == 0) {
                 error_log("  - ⚠️ CRITICAL: All pattern references lost during conversion!");
                 error_log("  - Attempting to restore pattern references from backup...");
                 
