@@ -2762,36 +2762,20 @@ class APD_SVG_Processor
         // Step 2: Convert strokes to paths (material outline strokes become fill paths)
         // This ensures material outline patterns are preserved as fills on path elements
         
-        // Try using --actions with proper sequence (Inkscape 1.0+)
-        // Note: stroke-to-path converts strokes to paths, preserving pattern fills
+        // For Inkscape 1.1.x and 1.2.x, use legacy --export-plain-svg command
+        // Modern --actions syntax is only fully supported in Inkscape 1.3+
+        // We'll use the simpler --export-text-to-path which works across all versions
         $command = escapeshellarg($inkscape_path) . 
-                   ' --actions="select-all:text;object-to-path;select-all;stroke-to-path"' .
-                   ' --export-filename=' . escapeshellarg($temp_svg_output) .
-                   ' --export-type=svg' .
-                   ' --export-plain-svg' .  // Ensure plain SVG output (no Inkscape-specific metadata)
+                   ' --export-plain-svg=' . escapeshellarg($temp_svg_output) .
+                   ' --export-text-to-path' .  // Convert text to paths (legacy but reliable)
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
-        error_log("APD Text to Path - Order #$order_id: Running Inkscape command (method 1 - modern): " . $command);
+        error_log("APD Text to Path - Order #$order_id: Running Inkscape command (legacy compatible): " . $command);
         
         $output = shell_exec($command);
         $return_code = 0;
         exec($command . '; echo $?', $output_array, $return_code);
-        
-        // If modern command failed, try legacy Inkscape 0.9x syntax
-        if (!file_exists($temp_svg_output) || filesize($temp_svg_output) == 0) {
-            error_log("APD Text to Path - Order #$order_id: Modern command failed, trying legacy method...");
-            
-            $command_legacy = escapeshellarg($inkscape_path) . 
-                              ' --export-plain-svg=' . escapeshellarg($temp_svg_output) .
-                              ' --export-text-to-path' .
-                              ' ' . escapeshellarg($temp_svg_input) . 
-                              ' 2>&1';
-            
-            error_log("APD Text to Path - Order #$order_id: Running legacy command: " . $command_legacy);
-            $output = shell_exec($command_legacy);
-            exec($command_legacy . '; echo $?', $output_array, $return_code);
-        }
         
         error_log("APD Text to Path - Order #$order_id: Inkscape return code: $return_code");
         if ($output) {
