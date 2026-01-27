@@ -2067,16 +2067,14 @@ jQuery(document).ready(function($) {
                 const $textSvgs = $('.apd-text-svg');
                 console.log('🎨 Found', $textSvgs.length, 'text SVG elements');
                 
-                // Only skip if unchanged AND we have text elements
-                if ($textSvgs.length > 0 && FSC._lastTextOutline.url === matUrl && FSC._lastTextOutline.width === width) {
-                    console.log('🎨 Text outline unchanged, skipping');
-                    return;
-                }
-                
                 if ($textSvgs.length === 0) {
                     console.log('🎨 No text SVG elements found');
                     return;
                 }
+                
+                // Disable cache check temporarily to ensure text outline is always applied
+                // This fixes issue where text SVG is re-rendered but outline is not re-applied
+                console.log('🎨 Applying text outline (cache disabled for debugging)');
 
                 $textSvgs.each(function(){
                     const svgEl = this;
