@@ -3320,6 +3320,35 @@ class APD_SVG_Processor
             );
             
             error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern to $paths_restored paths");
+            
+            // STEP 7.5.1: Apply mask creation for restored custom text paths
+            // This ensures custom text paths get masks just like logo paths
+            if ($paths_restored > 0) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: Applying mask creation for restored custom text paths...");
+                try {
+                    // Apply pattern masks to restored custom text paths
+                    // This ensures custom text material outline works in CorelDraw just like logo
+                    $svg_content = $this->apply_pattern_mask_to_paths($svg_content, $order_id);
+                    
+                    // Verify masks were created for custom text paths
+                    $custom_text_masks = preg_match_all('/<mask[^>]*>/i', $svg_content);
+                    $custom_text_mask_refs = preg_match_all('/mask=["\']url\(#[^)]+\)["\']/i', $svg_content);
+                    $custom_text_pattern_fills_with_mask = preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*mask=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
+                    
+                    error_log("APD PDF Compatible NEW - Order #$order_id: After mask creation for custom text:");
+                    error_log("  - Total masks: $custom_text_masks");
+                    error_log("  - Total mask references: $custom_text_mask_refs");
+                    error_log("  - Custom text paths with apdTextPattern and mask: $custom_text_pattern_fills_with_mask");
+                    
+                    if ($custom_text_pattern_fills_with_mask > 0) {
+                        error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text paths now have masks (consistent with logo)");
+                    } else {
+                        error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text paths may not have masks");
+                    }
+                } catch (Exception $e) {
+                    error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception applying masks to custom text paths: " . $e->getMessage());
+                }
+            }
         }
         
         // STEP 8: Verify conversion
@@ -3334,7 +3363,12 @@ class APD_SVG_Processor
         // Verify custom text patterns
         $apd_text_pattern_final = preg_match_all('/apdTextPattern/i', $svg_content);
         $apd_text_pattern_fills = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        $apd_text_pattern_fills_with_mask = preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*mask=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
         $text_material_pattern_final = preg_match_all('/text-material-pattern-/i', $svg_content);
+        
+        // Verify logo patterns for comparison
+        $logo_material_pattern_fills = preg_match_all('/fill=["\']url\(#logoMaterialPattern\)["\']/i', $svg_content);
+        $logo_material_pattern_fills_with_mask = preg_match_all('/<path([^>]*fill=["\']url\(#logoMaterialPattern\)["\'][^>]*mask=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
         
         error_log("APD PDF Compatible NEW - Order #$order_id: Conversion verification:");
         error_log("  - Text elements remaining: $text_count_final (should be 0)");
@@ -3346,7 +3380,28 @@ class APD_SVG_Processor
         error_log("  - Mask references: $mask_refs_final");
         error_log("  - Custom text patterns (apdTextPattern): $apd_text_pattern_final");
         error_log("  - Custom text pattern fills (apdTextPattern): $apd_text_pattern_fills");
+        error_log("  - Custom text pattern fills WITH mask: $apd_text_pattern_fills_with_mask");
+        error_log("  - Logo pattern fills (logoMaterialPattern): $logo_material_pattern_fills");
+        error_log("  - Logo pattern fills WITH mask: $logo_material_pattern_fills_with_mask");
         error_log("  - Custom text patterns (text-material-pattern-*): $text_material_pattern_final");
+        
+        // Consistency check: Custom text và logo should have similar mask coverage
+        if ($apd_text_pattern_fills > 0 && $logo_material_pattern_fills > 0) {
+            $custom_text_mask_ratio = $apd_text_pattern_fills > 0 ? ($apd_text_pattern_fills_with_mask / $apd_text_pattern_fills) * 100 : 0;
+            $logo_mask_ratio = $logo_material_pattern_fills > 0 ? ($logo_material_pattern_fills_with_mask / $logo_material_pattern_fills) * 100 : 0;
+            
+            error_log("APD PDF Compatible NEW - Order #$order_id: Consistency check:");
+            error_log("  - Custom text mask coverage: " . number_format($custom_text_mask_ratio, 1) . "% ($apd_text_pattern_fills_with_mask/$apd_text_pattern_fills)");
+            error_log("  - Logo mask coverage: " . number_format($logo_mask_ratio, 1) . "% ($logo_material_pattern_fills_with_mask/$logo_material_pattern_fills)");
+            
+            if ($custom_text_mask_ratio >= 80 && $logo_mask_ratio >= 80) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text and logo have consistent mask coverage");
+            } else if ($custom_text_mask_ratio < $logo_mask_ratio) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text has lower mask coverage than logo");
+            }
+        } else if ($apd_text_pattern_fills > 0 && $apd_text_pattern_fills_with_mask === 0) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text has pattern fills but no masks");
+        }
         
         // STEP 9: Ensure proper XML declaration with UTF-8
         $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
@@ -4503,6 +4558,16 @@ class APD_SVG_Processor
         
         error_log("APD Apply Pattern Mask - Order #$order_id: Found $paths_with_patterns paths with pattern fills");
         
+        // Count paths with different patterns for logging
+        $apd_text_pattern_paths = preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content);
+        $logo_material_pattern_paths = preg_match_all('/<path([^>]*fill=["\']url\(#logoMaterialPattern\)["\'][^>]*)>/i', $svg_content);
+        $logo_gold_pattern_paths = preg_match_all('/<path([^>]*fill=["\']url\(#logoGoldPattern\)["\'][^>]*)>/i', $svg_content);
+        
+        error_log("APD Apply Pattern Mask - Order #$order_id: Pattern breakdown:");
+        error_log("  - apdTextPattern paths (custom text): $apd_text_pattern_paths");
+        error_log("  - logoMaterialPattern paths (logo): $logo_material_pattern_paths");
+        error_log("  - logoGoldPattern paths (logo): $logo_gold_pattern_paths");
+        
         // Ensure defs exists
         if (!preg_match('/<defs[^>]*>/i', $svg_content)) {
             $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
@@ -4565,6 +4630,11 @@ class APD_SVG_Processor
                     return $matches[0];
                 }
                 
+                // Log pattern type for debugging
+                if ($pattern_id === 'apdTextPattern') {
+                    error_log("APD Apply Pattern Mask - Order #$order_id: Processing custom text path with apdTextPattern (mask #" . ($mask_counter + 1) . ")");
+                }
+                
                 // Remove clip-path if exists (we're replacing with mask)
                 $attrs = preg_replace('/\s+clip-path=["\'][^"\']*["\']/i', '', $attrs);
                 
@@ -4610,7 +4680,23 @@ class APD_SVG_Processor
         $mask_count = preg_match_all('/<mask[^>]*>/i', $svg_content);
         $mask_refs = preg_match_all('/mask=["\']url\(#[^)]+\)["\']/i', $svg_content);
         
+        // Verify masks for custom text paths specifically
+        $custom_text_paths_with_mask = preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*mask=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
+        $logo_paths_with_mask = preg_match_all('/<path([^>]*fill=["\']url\(#logoMaterialPattern\)["\'][^>]*mask=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
+        
         error_log("APD Apply Pattern Mask - Order #$order_id: Created $mask_count masks, $mask_refs mask references");
+        error_log("APD Apply Pattern Mask - Order #$order_id: Mask verification:");
+        error_log("  - Custom text paths (apdTextPattern) with mask: $custom_text_paths_with_mask");
+        error_log("  - Logo paths (logoMaterialPattern) with mask: $logo_paths_with_mask");
+        
+        if ($custom_text_paths_with_mask > 0) {
+            error_log("APD Apply Pattern Mask - Order #$order_id: ✅ Custom text paths have masks (consistent with logo)");
+        } else {
+            $apd_text_pattern_paths_after = preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content);
+            if ($apd_text_pattern_paths_after > 0) {
+                error_log("APD Apply Pattern Mask - Order #$order_id: ⚠️ WARNING - Found $apd_text_pattern_paths_after custom text paths but none have masks");
+            }
+        }
         
         return $svg_content;
     }
