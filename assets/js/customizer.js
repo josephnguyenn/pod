@@ -1884,18 +1884,22 @@ jQuery(document).ready(function($) {
                 const NS = 'http://www.w3.org/2000/svg';
                 const matUrl = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
                 
-                // Find all logo outline layers
-                const $logoOutlines = $('.apd-logo-box .logo-layer.logo-outline svg, .fsc-logo-container .logo-layer.logo-outline svg, .apd-el[data-el-type="logo"] .logo-layer.logo-outline svg');
+                // Find all logo outline layers - .logo-layer.logo-outline is the SVG element itself
+                let $logoOutlines = $('.apd-logo-box .logo-layer.logo-outline, .fsc-logo-container .logo-layer.logo-outline, .apd-el[data-el-type="logo"] .logo-layer.logo-outline');
                 
                 if ($logoOutlines.length === 0) {
-                    // Try to find outline SVG in logo containers
-                    $logoOutlines = $('.apd-logo-box svg, .fsc-logo-container svg').filter(function(){
-                        return $(this).closest('.logo-outline, .logo-layer').length > 0 || 
-                               $(this).siblings('.logo-fill').length > 0;
-                    });
+                    // Try to find outline SVG in logo containers (fallback)
+                    $logoOutlines = $('.apd-logo-box svg.logo-outline, .fsc-logo-container svg.logo-outline').add(
+                        $('.apd-logo-box svg, .fsc-logo-container svg').filter(function(){
+                            return $(this).hasClass('logo-outline') || $(this).siblings('.logo-fill').length > 0;
+                        })
+                    );
                 }
                 
-                if ($logoOutlines.length === 0) return;
+                if ($logoOutlines.length === 0) {
+                    console.log('🎨 No logo outline layers found');
+                    return;
+                }
                 
                 // Get stroke width from template data
                 let width = Math.max(2, Number(FSC.fixedLogoOutlineWidth || 24));
@@ -1937,6 +1941,7 @@ jQuery(document).ready(function($) {
                         }
                         
                         // Apply pattern to all shape elements in outline layer
+                        let appliedCount = 0;
                         $(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline').each(function(){
                             this.setAttribute('fill', 'none');
                             this.style.stroke = 'url(#'+pid+')';
@@ -1944,6 +1949,15 @@ jQuery(document).ready(function($) {
                             this.style.vectorEffect = 'non-scaling-stroke';
                             this.style.strokeLinejoin = 'round';
                             this.style.strokeLinecap = 'round';
+                            appliedCount++;
+                        });
+                        
+                        console.log('🎨 Logo outline layer processed:', {
+                            svgElement: svgEl,
+                            patternId: pid,
+                            strokeWidth: width,
+                            shapesProcessed: appliedCount,
+                            materialUrl: matUrl
                         });
                     } else {
                         // No material or width = 0, remove stroke
@@ -1951,10 +1965,12 @@ jQuery(document).ready(function($) {
                             this.style.stroke = 'none';
                             this.style.strokeWidth = '0';
                         });
+                        
+                        console.log('🎨 Logo outline removed (no material)');
                     }
                 });
                 
-                console.log('🎨 Logo material outline applied:', { materialUrl: matUrl, width: width, elements: $logoOutlines.length });
+                console.log('🎨 Logo material outline applied to', $logoOutlines.length, 'logo outline layers');
             } catch(e) {
                 console.error('Error applying logo material outline:', e);
             }
@@ -2062,6 +2078,14 @@ jQuery(document).ready(function($) {
                         t.setAttribute('stroke-linecap','round');
                         t.setAttribute('paint-order','stroke fill');
                         t.setAttribute('vector-effect','non-scaling-stroke');
+                        
+                        console.log('🎨 Text material outline applied:', {
+                            element: t,
+                            textContent: t.textContent,
+                            patternId: pid,
+                            strokeWidth: individualWidth,
+                            materialUrl: matUrl
+                        });
                         } else {
                         t.setAttribute('stroke', 'none');
                         t.setAttribute('stroke-width', '0');
@@ -2069,6 +2093,8 @@ jQuery(document).ready(function($) {
                         t.removeAttribute('stroke-linecap');
                         t.removeAttribute('paint-order');
                         t.removeAttribute('vector-effect');
+                        
+                        console.log('🎨 Text material outline removed (no material selected)');
                     }
                 });
 
@@ -2666,12 +2692,14 @@ jQuery(document).ready(function($) {
 				// Comprehensive approach: Find ALL logo-related elements in the preview area
 				// Method 1: Target logo fill layers specifically
 				$('.apd-logo-box .logo-layer.logo-fill, .fsc-logo-container .logo-layer.logo-fill, .apd-el .logo-layer.logo-fill').each(function(){
-					var $layer = $(this);
-					var $svg = $layer.is('svg') ? $layer : $layer.find('svg').first();
-					if (!$svg.length && !$layer.is('svg')) return;
-					var $targetSvg = $svg.length ? $svg : $layer;
-					console.log('🎨 Found logo layer:', $layer);
-					applyColorToSvgElements($targetSvg, color, 'logo-layer');
+					var $svg = $(this);
+					// .logo-layer.logo-fill is typically the SVG element itself
+					if (!$svg.is('svg')) {
+						$svg = $svg.find('svg').first();
+					}
+					if ($svg.length === 0) return;
+					console.log('🎨 Found logo fill layer:', $svg);
+					applyColorToSvgElements($svg, color, 'logo-fill-layer');
 				});
 				
 				// Method 2: Target ALL SVG elements in .apd-el groups (logo containers in template canvas)
