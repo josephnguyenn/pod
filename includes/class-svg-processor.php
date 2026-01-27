@@ -2965,24 +2965,40 @@ class APD_SVG_Processor
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
-            // CRITICAL FIX: If stroke-to-path didn't convert patterns to fills, do it manually
-            if ($pattern_fills_after == 0 && $pattern_strokes_after > 0 && $path_count > 0) {
-                error_log("  - ⚠️ CRITICAL: stroke-to-path failed to convert pattern strokes to fills!");
-                error_log("  - Applying manual fix: copying pattern strokes to fills for CorelDRAW compatibility");
+            // CRITICAL FIX: Manually convert ALL pattern strokes to fills for CorelDRAW compatibility
+            // This is needed because Inkscape's stroke-to-path doesn't work reliably across versions
+            // We do this ALWAYS if we have paths and pattern definitions, regardless of current state
+            if ($pattern_defs_after > 0 && $path_count > 0) {
+                error_log("  - 🔧 Applying pattern stroke-to-fill conversion for CorelDRAW compatibility");
                 
+                // Find all paths with stroke patterns and add same pattern to fill
                 $converted_svg = preg_replace_callback(
                     '/<path([^>]*)>/i',
                     function($matches) {
                         $attrs = $matches[1];
+                        $modified = false;
                         
-                        // If path has pattern stroke but no pattern fill, copy stroke to fill
+                        // Check style attribute for stroke pattern
+                        if (preg_match('/style="([^"]*)"/i', $attrs, $style_match)) {
+                            $style = $style_match[1];
+                            if (preg_match('/stroke:\s*url\(([^)]+)\)/i', $style, $stroke_match)) {
+                                $pattern_ref = trim($stroke_match[1]);
+                                // Add pattern to fill in style
+                                if (!preg_match('/fill:\s*url\(/i', $style)) {
+                                    $style .= ' fill: url(' . $pattern_ref . ');';
+                                    $attrs = preg_replace('/style="[^"]*"/i', 'style="' . $style . '"', $attrs);
+                                    $modified = true;
+                                }
+                            }
+                        }
+                        
+                        // Check stroke attribute for pattern
                         if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
-                            $pattern_ref = $stroke_match[1];
-                            
-                            // Check if already has pattern fill
-                            if (!preg_match('/fill=["\']url\([^)]+\)["\']/i', $attrs)) {
-                                // Add pattern as fill for CorelDRAW compatibility
+                            $pattern_ref = trim($stroke_match[1]);
+                            // Add pattern to fill attribute
+                            if (!preg_match('/fill=["\']url\(/i', $attrs)) {
                                 $attrs .= ' fill="url(' . htmlspecialchars($pattern_ref, ENT_QUOTES) . ')"';
+                                $modified = true;
                             }
                         }
                         
@@ -2993,7 +3009,7 @@ class APD_SVG_Processor
                 
                 // Re-check after manual fix
                 $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
-                error_log("  - ✅ Manual fix applied: pattern fills increased from 0 to $pattern_fills_fixed");
+                error_log("  - ✅ Pattern strokes copied to fills: $pattern_fills_fixed pattern fills created");
                 
                 // Update the file with fixed content
                 file_put_contents($temp_svg_output, $converted_svg);
