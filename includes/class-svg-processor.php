@@ -2981,6 +2981,41 @@ class APD_SVG_Processor
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
+            // CRITICAL FIX: If stroke-to-path didn't convert patterns to fills, do it manually
+            if ($pattern_fills_after == 0 && $pattern_strokes_after > 0 && $path_count > 0) {
+                error_log("  - ⚠️ CRITICAL: stroke-to-path failed to convert pattern strokes to fills!");
+                error_log("  - Applying manual fix: copying pattern strokes to fills for CorelDRAW compatibility");
+                
+                $converted_svg = preg_replace_callback(
+                    '/<path([^>]*)>/i',
+                    function($matches) {
+                        $attrs = $matches[1];
+                        
+                        // If path has pattern stroke but no pattern fill, copy stroke to fill
+                        if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
+                            $pattern_ref = $stroke_match[1];
+                            
+                            // Check if already has pattern fill
+                            if (!preg_match('/fill=["\']url\([^)]+\)["\']/i', $attrs)) {
+                                // Add pattern as fill for CorelDRAW compatibility
+                                $attrs .= ' fill="url(' . htmlspecialchars($pattern_ref, ENT_QUOTES) . ')"';
+                            }
+                        }
+                        
+                        return '<path' . $attrs . '>';
+                    },
+                    $converted_svg
+                );
+                
+                // Re-check after manual fix
+                $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
+                error_log("  - ✅ Manual fix applied: pattern fills increased from 0 to $pattern_fills_fixed");
+                
+                // Update the file with fixed content
+                file_put_contents($temp_svg_output, $converted_svg);
+                $pattern_fills_after = $pattern_fills_fixed;
+            }
+            
             // Material outlines should be fills after stroke-to-path conversion
             if ($pattern_fills_after > 0) {
                 error_log("  - ✅ Material outline patterns preserved as fills on paths");
