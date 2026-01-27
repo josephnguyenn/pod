@@ -2064,14 +2064,19 @@ jQuery(document).ready(function($) {
                 
                 console.log('🎨 Text outline width:', width);
 
-                if (FSC._lastTextOutline.url === matUrl && FSC._lastTextOutline.width === width) {
+                const $textSvgs = $('.apd-text-svg');
+                console.log('🎨 Found', $textSvgs.length, 'text SVG elements');
+                
+                // Only skip if unchanged AND we have text elements
+                if ($textSvgs.length > 0 && FSC._lastTextOutline.url === matUrl && FSC._lastTextOutline.width === width) {
                     console.log('🎨 Text outline unchanged, skipping');
                     return;
                 }
-
-                const $textSvgs = $('.apd-text-svg');
-                console.log('🎨 Found', $textSvgs.length, 'text SVG elements');
-                if ($textSvgs.length === 0) return;
+                
+                if ($textSvgs.length === 0) {
+                    console.log('🎨 No text SVG elements found');
+                    return;
+                }
 
                 $textSvgs.each(function(){
                     const svgEl = this;
