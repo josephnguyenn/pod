@@ -1584,6 +1584,25 @@ class APD_Order_Admin_Handler
                 const maskCount = svgElement.querySelectorAll('mask').length;
                 const scaledPaths = svgElement.querySelectorAll('path[mask][fill*="url(#"]').length;
                 
+                // Verify PNG/JPEG images are embedded in patterns
+                let patternsWithImages = 0;
+                let pngImages = 0;
+                let jpegImages = 0;
+                svgElement.querySelectorAll('pattern').forEach(function(pattern) {
+                    const images = pattern.querySelectorAll('image[href*="data:image/png"], image[href*="data:image/jpeg"], image[href*="data:image/jpg"]');
+                    if (images.length > 0) {
+                        patternsWithImages++;
+                        images.forEach(function(img) {
+                            const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+                            if (href && href.includes('data:image/png')) {
+                                pngImages++;
+                            } else if (href && (href.includes('data:image/jpeg') || href.includes('data:image/jpg'))) {
+                                jpegImages++;
+                            }
+                        });
+                    }
+                });
+                
                 // Verify apdTextPattern specifically (for custom text)
                 const apdTextPatternAfter = svgElement.querySelector('defs pattern#apdTextPattern');
                 const apdTextPatternImagesAfter = apdTextPatternAfter ? apdTextPatternAfter.querySelectorAll('image').length : 0;
@@ -1592,6 +1611,9 @@ class APD_Order_Admin_Handler
                 console.log('📄 Pattern verification (Per-character scaling - không bị lệch):');
                 console.log('  - Pattern definitions:', patternCount);
                 console.log('  - Pattern images (PNG/JPEG):', patternImages);
+                console.log('  - Patterns with embedded PNG/JPEG images:', patternsWithImages);
+                console.log('  - PNG images embedded:', pngImages);
+                console.log('  - JPEG images embedded:', jpegImages);
                 console.log('  - Pattern references (total):', patternRefs);
                 console.log('  - Pattern FILLS (CorelDRAW compatible):', patternFills);
                 console.log('  - SVG masks created:', maskCount);
@@ -1599,6 +1621,15 @@ class APD_Order_Admin_Handler
                 console.log('  - apdTextPattern exists:', apdTextPatternAfter !== null);
                 console.log('  - apdTextPattern images:', apdTextPatternImagesAfter);
                 console.log('  - apdTextPattern fills:', apdTextPatternFills);
+                
+                // Verify PNG/JPEG preservation
+                if (patternCount > 0 && patternsWithImages === 0) {
+                    console.warn('📄 ⚠️ WARNING - Pattern definitions found but no embedded PNG/JPEG images!');
+                } else if (patternCount > 0 && patternsWithImages < patternCount) {
+                    console.warn('📄 ⚠️ WARNING - Some patterns may not have embedded PNG/JPEG images!');
+                } else if (patternCount > 0 && patternsWithImages === patternCount) {
+                    console.log('📄 ✅ All pattern definitions have embedded PNG/JPEG images (preserved for CorelDraw)');
+                }
                 
                 if (patternRefs > 0 && patternImages > 0 && patternFills > 0 && maskCount > 0 && scaledPaths > 0) {
                     console.log('📄 ✅ Material outline patterns are preserved as FILLS on per-character scaled paths');
