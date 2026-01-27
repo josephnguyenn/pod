@@ -287,12 +287,17 @@ jQuery(document).ready(function($) {
                     $(this).addClass('selected').css('border','2px solid #0073aa');
                     FSC.currentMaterial = $(this).data('material');
                     FSC.currentMaterialUrl = $(this).data('material-url');
-                    // Apply material pattern to logo fill layer with current color
-                    if (FSC.applyLogoFillMaterial) {
-                        const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                        setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 100);
-                    }
                     FSC.updatePreview();
+                    // Apply material outline to text
+                    if (FSC.scheduleApplyTextOutlineAll) {
+                        FSC.scheduleApplyTextOutlineAll();
+                    }
+                    // Apply material outline to logo
+                    if (FSC.applyLogoMaterialOutline) {
+                        setTimeout(function(){
+                            FSC.applyLogoMaterialOutline();
+                        }, 50);
+                    }
                     // Update price when material is selected
                     FSC.updateProductPrice();
                 });
@@ -411,6 +416,18 @@ jQuery(document).ready(function($) {
                 } catch(e) {
                     console.warn('Failed to update customizer preview:', e);
                 }
+            }
+            
+            // Apply material outline to text
+            if (FSC.scheduleApplyTextOutlineAll) {
+                FSC.scheduleApplyTextOutlineAll();
+            }
+            
+            // Apply material outline to logo
+            if (FSC.applyLogoMaterialOutline) {
+                setTimeout(function(){
+                    FSC.applyLogoMaterialOutline();
+                }, 100);
             }
             
             // Update thumbnails
@@ -912,12 +929,18 @@ jQuery(document).ready(function($) {
                 $('.fsc-material-outline-option').removeClass('selected');
                 $(this).addClass('selected');
                 FSC.currentMaterial = $(this).data('material');
-                // Apply material pattern to logo fill layer with current color
-                if (FSC.applyLogoFillMaterial) {
-                    const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                    setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 100);
-                }
+                FSC.currentMaterialUrl = $(this).data('material-url') || $(this).data('url');
                 FSC.scheduleUpdatePreview();
+                // Apply material outline to text
+                if (FSC.scheduleApplyTextOutlineAll) {
+                    FSC.scheduleApplyTextOutlineAll();
+                }
+                // Apply material outline to logo
+                if (FSC.applyLogoMaterialOutline) {
+                    setTimeout(function(){
+                        FSC.applyLogoMaterialOutline();
+                    }, 50);
+                }
             });
 
             // Bind quantity buttons
@@ -1507,91 +1530,6 @@ jQuery(document).ready(function($) {
                         });
                     }
 
-                    // Function to apply material pattern to logo fill layer
-                    async function applyLogoFillMaterial(){
-                        const svgEl = fillSvg;
-                        if (!svgEl) return;
-                        const selectedDom = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : null;
-                        const matUrl = selectedDom || (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
-                        
-                        if (matUrl) {
-                            const NS = 'http://www.w3.org/2000/svg';
-                            const defs = svgEl.querySelector('defs') || svgEl.insertBefore(document.createElementNS(NS,'defs'), svgEl.firstChild);
-                            const pid = 'apdLogoFillPattern';
-                            let pat = defs.querySelector('#'+pid);
-
-                            if (!pat){
-                                pat = document.createElementNS(NS,'pattern');
-                                pat.setAttribute('id', pid);
-                                pat.setAttribute('patternUnits','userSpaceOnUse');
-                                pat.setAttribute('width','80');
-                                pat.setAttribute('height','80');
-                                defs.appendChild(pat);
-                            }
-
-                            let img = pat.querySelector('image');
-                            if (!img || img.getAttribute('href') !== matUrl) {
-                                if (img) pat.removeChild(img);
-                                img = document.createElementNS(NS,'image');
-                                
-                                // Convert material URL to base64 to avoid href issues during export
-                                if (matUrl && !matUrl.startsWith('data:')) {
-                                    const tempImg = new Image();
-                                    tempImg.crossOrigin = 'anonymous';
-                                    const canvas = document.createElement('canvas');
-                                    const ctx = canvas.getContext('2d');
-                                    
-                                    try {
-                                        img.setAttribute('href', matUrl); // Temporary
-                                        
-                                        tempImg.onload = function() {
-                                            canvas.width = tempImg.width;
-                                            canvas.height = tempImg.height;
-                                            ctx.drawImage(tempImg, 0, 0);
-                                            const base64Data = canvas.toDataURL('image/png');
-                                            img.setAttribute('href', base64Data);
-                                            // Re-apply pattern to fill elements
-                                            $fillLayer.find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-                                                this.setAttribute('fill', 'url(#'+pid+')');
-                                            });
-                                        };
-                                        
-                                        tempImg.onerror = function() {
-                                            img.setAttribute('href', matUrl);
-                                            $fillLayer.find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-                                                this.setAttribute('fill', 'url(#'+pid+')');
-                                            });
-                                        };
-                                        
-                                        tempImg.src = matUrl;
-                                    } catch(e) {
-                                        img.setAttribute('href', matUrl);
-                                    }
-                                } else {
-                                    img.setAttribute('href', matUrl);
-                                }
-                                
-                                img.setAttribute('width','80');
-                                img.setAttribute('height','80');
-                                img.setAttribute('preserveAspectRatio','xMidYMid slice');
-                                pat.appendChild(img);
-                            }
-
-                            // Apply pattern to fill elements
-                            $fillLayer.find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-                                this.setAttribute('fill', 'url(#'+pid+')');
-                                this.style.fill = 'url(#'+pid+')';
-                            });
-                        } else {
-                            // No material selected, use color fill instead
-                            const logoColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                            $fillLayer.find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-                                this.setAttribute('fill', logoColor);
-                                this.style.fill = logoColor;
-                            });
-                        }
-                    }
-
                     // Apply pattern for outline layer - only stroke, no fill
                     setTimeout(applyLogoPattern, 0);
                     $(document).off('input.apdLogoW').on('input.apdLogoW', '#fsc-logo-outline-width', applyLogoPattern);
@@ -1599,29 +1537,19 @@ jQuery(document).ready(function($) {
                         $('.fsc-material-outline-option').removeClass('selected');
                         $(this).addClass('selected');
                         applyLogoPattern();
-                        applyLogoFillMaterial(); // Also apply material to fill layer (local function)
-                        // Also call global function with current color
-                        if (FSC.applyLogoFillMaterial) {
-                            const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                            setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 100);
+                        // Also apply to all logo outlines using unified function
+                        if (FSC.applyLogoMaterialOutline) {
+                            setTimeout(function(){
+                                FSC.applyLogoMaterialOutline();
+                            }, 50);
                         }
                     });
 
-                    // Apply fill layer - use material pattern if available, otherwise use color
+                    // Apply fill layer - color fill only, no stroke
                     $fillLayer.find('path, polygon, rect, circle, ellipse, line, polyline').each(function(){
                         this.style.stroke = 'none';
                         this.setAttribute('stroke-width', '0');
                     });
-                    
-                    // Apply material pattern to fill layer with current color
-                    setTimeout(function() {
-                        applyLogoFillMaterial();
-                        // Also call global function to ensure it works after template render
-                        if (FSC.applyLogoFillMaterial) {
-                            const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                            setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 200);
-                        }
-                    }, 0);
                     
                     // Append layers in correct order: outline first (bottom), then fill (top)
                     groupEl.appendChild(outlineSvg);
@@ -1838,14 +1766,17 @@ jQuery(document).ready(function($) {
 
             try { FSC.ensureMaterialGroup(); } catch(e) { }
 
+            // Unified material outline handler for both logo and text
             $(document).off('click.apdMatSelText').on('click.apdMatSelText', '.fsc-material-outline-option', function(){
+                // Apply to text
                 if (FSC.scheduleApplyTextOutlineAll) {
                     FSC.scheduleApplyTextOutlineAll();
                 }
-                // Also apply material pattern to logo fill layer with current color
-                if (FSC.applyLogoFillMaterial) {
-                    const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                    setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 100);
+                // Apply to logo
+                if (FSC.applyLogoMaterialOutline) {
+                    setTimeout(function(){
+                        FSC.applyLogoMaterialOutline();
+                    }, 50);
                 }
             });
 
@@ -1945,6 +1876,88 @@ jQuery(document).ready(function($) {
                 FSC._outlineApplyScheduled = false;
                 FSC.applyTextOutlineAll();
             }, 0);
+        },
+        
+        // Apply material outline to logo outline layer
+        applyLogoMaterialOutline: function(){
+            try {
+                const NS = 'http://www.w3.org/2000/svg';
+                const matUrl = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
+                
+                // Find all logo outline layers
+                const $logoOutlines = $('.apd-logo-box .logo-layer.logo-outline svg, .fsc-logo-container .logo-layer.logo-outline svg, .apd-el[data-el-type="logo"] .logo-layer.logo-outline svg');
+                
+                if ($logoOutlines.length === 0) {
+                    // Try to find outline SVG in logo containers
+                    $logoOutlines = $('.apd-logo-box svg, .fsc-logo-container svg').filter(function(){
+                        return $(this).closest('.logo-outline, .logo-layer').length > 0 || 
+                               $(this).siblings('.logo-fill').length > 0;
+                    });
+                }
+                
+                if ($logoOutlines.length === 0) return;
+                
+                // Get stroke width from template data
+                let width = Math.max(2, Number(FSC.fixedLogoOutlineWidth || 24));
+                const cachedTemplateData = FSC._cachedTemplateData;
+                if (cachedTemplateData && cachedTemplateData.elements) {
+                    const logoElement = cachedTemplateData.elements.find(el => el.type === 'logo');
+                    if (logoElement && logoElement.properties && logoElement.properties.logoStrokeWidth !== undefined) {
+                        width = logoElement.properties.logoStrokeWidth;
+                    }
+                }
+                
+                $logoOutlines.each(function(){
+                    const svgEl = this;
+                    if (!svgEl) return;
+                    
+                    if (matUrl && width > 0) {
+                        const defs = svgEl.querySelector('defs') || svgEl.insertBefore(document.createElementNS(NS,'defs'), svgEl.firstChild);
+                        const pid = 'logoMaterialPattern';
+                        let pat = defs.querySelector('#'+pid);
+                        
+                        if (!pat){
+                            pat = document.createElementNS(NS,'pattern');
+                            pat.setAttribute('id', pid);
+                            pat.setAttribute('patternUnits','userSpaceOnUse');
+                            pat.setAttribute('width','150');
+                            pat.setAttribute('height','150');
+                            defs.appendChild(pat);
+                        }
+                        
+                        let img = pat.querySelector('image');
+                        if (!img || img.getAttribute('href') !== matUrl) {
+                            if (img) pat.removeChild(img);
+                            img = document.createElementNS(NS,'image');
+                            img.setAttribute('href', matUrl);
+                            img.setAttribute('width','150');
+                            img.setAttribute('height','150');
+                            img.setAttribute('preserveAspectRatio','xMidYMid slice');
+                            pat.appendChild(img);
+                        }
+                        
+                        // Apply pattern to all shape elements in outline layer
+                        $(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline').each(function(){
+                            this.setAttribute('fill', 'none');
+                            this.style.stroke = 'url(#'+pid+')';
+                            this.style.strokeWidth = String(width);
+                            this.style.vectorEffect = 'non-scaling-stroke';
+                            this.style.strokeLinejoin = 'round';
+                            this.style.strokeLinecap = 'round';
+                        });
+                    } else {
+                        // No material or width = 0, remove stroke
+                        $(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline').each(function(){
+                            this.style.stroke = 'none';
+                            this.style.strokeWidth = '0';
+                        });
+                    }
+                });
+                
+                console.log('🎨 Logo material outline applied:', { materialUrl: matUrl, width: width, elements: $logoOutlines.length });
+            } catch(e) {
+                console.error('Error applying logo material outline:', e);
+            }
         },
 
         applyTextOutlineAll: function(){
@@ -2524,12 +2537,6 @@ jQuery(document).ready(function($) {
                 const materialUrl = $(this).data('material-url') || $(this).data('url') || $(this).css('background-image').match(/url\(['"]?([^'"]+)['"]?\)/)?.[1];
                 FSC.currentMaterialUrl = materialUrl;
                 
-                // Apply material pattern to logo fill layer with current color
-                if (FSC.applyLogoFillMaterial) {
-                    const currentColor = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-                    setTimeout(function() { FSC.applyLogoFillMaterial(currentColor); }, 100);
-                }
-                
                 // Update price when material is selected
                 FSC.updateProductPrice();
 
@@ -2600,201 +2607,10 @@ jQuery(document).ready(function($) {
             }
         },
 
-		// Apply material pattern to logo fill layer (with optional color blend)
-		applyLogoFillMaterial: function(color){
-			try {
-				const NS = 'http://www.w3.org/2000/svg';
-				const selectedDom = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : null;
-				const matUrl = selectedDom || (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
-				
-				// Get current color if not provided
-				if (!color) {
-					color = FSC.getColorValue ? FSC.getColorValue(FSC.currentColor) : '#000';
-				}
-				
-				// Find all logo fill layers
-				const $fillLayers = $('.logo-layer.logo-fill svg, .apd-el .logo-layer.logo-fill svg, .fsc-logo-container .logo-layer.logo-fill svg');
-				
-				if ($fillLayers.length === 0) {
-					// Try to find fill SVG directly in canvas
-					$('.apd-template-canvas-full').find('svg').each(function(){
-						const $svg = $(this);
-						if ($svg.closest('.logo-layer.logo-fill').length > 0 || $svg.find('path[fill], polygon[fill]').length > 0) {
-							$fillLayers.push(this);
-						}
-					});
-					
-					// Also try to find logo elements in canvas
-					$('.apd-template-canvas-full').find('.apd-el').each(function(){
-						const $el = $(this);
-						if ($el.find('svg').length > 0 && $el.find('path[fill], polygon[fill]').length > 0) {
-							const $svg = $el.find('svg').first();
-							if ($fillLayers.index($svg[0]) === -1) {
-								$fillLayers.push($svg[0]);
-							}
-						}
-					});
-				}
-				
-				if ($fillLayers.length === 0) {
-					console.log('🎨 No logo fill layers found for material pattern');
-					return;
-				}
-				
-				// Helper function to apply pattern with color blend
-				const applyPatternToElements = function(svgEl, patternId, blendColor) {
-					const defs = svgEl.querySelector('defs') || svgEl.insertBefore(document.createElementNS(NS,'defs'), svgEl.firstChild);
-					
-					// Create a filter that blends the pattern with color using feColorMatrix
-					const filterId = 'apdLogoColorBlend';
-					let filter = defs.querySelector('#'+filterId);
-					
-					if (!filter) {
-						filter = document.createElementNS(NS,'filter');
-						filter.setAttribute('id', filterId);
-						filter.setAttribute('x','0%');
-						filter.setAttribute('y','0%');
-						filter.setAttribute('width','100%');
-						filter.setAttribute('height','100%');
-						
-						// Use feColorMatrix to multiply pattern colors with selected color
-						const feColorMatrix = document.createElementNS(NS,'feColorMatrix');
-						feColorMatrix.setAttribute('type','matrix');
-						defs.appendChild(filter);
-						filter.appendChild(feColorMatrix);
-					}
-					
-					// Update filter with current color
-					const feColorMatrix = filter.querySelector('feColorMatrix');
-					if (feColorMatrix && blendColor) {
-						// Convert hex color to RGB (0-1 range)
-						const r = parseInt(blendColor.slice(1,3), 16) / 255;
-						const g = parseInt(blendColor.slice(3,5), 16) / 255;
-						const b = parseInt(blendColor.slice(5,7), 16) / 255;
-						// Matrix to multiply pattern colors with selected color (tint the pattern)
-						feColorMatrix.setAttribute('values', `${r} 0 0 0 0  0 ${g} 0 0 0  0 0 ${b} 0 0  0 0 0 1 0`);
-					}
-					
-					// Apply pattern with filter to elements
-					$(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-						this.setAttribute('fill', 'url(#'+patternId+')');
-						this.style.fill = 'url(#'+patternId+')';
-						// Apply color blend filter if color is provided
-						if (blendColor && filter) {
-							this.setAttribute('filter', 'url(#'+filterId+')');
-							this.style.filter = 'url(#'+filterId+')';
-						} else {
-							this.removeAttribute('filter');
-							this.style.filter = '';
-						}
-					});
-				};
-				
-				$fillLayers.each(function(){
-					const svgEl = this;
-					if (!svgEl) return;
-					
-					const defs = svgEl.querySelector('defs') || svgEl.insertBefore(document.createElementNS(NS,'defs'), svgEl.firstChild);
-					
-					if (matUrl && FSC.currentMaterial && FSC.currentMaterial.toLowerCase() !== 'solid') {
-						// Material is selected - create pattern with color blend
-						const pid = 'apdLogoFillPattern';
-						let pat = defs.querySelector('#'+pid);
-
-						if (!pat){
-							pat = document.createElementNS(NS,'pattern');
-							pat.setAttribute('id', pid);
-							pat.setAttribute('patternUnits','userSpaceOnUse');
-							pat.setAttribute('width','80');
-							pat.setAttribute('height','80');
-							defs.appendChild(pat);
-						}
-
-						let img = pat.querySelector('image');
-						if (!img || img.getAttribute('href') !== matUrl) {
-							if (img) pat.removeChild(img);
-							img = document.createElementNS(NS,'image');
-							
-							// Convert material URL to base64 to avoid href issues during export
-							if (matUrl && !matUrl.startsWith('data:')) {
-								const tempImg = new Image();
-								tempImg.crossOrigin = 'anonymous';
-								const canvas = document.createElement('canvas');
-								const ctx = canvas.getContext('2d');
-								
-								try {
-									img.setAttribute('href', matUrl); // Temporary
-									
-									tempImg.onload = function() {
-										canvas.width = tempImg.width;
-										canvas.height = tempImg.height;
-										ctx.drawImage(tempImg, 0, 0);
-										const base64Data = canvas.toDataURL('image/png');
-										img.setAttribute('href', base64Data);
-										// Re-apply pattern with color blend
-										applyPatternToElements(svgEl, pid, color);
-									};
-									
-									tempImg.onerror = function() {
-										img.setAttribute('href', matUrl);
-										applyPatternToElements(svgEl, pid, color);
-									};
-									
-									tempImg.src = matUrl;
-								} catch(e) {
-									img.setAttribute('href', matUrl);
-								}
-							} else {
-								img.setAttribute('href', matUrl);
-							}
-							
-							img.setAttribute('width','80');
-							img.setAttribute('height','80');
-							img.setAttribute('preserveAspectRatio','xMidYMid slice');
-							pat.appendChild(img);
-						}
-
-						// Apply pattern with color blend to fill elements
-						applyPatternToElements(svgEl, pid, color);
-						
-						console.log('🎨 Applied material pattern with color blend to logo fill layer:', matUrl, color);
-					} else {
-						// No material selected, use color fill only
-						$(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline, text').each(function(){
-							this.setAttribute('fill', color);
-							this.style.fill = color;
-							// Remove any pattern references and filters
-							this.removeAttribute('filter');
-							this.style.filter = '';
-						});
-						console.log('🎨 Applied color fill to logo (no material):', color);
-					}
-				});
-			} catch(e) {
-				console.error('Error applying logo fill material:', e);
-			}
-		},
-
 		// Apply fill color to logo fill layer shapes/text
 		setLogoFillColor: function(color) {
 			try {
 				if (!color) return;
-				
-				// Check if material is selected - if yes, combine material pattern with color
-				const selectedDom = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : null;
-				const matUrl = selectedDom || (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
-				
-				if (matUrl && FSC.currentMaterial && FSC.currentMaterial.toLowerCase() !== 'solid') {
-					// Material is selected, apply material pattern with color blend
-					console.log('🎨 Material selected, applying material pattern with color blend to logo fill:', color);
-					if (FSC.applyLogoFillMaterial) {
-						FSC.applyLogoFillMaterial(color);
-					}
-					return;
-				}
-				
-				// No material selected, apply color only
-				console.log('🎨 No material selected, applying color only to logo fill:', color);
 				
 				// Check if fillLogoWithColor option is enabled in template data
 				// Handle both boolean true and string "true" values
