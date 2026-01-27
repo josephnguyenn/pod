@@ -2989,71 +2989,68 @@ class APD_SVG_Processor
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_after");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_after");
             
-            // CRITICAL FIX: ALWAYS restore/apply pattern references for CorelDRAW compatibility
-            // Inkscape text-to-path often loses pattern references, so we manually re-apply them
-            // This ensures custom text material outline is preserved
-            if ($pattern_defs_after > 0 && $pattern_fills_after == 0) {
-                error_log("  - ⚠️ CRITICAL: All pattern references lost during conversion!");
-                error_log("  - Attempting to restore pattern references from backup...");
+            // CRITICAL FIX: Apply material outline to ALL converted paths
+            // Use tracked text pattern assignments to restore correct patterns
+            if ($pattern_defs_after > 0 && !empty($text_with_pattern)) {
+                error_log("  - 🔧 Restoring material outline patterns for custom text elements");
                 
-                // Try to identify which patterns should be applied to which elements
-                // Look for pattern definitions and apply the first pattern to all paths
+                // Get all available patterns
                 $pattern_ids = array();
                 if (preg_match_all('/<pattern[^>]*id=["\']([^"\']+)["\']/', $converted_svg, $pattern_matches)) {
                     $pattern_ids = $pattern_matches[1];
-                    error_log("  - Found pattern IDs: " . implode(', ', $pattern_ids));
+                    error_log("  - Available patterns: " . implode(', ', $pattern_ids));
                 }
                 
-                // Apply patterns to paths
-                // For text material outline, typically use apdTextPattern or logoMaterialPattern
+                // Find apdTextPattern for custom text
                 $text_pattern = null;
                 foreach ($pattern_ids as $pid) {
-                    if (strpos($pid, 'Text') !== false || strpos($pid, 'text') !== false) {
+                    if (stripos($pid, 'text') !== false || $pid === 'apdTextPattern') {
                         $text_pattern = $pid;
                         break;
                     }
                 }
-                if (!$text_pattern && !empty($pattern_ids)) {
-                    $text_pattern = $pattern_ids[0]; // Use first pattern as fallback
-                }
                 
-                if ($text_pattern) {
-                    error_log("  - Applying pattern to all paths: $text_pattern");
+                // If we have custom text with pattern tracked, apply it to ALL new paths
+                // This ensures custom text material outline is preserved
+                if ($text_pattern && $path_count_check > 0) {
+                    error_log("  - Applying apdTextPattern to ALL converted paths for custom text material outline");
                     
+                    $paths_modified = 0;
                     $converted_svg = preg_replace_callback(
                         '/<path([^>]*)>/i',
-                        function($matches) use ($text_pattern) {
+                        function($matches) use ($text_pattern, &$paths_modified) {
                             $attrs = $matches[1];
+                            $modified = false;
                             
-                            // Add pattern as both fill and stroke for maximum compatibility
-                            // CRITICAL: Use LARGER stroke-width (12px) so material outline is visible
-                            // and add paint-order so stroke renders BEFORE fill
-                            if (!preg_match('/fill=["\']url\(/i', $attrs)) {
+                            // Apply pattern to paths that don't have pattern yet
+                            // Add as BOTH fill and stroke for CorelDRAW compatibility
+                            if (!preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
                                 $attrs .= ' fill="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
+                                $modified = true;
                             }
-                            if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
+                            if (!preg_match('/stroke=["\']url\(#[^)]+\)["\']/i', $attrs)) {
                                 $attrs .= ' stroke="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
-                                // Use 12px for better visibility
-                                if (!preg_match('/stroke-width=/i', $attrs)) {
-                                    $attrs .= ' stroke-width="12"';
-                                }
+                                $attrs .= ' stroke-width="12"';  // Larger width for visibility
+                                $modified = true;
                             }
-                            // Ensure stroke renders before fill (outline visible)
                             if (!preg_match('/paint-order=/i', $attrs)) {
-                                $attrs .= ' paint-order="stroke fill"';
+                                $attrs .= ' paint-order="stroke fill"';  // Stroke renders first
+                                $modified = true;
                             }
                             
+                            if ($modified) $paths_modified++;
                             return '<path' . $attrs . '>';
                         },
                         $converted_svg
                     );
                     
-                    // Re-check
-                    $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
-                    error_log("  - ✅ Pattern references restored: $pattern_fills_fixed pattern fills");
+                    error_log("  - ✅ Applied material outline to $paths_modified paths for custom text");
                     
+                    // Save updated SVG
                     file_put_contents($temp_svg_output, $converted_svg);
-                    $pattern_fills_after = $pattern_fills_fixed;
+                    
+                    // Re-check
+                    $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_svg);
                 }
             }
             
