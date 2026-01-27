@@ -2996,15 +2996,21 @@ class APD_SVG_Processor
                             $attrs = $matches[1];
                             
                             // Add pattern as both fill and stroke for maximum compatibility
+                            // CRITICAL: Use LARGER stroke-width (12px) so material outline is visible
+                            // and add paint-order so stroke renders BEFORE fill
                             if (!preg_match('/fill=["\']url\(/i', $attrs)) {
                                 $attrs .= ' fill="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
                             }
                             if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
                                 $attrs .= ' stroke="url(#' . htmlspecialchars($text_pattern, ENT_QUOTES) . ')"';
-                                // Also add stroke-width if not present
+                                // Use 12px for better visibility
                                 if (!preg_match('/stroke-width=/i', $attrs)) {
-                                    $attrs .= ' stroke-width="6"';
+                                    $attrs .= ' stroke-width="12"';
                                 }
+                            }
+                            // Ensure stroke renders before fill (outline visible)
+                            if (!preg_match('/paint-order=/i', $attrs)) {
+                                $attrs .= ' paint-order="stroke fill"';
                             }
                             
                             return '<path' . $attrs . '>';
