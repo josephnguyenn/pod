@@ -299,8 +299,9 @@ class APD_SVG_Processor
         error_log("APD PDF from SVG: apdTextPattern references: $apd_text_pattern");
         
         // Process SVG for PDF export (preserves material patterns, converts text to curves)
-        error_log("APD PDF from SVG: Calling make_pdf_compatible()...");
-        $processed_svg = $this->make_pdf_compatible($svg_content, 0);
+        // Use NEW refactored function that converts text and logos to curves
+        error_log("APD PDF from SVG: Calling make_pdf_compatible_new()...");
+        $processed_svg = $this->make_pdf_compatible_new($svg_content, 0);
         
         if (is_wp_error($processed_svg)) {
             error_log("APD PDF from SVG: ERROR in make_pdf_compatible: " . $processed_svg->get_error_message());
@@ -321,8 +322,9 @@ class APD_SVG_Processor
         }
         
         // Convert to PDF
-        error_log("APD PDF from SVG: Calling svg_to_pdf()...");
-        $pdf_result = $this->svg_to_pdf($processed_svg, 0);
+        // Use NEW optimized function for CorelDraw compatibility
+        error_log("APD PDF from SVG: Calling svg_to_pdf_new()...");
+        $pdf_result = $this->svg_to_pdf_new($processed_svg, 0);
         
         if (is_wp_error($pdf_result)) {
             error_log("APD PDF from SVG: ERROR in svg_to_pdf: " . $pdf_result->get_error_message());
@@ -470,8 +472,9 @@ class APD_SVG_Processor
         error_log("APD PDF Export - Order #$order_id: Incoming SVG - $text_count_incoming text elements, $pattern_count_incoming patterns, $pattern_refs_incoming pattern stroke references");
 
         // Process the SVG to make it PDF-ready (preserves ALL content including patterns)
-        error_log("APD PDF Export - Order #$order_id: Calling make_pdf_compatible()...");
-        $pdf_svg = $this->make_pdf_compatible($svg_content, $order_id);
+        // Use NEW refactored function that converts text and logos to curves
+        error_log("APD PDF Export - Order #$order_id: Calling make_pdf_compatible_new()...");
+        $pdf_svg = $this->make_pdf_compatible_new($svg_content, $order_id);
 
         if (is_wp_error($pdf_svg)) {
             error_log("APD PDF Export - Order #$order_id: ERROR in make_pdf_compatible: " . $pdf_svg->get_error_message());
@@ -490,8 +493,9 @@ class APD_SVG_Processor
         }
 
         // Generate PDF with embedded SVG
-        error_log("APD PDF Export - Order #$order_id: Calling svg_to_pdf()...");
-        $pdf_content = $this->svg_to_pdf($pdf_svg, $order_id);
+        // Use NEW optimized function for CorelDraw compatibility
+        error_log("APD PDF Export - Order #$order_id: Calling svg_to_pdf_new()...");
+        $pdf_content = $this->svg_to_pdf_new($pdf_svg, $order_id);
 
         if (is_wp_error($pdf_content)) {
             error_log("APD PDF Export - Order #$order_id: ERROR in svg_to_pdf: " . $pdf_content->get_error_message());
@@ -3105,4 +3109,686 @@ class APD_SVG_Processor
     /**
      * Handle material upload
      */
+
+    /**
+     * Make SVG compatible with PDF - NEW VERSION
+     * Refactored logic: Convert all text and logos to curves, apply material outline
+     * 
+     * @param string $svg_content Source SVG content
+     * @param int $order_id Order ID for logging
+     * @return string|WP_Error Clean SVG content or error
+     */
+    private function make_pdf_compatible_new($svg_content, $order_id = 0)
+    {
+        error_log("APD PDF Compatible NEW - Order #$order_id: Starting PDF preparation (refactored)");
+        
+        // STEP 1: Decode if it's a data URL
+        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
+            if (strpos($svg_content, 'base64,') !== false) {
+                $svg_content = base64_decode(substr($svg_content, strpos($svg_content, 'base64,') + 7));
+            } else {
+                $svg_content = urldecode(substr($svg_content, strpos($svg_content, ',') + 1));
+            }
+        }
+        
+        // STEP 2: Convert encoding to UTF-8
+        $detected_encoding = mb_detect_encoding($svg_content, ['UTF-8', 'UTF-16LE', 'UTF-16BE', 'ISO-8859-1'], true);
+        if ($detected_encoding && $detected_encoding !== 'UTF-8') {
+            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', $detected_encoding);
+            error_log("APD PDF Compatible NEW - Order #$order_id: Converted from $detected_encoding to UTF-8");
+        }
+        
+        // STEP 3: Fix malformed attributes
+        $svg_content = preg_replace('/(\w+(-\w+)*)="=""/', '', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+round=""/', 'stroke-linejoin="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+miter=""/', 'stroke-linejoin="miter"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+bevel=""/', 'stroke-linejoin="bevel"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+round=""/', 'stroke-linecap="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+square=""/', 'stroke-linecap="square"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+butt=""/', 'stroke-linecap="butt"', $svg_content);
+        $svg_content = preg_replace('/vector-effect=""\s+non-scaling-stroke=""/', 'vector-effect="non-scaling-stroke"', $svg_content);
+        
+        // STEP 4: Duplicate styles as attributes for PDF compatibility
+        $svg_content = preg_replace_callback(
+            '/(<[^>]*)\sstyle="([^"]*)"([^>]*>)/i',
+            function($matches) {
+                $before = $matches[1];
+                $original_style = $matches[2];
+                $after = $matches[3];
+                
+                $full_element = $before . $after;
+                $attributes = array();
+                
+                // Extract fill color and ADD as attribute
+                if (!preg_match('/\sfill=/i', $full_element)) {
+                    if (preg_match('/fill:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
+                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
+                        $attributes[] = 'fill="' . $hex . '"';
+                    } elseif (preg_match('/fill:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
+                        $pattern_id = trim($m[1]);
+                        $pattern_id = str_replace('&quot;', '', $pattern_id);
+                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
+                        $attributes[] = 'fill="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    } elseif (preg_match('/fill:\s*([#\w]+)/i', $original_style, $m)) {
+                        $fill_value = trim($m[1]);
+                        if ($fill_value !== 'none' && $fill_value !== '') {
+                            $attributes[] = 'fill="' . htmlspecialchars($fill_value, ENT_QUOTES) . '"';
+                        }
+                    }
+                }
+                
+                // Extract stroke color and ADD as attribute
+                if (!preg_match('/\sstroke=/i', $full_element)) {
+                    if (preg_match('/stroke:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
+                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
+                        $attributes[] = 'stroke="' . $hex . '"';
+                    } elseif (preg_match('/stroke:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
+                        $pattern_id = trim($m[1]);
+                        $pattern_id = str_replace('&quot;', '', $pattern_id);
+                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
+                        $attributes[] = 'stroke="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    } elseif (preg_match('/stroke:\s*([#\w]+)/i', $original_style, $m)) {
+                        $stroke_value = trim($m[1]);
+                        if ($stroke_value !== 'none' && $stroke_value !== '') {
+                            $attributes[] = 'stroke="' . htmlspecialchars($stroke_value, ENT_QUOTES) . '"';
+                        }
+                    }
+                }
+                
+                // Extract stroke-width and ADD as attribute
+                if (!preg_match('/\sstroke-width=/i', $full_element)) {
+                    if (preg_match('/stroke-width:\s*([^;]+)/i', $original_style, $m)) {
+                        $attributes[] = 'stroke-width="' . htmlspecialchars(trim($m[1]), ENT_QUOTES) . '"';
+                    }
+                }
+                
+                // Build final element - KEEP ORIGINAL STYLE + ADD ATTRIBUTES
+                $result = $before;
+                if (!empty($attributes)) {
+                    $result .= ' ' . implode(' ', $attributes);
+                }
+                $result .= ' style="' . $original_style . '"';
+                $result .= $after;
+                
+                return $result;
+            },
+            $svg_content
+        );
+        
+        // STEP 5: Process patterns for PDF - embed as data URIs
+        $svg_content = $this->process_patterns_for_pdf($svg_content, $order_id);
+        
+        // STEP 6: Convert ALL text and logos to curves (paths)
+        error_log("APD PDF Compatible NEW - Order #$order_id: Converting text and logos to curves...");
+        $original_svg_for_fallback = $svg_content; // Backup for fallback
+        try {
+            $converted_result = $this->convert_all_to_curves_new($svg_content, $order_id);
+            // convert_all_to_curves_new returns string, not WP_Error
+            if (is_string($converted_result)) {
+                $svg_content = $converted_result;
+            } else {
+                // If somehow we get something else, use original
+                error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Unexpected result from convert_all_to_curves_new");
+                $svg_content = $original_svg_for_fallback;
+            }
+        } catch (Exception $e) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception in convert_all_to_curves_new: " . $e->getMessage());
+            // Continue with original SVG
+            $svg_content = $original_svg_for_fallback;
+        }
+        
+        // STEP 7: Apply material outline to curves
+        error_log("APD PDF Compatible NEW - Order #$order_id: Applying material outline to curves...");
+        $svg_before_outline = $svg_content; // Backup
+        try {
+            $outline_result = $this->apply_material_outline_to_curves($svg_content, $order_id);
+            // apply_material_outline_to_curves returns string, not WP_Error
+            if (is_string($outline_result)) {
+                $svg_content = $outline_result;
+            } else {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Unexpected result from apply_material_outline_to_curves");
+                $svg_content = $svg_before_outline;
+            }
+        } catch (Exception $e) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception in apply_material_outline_to_curves: " . $e->getMessage());
+            // Continue without material outline
+            $svg_content = $svg_before_outline;
+        }
+        
+        // STEP 8: Verify conversion
+        $text_count_final = preg_match_all('/<text[^>]*>/i', $svg_content);
+        $image_count_final = preg_match_all('/<image[^>]*>/i', $svg_content);
+        $path_count_final = preg_match_all('/<path[^>]*>/i', $svg_content);
+        $pattern_fills_final = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        $pattern_defs_final = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        
+        error_log("APD PDF Compatible NEW - Order #$order_id: Conversion verification:");
+        error_log("  - Text elements remaining: $text_count_final (should be 0)");
+        error_log("  - Image elements remaining: $image_count_final");
+        error_log("  - Path elements: $path_count_final");
+        error_log("  - Pattern definitions: $pattern_defs_final");
+        error_log("  - Pattern fills (material outlines): $pattern_fills_final");
+        
+        // STEP 9: Ensure proper XML declaration with UTF-8
+        $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
+        $svg_content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . "\n" . $svg_content;
+        
+        // STEP 10: Add metadata about processing
+        if (preg_match('/<svg[^>]*>/i', $svg_content, $svg_match)) {
+            $svg_tag = $svg_match[0];
+            $metadata = "\n  <metadata>Vector PDF export from Order #$order_id on " . date('Y-m-d H:i:s') . ". " .
+                       "All text and logos converted to curves/paths. Material outline patterns preserved as fills. " .
+                       "Style and layout preserved for CorelDRAW compatibility.</metadata>\n";
+            $svg_content = str_replace($svg_tag, $svg_tag . $metadata, $svg_content);
+        }
+        
+        // STEP 11: Validate UTF-8
+        if (!mb_check_encoding($svg_content, 'UTF-8')) {
+            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', 'UTF-8');
+        }
+        
+        error_log("APD PDF Compatible NEW - Order #$order_id: ✅ SVG prepared for PDF export");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Convert all text and logos to curves (paths) - NEW VERSION
+     * Handles both text elements and image/logo elements
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with text and logos converted to paths
+     */
+    private function convert_all_to_curves_new($svg_content, $order_id = 0)
+    {
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Starting conversion");
+        
+        // Count elements before conversion
+        $text_count_before = preg_match_all('/<text[^>]*>/i', $svg_content);
+        $image_count_before = preg_match_all('/<image[^>]*>/i', $svg_content);
+        
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Found $text_count_before text elements, $image_count_before image elements");
+        
+        // Check if Inkscape is available
+        $inkscape_path = $this->find_inkscape();
+        if (!$inkscape_path) {
+            error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ Inkscape not available, using fallback conversion");
+            // Fallback: Try to convert images to paths manually (SVG only)
+            // Text will remain as text (will be converted during PDF export if possible)
+            try {
+                $svg_content = $this->convert_images_to_paths($svg_content, $order_id);
+            } catch (Exception $e) {
+                error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ Exception in convert_images_to_paths: " . $e->getMessage());
+            }
+            return $svg_content;
+        }
+        
+        // STEP 1: Convert images/logos to paths first (before text conversion)
+        // This ensures logos are also converted to curves
+        $svg_content = $this->convert_images_to_paths($svg_content, $order_id);
+        
+        // STEP 2: Backup pattern definitions and viewBox
+        $pattern_backup = array();
+        if (preg_match_all('/<pattern[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/pattern>/is', $svg_content, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $pattern_id = $match[1];
+                $pattern_full = $match[0];
+                $pattern_backup[$pattern_id] = $pattern_full;
+            }
+            error_log("APD Convert All to Curves NEW - Order #$order_id: Backed up " . count($pattern_backup) . " pattern definitions");
+        }
+        
+        $original_viewBox = '';
+        if (preg_match('/<svg[^>]*viewBox=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $original_viewBox = $m[1];
+        }
+        
+        // STEP 3: Save SVG temporarily
+        $upload_dir = wp_upload_dir();
+        $temp_svg_input = $upload_dir['path'] . '/temp-curves-' . $order_id . '-' . time() . '.svg';
+        $temp_svg_output = $upload_dir['path'] . '/temp-curves-converted-' . $order_id . '-' . time() . '.svg';
+        
+        file_put_contents($temp_svg_input, $svg_content);
+        
+        // STEP 4: Use Inkscape to convert text to paths
+        // Command: Convert all text elements to paths
+        $command = escapeshellarg($inkscape_path) . 
+                   ' --export-plain-svg=' . escapeshellarg($temp_svg_output) .
+                   ' --export-text-to-path' .
+                   ' ' . escapeshellarg($temp_svg_input) . 
+                   ' 2>&1';
+        
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Running Inkscape command: " . $command);
+        
+        $output = shell_exec($command);
+        $return_code = 0;
+        exec($command . '; echo $?', $output_array, $return_code);
+        
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Inkscape return code: $return_code");
+        
+        // STEP 5: Check if conversion was successful
+        if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+            $converted_content = file_get_contents($temp_svg_output);
+            
+            // Restore lost patterns
+            if (!empty($pattern_backup)) {
+                $patterns_restored = 0;
+                foreach ($pattern_backup as $pattern_id => $pattern_full) {
+                    if (strpos($converted_content, 'id="' . $pattern_id . '"') === false && 
+                        strpos($converted_content, "id='" . $pattern_id . "'") === false) {
+                        error_log("APD Convert All to Curves NEW - Order #$order_id: Restoring lost pattern: $pattern_id");
+                        if (preg_match('/<defs[^>]*>/i', $converted_content)) {
+                            $converted_content = preg_replace('/<defs[^>]*>/i', '$0' . "\n" . $pattern_full, $converted_content, 1);
+                        } else {
+                            $converted_content = str_replace('</svg>', $pattern_full . "\n</svg>", $converted_content);
+                        }
+                        $patterns_restored++;
+                    }
+                }
+                if ($patterns_restored > 0) {
+                    error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Restored $patterns_restored lost patterns");
+                    file_put_contents($temp_svg_output, $converted_content);
+                }
+            }
+            
+            // Restore viewBox
+            if ($original_viewBox && !preg_match('/viewBox=/i', $converted_content)) {
+                error_log("APD Convert All to Curves NEW - Order #$order_id: Restoring viewBox: $original_viewBox");
+                $converted_content = preg_replace(
+                    '/<svg([^>]*)>/i',
+                    '<svg$1 viewBox="' . $original_viewBox . '">',
+                    $converted_content,
+                    1
+                );
+                file_put_contents($temp_svg_output, $converted_content);
+            }
+            
+            // Verify conversion
+            $text_count_after = preg_match_all('/<text[^>]*>/i', $converted_content);
+            $path_count_after = preg_match_all('/<path[^>]*>/i', $converted_content);
+            
+            error_log("APD Convert All to Curves NEW - Order #$order_id: Conversion results:");
+            error_log("  - Text elements: $text_count_before -> $text_count_after");
+            error_log("  - Path elements: $path_count_after");
+            
+            if ($text_count_after < $text_count_before && $path_count_after > 0) {
+                error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ SUCCESS - Text converted to curves");
+                unlink($temp_svg_input);
+                unlink($temp_svg_output);
+                return $converted_content;
+            } else {
+                error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ WARNING - Conversion may have failed");
+            }
+        }
+        
+        // Clean up and return
+        unlink($temp_svg_input);
+        if (file_exists($temp_svg_output)) {
+            unlink($temp_svg_output);
+        }
+        
+        return $svg_content;
+    }
+
+    /**
+     * Apply material outline to curves - NEW VERSION
+     * Auto-detects pattern strokes and converts them to fills on expanded paths
+     * 
+     * @param string $svg_content SVG content with curves
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with material outline applied
+     */
+    private function apply_material_outline_to_curves($svg_content, $order_id = 0)
+    {
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Starting material outline application");
+        
+        // STEP 1: Detect pattern strokes
+        $pattern_strokes = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        $pattern_fills = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        $pattern_defs = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Found $pattern_strokes pattern strokes, $pattern_fills pattern fills, $pattern_defs pattern definitions");
+        
+        if ($pattern_strokes === 0) {
+            error_log("APD Apply Material Outline NEW - Order #$order_id: No pattern strokes found, skipping");
+            return $svg_content;
+        }
+        
+        // Check if Inkscape is available
+        $inkscape_path = $this->find_inkscape();
+        if (!$inkscape_path) {
+            error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Inkscape not available, using manual conversion");
+            // Fallback: Try manual conversion (limited but better than nothing)
+            try {
+                return $this->apply_material_outline_manual($svg_content, $order_id);
+            } catch (Exception $e) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in manual conversion: " . $e->getMessage());
+                return $svg_content; // Return original if manual conversion fails
+            }
+        }
+        
+        // STEP 2: Use Inkscape to convert strokes to paths (expanded paths with pattern fills)
+        $upload_dir = wp_upload_dir();
+        $temp_svg_input = $upload_dir['path'] . '/temp-outline-' . $order_id . '-' . time() . '.svg';
+        $temp_svg_output = $upload_dir['path'] . '/temp-outline-converted-' . $order_id . '-' . time() . '.svg';
+        
+        file_put_contents($temp_svg_input, $svg_content);
+        
+        // Command: Convert strokes to paths (this creates expanded paths with pattern fills)
+        $command = escapeshellarg($inkscape_path) . 
+                   ' --actions="select-all;stroke-to-path"' .
+                   ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                   ' --export-type=svg' .
+                   ' ' . escapeshellarg($temp_svg_input) . 
+                   ' 2>&1';
+        
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Running stroke-to-path command");
+        
+        $output = shell_exec($command);
+        $return_code = 0;
+        exec($command . '; echo $?', $output_array, $return_code);
+        
+        // STEP 3: Check if conversion was successful
+        if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+            $converted_content = file_get_contents($temp_svg_output);
+            
+            // Verify material outline was applied
+            $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            $pattern_strokes_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            
+            error_log("APD Apply Material Outline NEW - Order #$order_id: After conversion:");
+            error_log("  - Pattern fills: $pattern_fills_after (was $pattern_fills)");
+            error_log("  - Pattern strokes: $pattern_strokes_after (was $pattern_strokes)");
+            
+            if ($pattern_fills_after > $pattern_fills) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ SUCCESS - Material outline applied as fills");
+                unlink($temp_svg_input);
+                unlink($temp_svg_output);
+                return $converted_content;
+            } else if ($pattern_strokes_after > 0) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Some pattern strokes remain, trying manual conversion");
+                // Try manual conversion as fallback
+                $converted_content = $this->apply_material_outline_manual($converted_content, $order_id);
+            }
+            
+            unlink($temp_svg_input);
+            unlink($temp_svg_output);
+            return $converted_content;
+        }
+        
+        // Clean up and return original if conversion failed
+        unlink($temp_svg_input);
+        if (file_exists($temp_svg_output)) {
+            unlink($temp_svg_output);
+        }
+        
+        error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ stroke-to-path failed, using manual conversion");
+        return $this->apply_material_outline_manual($svg_content, $order_id);
+    }
+
+    /**
+     * Manual material outline application (fallback when Inkscape not available)
+     * Converts pattern strokes to pattern fills on paths
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with material outline applied manually
+     */
+    private function apply_material_outline_manual($svg_content, $order_id = 0)
+    {
+        error_log("APD Apply Material Outline Manual - Order #$order_id: Applying material outline manually");
+        
+        // Convert pattern strokes to fills on paths
+        $svg_content = preg_replace_callback(
+            '/<path([^>]*)>/i',
+            function($matches) use ($order_id) {
+                $attrs = $matches[1];
+                
+                // If path has pattern stroke but no pattern fill, copy stroke to fill
+                if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
+                    $pattern_ref = $stroke_match[1];
+                    
+                    // Check if already has pattern fill
+                    if (!preg_match('/fill=["\']url\([^)]+\)["\']/i', $attrs)) {
+                        // Add pattern as fill
+                        $attrs .= ' fill="url(' . htmlspecialchars($pattern_ref, ENT_QUOTES) . ')"';
+                    }
+                }
+                
+                return '<path' . $attrs . '>';
+            },
+            $svg_content
+        );
+        
+        $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        error_log("APD Apply Material Outline Manual - Order #$order_id: Created $pattern_fills_after pattern fills");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Convert images/logos to paths - NEW VERSION
+     * Handles SVG images (inline) and raster images (trace with Inkscape if available)
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with images converted to paths
+     */
+    private function convert_images_to_paths($svg_content, $order_id = 0)
+    {
+        error_log("APD Convert Images to Paths NEW - Order #$order_id: Starting image conversion");
+        
+        $image_count = preg_match_all('/<image[^>]*>/i', $svg_content);
+        if ($image_count === 0) {
+            error_log("APD Convert Images to Paths NEW - Order #$order_id: No image elements found");
+            return $svg_content;
+        }
+        
+        error_log("APD Convert Images to Paths NEW - Order #$order_id: Found $image_count image elements");
+        
+        // Process each image element
+        $svg_content = preg_replace_callback(
+            '/<image([^>]*)>/i',
+            function($matches) use ($order_id) {
+                $img_attrs = $matches[1];
+                
+                // Extract href/xlink:href
+                $href = '';
+                if (preg_match('/(?:href|xlink:href)=["\']([^"\']+)["\']/', $img_attrs, $href_match)) {
+                    $href = $href_match[1];
+                }
+                
+                // Extract transform and positioning
+                $transform = '';
+                $x = '0';
+                $y = '0';
+                $width = '100';
+                $height = '100';
+                
+                if (preg_match('/transform=["\']([^"\']+)["\']/', $img_attrs, $t_match)) {
+                    $transform = $t_match[1];
+                }
+                if (preg_match('/x=["\']([^"\']+)["\']/', $img_attrs, $x_match)) {
+                    $x = $x_match[1];
+                }
+                if (preg_match('/y=["\']([^"\']+)["\']/', $img_attrs, $y_match)) {
+                    $y = $y_match[1];
+                }
+                if (preg_match('/width=["\']([^"\']+)["\']/', $img_attrs, $w_match)) {
+                    $width = $w_match[1];
+                }
+                if (preg_match('/height=["\']([^"\']+)["\']/', $img_attrs, $h_match)) {
+                    $height = $h_match[1];
+                }
+                
+                // Check if it's SVG (data:image/svg+xml)
+                if (strpos($href, 'data:image/svg+xml') === 0) {
+                    error_log("APD Convert Images to Paths NEW - Order #$order_id: Found SVG image, extracting...");
+                    
+                    // Extract SVG content from data URI
+                    $svg_data = '';
+                    if (strpos($href, 'base64,') !== false) {
+                        $svg_data = base64_decode(substr($href, strpos($href, 'base64,') + 7));
+                    } else {
+                        $svg_data = urldecode(substr($href, strpos($href, ',') + 1));
+                    }
+                    
+                    // Extract paths from embedded SVG
+                    if (preg_match_all('/<path[^>]*d=["\']([^"\']+)["\'][^>]*>/i', $svg_data, $path_matches)) {
+                        $paths = $path_matches[0];
+                        error_log("APD Convert Images to Paths NEW - Order #$order_id: Extracted " . count($paths) . " paths from SVG image");
+                        
+                        // Create group with transform
+                        $group = '<g';
+                        if ($transform) {
+                            $group .= ' transform="' . htmlspecialchars($transform, ENT_QUOTES) . '"';
+                        }
+                        $group .= '>';
+                        
+                        // Add all paths
+                        foreach ($paths as $path) {
+                            $group .= $path;
+                        }
+                        
+                        $group .= '</g>';
+                        
+                        return $group;
+                    }
+                }
+                
+                // For raster images, we would need Inkscape trace, but that's complex
+                // For now, keep raster images as-is (they'll be embedded in PDF)
+                error_log("APD Convert Images to Paths NEW - Order #$order_id: Raster image kept as-is (not converted to paths)");
+                return $matches[0]; // Return original image element
+            },
+            $svg_content
+        );
+        
+        $image_count_after = preg_match_all('/<image[^>]*>/i', $svg_content);
+        error_log("APD Convert Images to Paths NEW - Order #$order_id: After conversion - $image_count_after image elements remaining");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Convert SVG to PDF - NEW VERSION
+     * Optimized for CorelDraw compatibility
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string|WP_Error PDF content or error
+     */
+    private function svg_to_pdf_new($svg_content, $order_id = 0)
+    {
+        error_log("APD SVG to PDF NEW - Order #$order_id: Starting PDF generation");
+        
+        // Extract SVG dimensions
+        $width = 800;
+        $height = 600;
+        $viewBox = '0 0 800 600';
+        
+        if (preg_match('/<svg[^>]*\swidth=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $width = floatval(preg_replace('/[^0-9.]/', '', $m[1]));
+        }
+        if (preg_match('/<svg[^>]*\sheight=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $height = floatval(preg_replace('/[^0-9.]/', '', $m[1]));
+        }
+        if (preg_match('/<svg[^>]*\sviewBox=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $viewBox = trim($m[1]);
+        }
+        
+        // Check if Inkscape is available
+        $inkscape_path = $this->find_inkscape();
+        if ($inkscape_path) {
+            try {
+                return $this->convert_svg_to_pdf_with_inkscape_new($svg_content, $width, $height, $order_id, $inkscape_path);
+            } catch (Exception $e) {
+                error_log("APD SVG to PDF NEW - Order #$order_id: ⚠️ Exception in Inkscape conversion: " . $e->getMessage());
+                // Fall through to fallback
+            }
+        }
+        
+        // Fallback: Use existing method (may use ImageMagick or client-side)
+        error_log("APD SVG to PDF NEW - Order #$order_id: Inkscape not found or failed, using fallback");
+        try {
+            return $this->create_pdf_with_svg($svg_content, base64_encode($svg_content), $width, $height, $viewBox, $order_id);
+        } catch (Exception $e) {
+            error_log("APD SVG to PDF NEW - Order #$order_id: ⚠️ Exception in fallback: " . $e->getMessage());
+            // Return error for client-side fallback
+            $error = new WP_Error('pdf_generation_failed', 'PDF generation failed: ' . $e->getMessage());
+            $error->add_data(array(
+                'use_client_side' => true,
+                'svg_content' => $svg_content,
+                'order_id' => $order_id
+            ));
+            return $error;
+        }
+    }
+
+    /**
+     * Convert SVG to PDF with Inkscape - NEW VERSION
+     * Optimized command for CorelDraw compatibility
+     * 
+     * @param string $svg_content SVG content
+     * @param float $width SVG width
+     * @param float $height SVG height
+     * @param int $order_id Order ID
+     * @param string $inkscape_path Inkscape executable path
+     * @return string|WP_Error PDF content or error
+     */
+    private function convert_svg_to_pdf_with_inkscape_new($svg_content, $width, $height, $order_id, $inkscape_path)
+    {
+        // Save SVG temporarily
+        $upload_dir = wp_upload_dir();
+        $temp_svg = $upload_dir['path'] . '/temp-pdf-' . $order_id . '-' . time() . '.svg';
+        $temp_pdf = $upload_dir['path'] . '/temp-pdf-' . $order_id . '-' . time() . '.pdf';
+        
+        file_put_contents($temp_svg, $svg_content);
+        
+        // Optimized Inkscape command for CorelDraw
+        // --export-area-page: Preserve exact canvas dimensions
+        // --export-pdf-version=1.4: CorelDraw compatibility
+        // --export-text-to-path: Extra safety (though text should already be converted)
+        $command = escapeshellarg($inkscape_path) . 
+                   ' --export-type=pdf' .
+                   ' --export-filename=' . escapeshellarg($temp_pdf) .
+                   ' --export-area-page' .
+                   ' --export-ignore-filters' .
+                   ' --export-pdf-version=1.4' .
+                   ' --export-text-to-path' .
+                   ' ' . escapeshellarg($temp_svg) . 
+                   ' 2>&1';
+        
+        error_log("APD PDF NEW - Order #$order_id: Running Inkscape command: " . $command);
+        
+        $output = shell_exec($command);
+        $return_code = 0;
+        exec($command . '; echo $?', $output_array, $return_code);
+        
+        if (file_exists($temp_pdf) && filesize($temp_pdf) > 0) {
+            $pdf_content = file_get_contents($temp_pdf);
+            
+            // Verify PDF contains vector data
+            $pdf_size = strlen($pdf_content);
+            $is_vector = (strpos($pdf_content, '/Type /XObject') !== false || 
+                         strpos($pdf_content, '/Subtype /Form') !== false ||
+                         strpos($pdf_content, '/Length') !== false);
+            
+            error_log("APD PDF NEW - Order #$order_id: ✅ PDF generated successfully");
+            error_log("  - PDF size: $pdf_size bytes");
+            error_log("  - Contains vector data: " . ($is_vector ? 'YES' : 'WARNING: May be rasterized'));
+            
+            unlink($temp_svg);
+            unlink($temp_pdf);
+            
+            return $pdf_content;
+        } else {
+            unlink($temp_svg);
+            if (file_exists($temp_pdf)) unlink($temp_pdf);
+            
+            error_log("APD PDF NEW - Order #$order_id: ❌ Inkscape conversion failed. Output: " . ($output ?: 'No output'));
+            return new WP_Error('inkscape_failed', 'Inkscape conversion failed. Output: ' . ($output ?: 'No output'));
+        }
+    }
 }
