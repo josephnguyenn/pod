@@ -345,6 +345,41 @@ class APD_Meta_Boxes
         <?php
     }
 
+    public function canvas_settings_meta_box($post)
+    {
+        wp_nonce_field('apd_save_product_meta', 'apd_product_meta_nonce');
+
+        $canvas_width = get_post_meta($post->ID, '_apd_canvas_width', true);
+        $canvas_height = get_post_meta($post->ID, '_apd_canvas_height', true);
+        $background_color = get_post_meta($post->ID, '_apd_background_color', true);
+
+        ?>
+        <table class="form-table">
+            <tr>
+                <th><label for="apd_canvas_width">Canvas Width (px)</label></th>
+                <td>
+                    <input type="number" id="apd_canvas_width" name="apd_canvas_width" value="<?php echo esc_attr($canvas_width ?: '800'); ?>" class="regular-text" min="100" max="2000">
+                    <p class="description">Default canvas width in pixels</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="apd_canvas_height">Canvas Height (px)</label></th>
+                <td>
+                    <input type="number" id="apd_canvas_height" name="apd_canvas_height" value="<?php echo esc_attr($canvas_height ?: '600'); ?>" class="regular-text" min="100" max="2000">
+                    <p class="description">Default canvas height in pixels</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="apd_background_color">Background Color</label></th>
+                <td>
+                    <input type="color" id="apd_background_color" name="apd_background_color" value="<?php echo esc_attr($background_color ?: '#ffffff'); ?>" class="regular-text">
+                    <p class="description">Default canvas background color</p>
+                </td>
+            </tr>
+        </table>
+        <?php
+    }
+
     public function product_variants_meta_box($post)
     {
         $variants = get_post_meta($post->ID, '_apd_variants', true);
@@ -817,6 +852,19 @@ class APD_Meta_Boxes
         if (isset($_POST['fsc_features']) && is_array($_POST['fsc_features'])) {
             $features = array_filter(array_map('sanitize_text_field', $_POST['fsc_features']));
             update_post_meta($post_id, '_fsc_features', $features);
+        }
+
+        // Save canvas settings
+        if (isset($_POST['apd_canvas_width'])) {
+            update_post_meta($post_id, '_apd_canvas_width', intval($_POST['apd_canvas_width']));
+        }
+        
+        if (isset($_POST['apd_canvas_height'])) {
+            update_post_meta($post_id, '_apd_canvas_height', intval($_POST['apd_canvas_height']));
+        }
+        
+        if (isset($_POST['apd_background_color'])) {
+            update_post_meta($post_id, '_apd_background_color', sanitize_hex_color($_POST['apd_background_color']));
         }
 
         // Save thumbnail ID from media selector
@@ -1727,20 +1775,18 @@ class APD_Meta_Boxes
         $svg_content = preg_replace('/<\?xml[^>]*\?>/i', '', $svg_content);
         $svg_content = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svg_content);
         
+        // Strip HTML/XML comments that appear before the SVG tag
+        $svg_content = preg_replace('/<!--[\s\S]*?-->/i', '', $svg_content);
+        
         // Trim whitespace
         $svg_content = trim($svg_content);
 
-        // Validate it starts with <svg
-        if (!preg_match('/^<svg[\s>]/i', $svg_content)) {
-            error_log('APD: Invalid SVG - does not start with <svg tag. First 200 chars: ' . substr($svg_content, 0, 200));
-            return false;
-        }
-
-        // Keep only the <svg>...</svg> fragment
-        if (preg_match('/<svg[\s\S]*<\/svg>/i', $svg_content, $m)) {
+        // Extract only the <svg>...</svg> fragment (more robust than checking if it starts with <svg)
+        if (preg_match('/<svg[\s\S]*?<\/svg>/i', $svg_content, $m)) {
             $svg_content = $m[0];
+            error_log('APD: Extracted SVG tag successfully, size: ' . strlen($svg_content) . ' bytes');
         } else {
-            error_log('APD: Could not find complete <svg>...</svg> tags');
+            error_log('APD: Could not find complete <svg>...</svg> tags in content. First 200 chars: ' . substr($svg_content, 0, 200));
             return false;
         }
 
@@ -1757,7 +1803,16 @@ class APD_Meta_Boxes
 
         // Add outline filter if not present
         if (strpos($svg_content, 'id="fsc-outline"') === false) {
-            $svg_content = str_replace('<defs>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>', $svg_content);
+            $filter_def = '<filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter>';
+            
+            // Check if <defs> exists
+            if (stripos($svg_content, '<defs>') !== false) {
+                // Add filter inside existing <defs>
+                $svg_content = preg_replace('/<defs>/i', '<defs>' . $filter_def, $svg_content, 1);
+            } else {
+                // Create new <defs> with filter after opening <svg> tag
+                $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1<defs>' . $filter_def . '</defs>', $svg_content, 1);
+            }
         }
         
         error_log('APD: Processed SVG successfully, final size: ' . strlen($svg_content) . ' bytes');
@@ -2136,20 +2191,35 @@ class APD_Meta_Boxes
             ),
         );
         foreach ($pages as $opt_key => $def) {
+            // Check if option already has a valid page ID
+            $existing_id = get_option($opt_key);
+            if ($existing_id && get_post($existing_id)) {
+                continue;
+            }
+
+            // Check if page already exists by slug
             $existing = get_page_by_path($def['slug']);
             if ($existing && $existing->ID) {
                 update_option($opt_key, intval($existing->ID));
+                error_log('APD: Found existing page "' . $def['title'] . '" with ID ' . $existing->ID);
                 continue;
             }
+
+            // Create the page
             $id = wp_insert_post(array(
                 'post_title' => $def['title'],
                 'post_name' => $def['slug'],
                 'post_status' => 'publish',
                 'post_type' => 'page',
-                'post_content' => $def['content']
+                'post_content' => $def['content'],
+                'post_author' => get_current_user_id() ? get_current_user_id() : 1
             ));
+            
             if (!is_wp_error($id) && $id) {
                 update_option($opt_key, intval($id));
+                error_log('APD: Created page "' . $def['title'] . '" with ID ' . $id);
+            } else {
+                error_log('APD: Failed to create page "' . $def['title'] . '"');
             }
         }
     }
@@ -2158,22 +2228,28 @@ class APD_Meta_Boxes
     public function ensure_core_pages()
     {
         // Only run for admins to avoid overhead
-        if (!current_user_can('manage_options'))
+        if (!current_user_can('manage_options')) {
             return;
+        }
+        
         $needed = array(
             get_option('apd_cart') => 'cart',
             get_option('apd_checkout') => 'checkout',
             get_option('apd_thankyou') => 'thank-you',
             get_option('apd_orders') => 'my-orders',
         );
+        
         $missing = false;
         foreach ($needed as $optId => $slug) {
             if (!$optId || !get_post($optId)) {
                 $missing = true;
+                error_log('APD: Missing page for option ' . $slug . ' (ID: ' . $optId . ')');
                 break;
             }
         }
+        
         if ($missing) {
+            error_log('APD: Ensuring core pages exist...');
             $this->maybe_create_core_pages();
             flush_rewrite_rules(false);
         }

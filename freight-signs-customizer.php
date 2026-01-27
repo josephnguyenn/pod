@@ -814,6 +814,17 @@ if (!class_exists('AdvancedProductDesigner')) {
             'timestamp' => current_time('mysql')
         ));
     }
+
+    /**
+     * Add form enctype for file uploads on product edit pages
+     */
+    public function add_form_enctype()
+    {
+        global $post_type;
+        if ($post_type === 'apd_product') {
+            echo ' enctype="multipart/form-data"';
+        }
+    }
 }
 } // End if (!class_exists('AdvancedProductDesigner'))
 
@@ -849,3 +860,7 @@ if (!function_exists('apd_init')) {
 }
 
 add_action('plugins_loaded', 'apd_init');
+
+// Register activation and deactivation hooks
+register_activation_hook(__FILE__, array('APD_Activation', 'activate_static'));
+register_deactivation_hook(__FILE__, array('APD_Activation', 'deactivate_static'));

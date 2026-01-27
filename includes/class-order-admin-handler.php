@@ -1057,7 +1057,13 @@ class APD_Order_Admin_Handler
             // Configuration: Điều chỉnh độ mở rộng của material outline
             // Giá trị nhỏ hơn = outline sát với text hơn
             // Giá trị lớn hơn = outline rộng hơn
-            const OUTLINE_EXPANSION_RATIO = 0.8; // 80% của strokeWidth (có thể điều chỉnh: 0.5-1.5)
+            // Giảm xuống một chút để outline nhỏ hơn nhưng vẫn thấy được
+            const OUTLINE_EXPANSION_RATIO = 0.5; // 50% của strokeWidth (giảm từ 0.6 để scale nhỏ hơn một chút)
+            
+            // Configuration: Scale type - scale theo tỉ lệ để tránh lệch
+            // true = uniform scaling (scaleX = scaleY) - giữ nguyên tỉ lệ, không bị lệch
+            // false = differential scaling (scaleX != scaleY) - có thể bị lệch
+            const USE_UNIFORM_SCALING = true; // Scale theo tỉ lệ để outline và curves không bị lệch
             
             if (textElements.length === 0) {
                 return; // No text to convert
@@ -1204,13 +1210,48 @@ class APD_Order_Admin_Handler
                             }
                             // else: y is already baseline (alphabetic/auto)
                             
-                            // Get path from font (opentype.js generates path at baseline)
-                            const path = font.getPath(text, textX, textY, fontSize);
-                            const pathData = path.toPathData();
+                            // CRITICAL: Convert từng CHARACTER riêng lẻ để scale từng chữ
+                            // Không convert cả text string - convert từng character để scale riêng
+                            const characters = Array.from(text);
+                            let currentX = textX;
+                            let totalWidth = 0;
+                            const characterPaths = [];
                             
-                            // Get bounding box for text-anchor adjustment
-                            const bbox = path.getBoundingBox();
-                            const textWidth = bbox.x2 - bbox.x1;
+                            // Get glyph advance width để tính vị trí từng character
+                            const glyphs = font.stringToGlyphs(text);
+                            
+                            // Convert từng character thành path riêng
+                            for (let charIdx = 0; charIdx < characters.length; charIdx++) {
+                                const char = characters[charIdx];
+                                const glyph = glyphs[charIdx];
+                                
+                                // Get path cho character này
+                                const charPath = font.getPath(char, currentX, textY, fontSize);
+                                const charPathData = charPath.toPathData();
+                                const charBbox = charPath.getBoundingBox();
+                                
+                                // Store character path info
+                                characterPaths.push({
+                                    char: char,
+                                    pathData: charPathData,
+                                    bbox: charBbox,
+                                    x: currentX,
+                                    y: textY
+                                });
+                                
+                                // Advance X position for next character
+                                if (glyph && glyph.advanceWidth) {
+                                    currentX += (glyph.advanceWidth / font.unitsPerEm) * fontSize;
+                                } else {
+                                    // Fallback: use character width
+                                    currentX += (charBbox.x2 - charBbox.x1);
+                                }
+                                
+                                totalWidth = currentX - textX;
+                            }
+                            
+                            // Get total text width for text-anchor adjustment
+                            const textWidth = totalWidth;
                             
                             // Build transform: original transform + text-anchor adjustment
                             let groupTransform = '';
@@ -1232,117 +1273,133 @@ class APD_Order_Admin_Handler
                             }
                             
                             console.log('📄 Text position: original y=' + y + ', adjusted y=' + textY + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
+                            console.log('📄 Converting ' + characters.length + ' characters individually for per-character scaling');
                             
-                            // Create fill path (text shape)
-                            const fillPath = document.createElementNS(namespace, 'path');
-                            fillPath.setAttribute('d', pathData);
-                            fillPath.setAttribute('fill', fill);
-                            fillPath.setAttribute('stroke', 'none');
-                            group.appendChild(fillPath);
-                            
-                            // Create outline path (material outline) if stroke exists
-                            // SOLUTION: Create expanded path by scaling from center, then mask to create outline
-                            // This creates outline that follows the EXACT shape of text curves (not rectangle!)
-                            if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
-                                try {
-                                    // Verify pattern exists in defs
-                                    const patternId = stroke.match(/url\(#([^)]+)\)/)[1];
-                                    const patternDef = svgElement.querySelector('defs pattern#' + patternId);
-                                    
-                                    if (!patternDef) {
-                                        console.warn('📄 ⚠️ Pattern ' + patternId + ' not found in defs - material outline may be lost');
-                                    } else {
-                                        const patternImages = patternDef.querySelectorAll('image');
-                                        console.log('📄 Pattern ' + patternId + ' has ' + patternImages.length + ' image(s) - creating curve-shaped outline');
+                            // Create fill paths và outline paths cho TỪNG CHARACTER
+                            characterPaths.forEach((charInfo, charIdx) => {
+                                // Create fill path cho character này
+                                const fillPath = document.createElementNS(namespace, 'path');
+                                fillPath.setAttribute('d', charInfo.pathData);
+                                fillPath.setAttribute('fill', fill);
+                                fillPath.setAttribute('stroke', 'none');
+                                group.appendChild(fillPath);
+                                
+                                // Create outline path (material outline) if stroke exists
+                                // SCALE TỪNG CHARACTER RIÊNG LẺ từ center của chính nó
+                                if (stroke && stroke.indexOf('url(#') !== -1 && strokeWidth > 0) {
+                                    try {
+                                        // Verify pattern exists in defs
+                                        const patternId = stroke.match(/url\(#([^)]+)\)/)[1];
+                                        const patternDef = svgElement.querySelector('defs pattern#' + patternId);
+                                        
+                                        if (charIdx === 0) { // Log once per text element
+                                            if (!patternDef) {
+                                                console.warn('📄 ⚠️ Pattern ' + patternId + ' not found in defs - material outline may be lost');
+                                            } else {
+                                                const patternImages = patternDef.querySelectorAll('image');
+                                                console.log('📄 Pattern ' + patternId + ' has ' + patternImages.length + ' image(s) - scaling từng character riêng');
+                                            }
+                                        }
+                                        
+                                        // SOLUTION: Scale TỪNG CHARACTER riêng lẻ từ center của chính nó
+                                        // Mỗi character scale từ center point của chính nó - không bị lệch
+                                        
+                                        // Get bounding box của character này (từ charInfo)
+                                        const charBbox = charInfo.bbox;
+                                        
+                                        // Tính center point của character này
+                                        const charCenterX = (charBbox.x1 + charBbox.x2) / 2;
+                                        const charCenterY = (charBbox.y1 + charBbox.y2) / 2;
+                                        const charWidth = charBbox.x2 - charBbox.x1;
+                                        const charHeight = charBbox.y2 - charBbox.y1;
+                                        
+                                        // Expand amount - giảm một chút để scale nhỏ hơn nhưng vẫn thấy được
+                                        const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
+                                        
+                                        // Uniform scaling - scale đều cả X và Y để không bị lệch
+                                        // Tính scale factor dựa trên average size của character này
+                                        // Giảm multiplier từ 2 xuống 1.7 để scale nhỏ hơn một chút
+                                        const charAvgSize = (charWidth + charHeight) / 2;
+                                        const scaleFactor = 1 + (expansionAmount * 1.7) / charAvgSize; // Scale đều, giảm một chút
+                                        
+                                        // Ensure defs exists
+                                        let defs = svgElement.querySelector('defs');
+                                        if (!defs) {
+                                            defs = document.createElementNS(namespace, 'defs');
+                                            svgElement.insertBefore(defs, svgElement.firstChild);
+                                        }
+                                        
+                                        // Create expanded path cho character này với transform riêng
+                                        // Scale từng character riêng lẻ từ center của chính nó
+                                        const expandedPath = document.createElementNS(namespace, 'path');
+                                        expandedPath.setAttribute('d', charInfo.pathData); // Path data của character này
+                                        expandedPath.setAttribute('fill', stroke); // Pattern fill (CorelDRAW compatible!)
+                                        expandedPath.setAttribute('stroke', 'none');
+                                        
+                                        // Transform riêng cho character này - scale từ center của chính nó
+                                        expandedPath.setAttribute('transform', 
+                                            'translate(' + charCenterX.toFixed(2) + ',' + charCenterY.toFixed(2) + ') ' +
+                                            'scale(' + scaleFactor.toFixed(4) + ') ' + // Uniform scale từ center của character
+                                            'translate(' + (-charCenterX).toFixed(2) + ',' + (-charCenterY).toFixed(2) + ')'
+                                        );
+                                        
+                                        // Create mask to cut out center (original character shape)
+                                        const maskId = 'outline-mask-' + i + '-' + charIdx + '-' + Date.now();
+                                        const mask = document.createElementNS(namespace, 'mask');
+                                        mask.setAttribute('id', maskId);
+                                        
+                                        // White background (show all) - large enough to cover expanded character
+                                        const maskBg = document.createElementNS(namespace, 'rect');
+                                        maskBg.setAttribute('x', charBbox.x1 - expansionAmount * 2);
+                                        maskBg.setAttribute('y', charBbox.y1 - expansionAmount * 2);
+                                        maskBg.setAttribute('width', charWidth + expansionAmount * 4);
+                                        maskBg.setAttribute('height', charHeight + expansionAmount * 4);
+                                        maskBg.setAttribute('fill', 'white');
+                                        mask.appendChild(maskBg);
+                                        
+                                        // Black path (cut out center - original character shape)
+                                        const maskPath = fillPath.cloneNode(true);
+                                        maskPath.setAttribute('fill', 'black');
+                                        maskPath.setAttribute('stroke', 'none');
+                                        mask.appendChild(maskPath);
+                                        
+                                        defs.appendChild(mask);
+                                        
+                                        // Apply mask to expanded path (creates outline effect cho character này)
+                                        expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
+                                        
+                                        // Insert expanded path vào group (trước fill path của character này)
+                                        group.insertBefore(expandedPath, fillPath);
+                                        
+                                        if (charIdx === 0) { // Log once per text element
+                                            console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves - scaling từng character riêng');
+                                            console.log('📄 ✅ Material outline: ' + characters.length + ' characters, mỗi character scale từ center của chính nó');
+                                            console.log('📄 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per character (uniform scaling)');
+                                            console.log('📄 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per character (upscale đã giảm)');
+                                            console.log('📄 ✅ Outline luôn match với curves - scale từng character, không bị lệch');
+                                            console.log('📄 ✅ Created using per-character scaled paths + masks (works in CorelDRAW!)');
+                                            console.log('📄 ✅ No Inkscape needed - pure JavaScript solution');
+                                            console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
+                                        }
+                                    } catch (e) {
+                                        console.warn('📄 Failed to create outline for character ' + (charIdx + 1) + ':', e);
+                                        // Fallback: use simple pattern stroke for this character
+                                        const outlinePath = document.createElementNS(namespace, 'path');
+                                        outlinePath.setAttribute('d', charInfo.pathData);
+                                        outlinePath.setAttribute('fill', 'none');
+                                        outlinePath.setAttribute('stroke', stroke);
+                                        outlinePath.setAttribute('stroke-width', strokeWidth);
+                                        outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
+                                        outlinePath.setAttribute('stroke-linecap', strokeLinecap);
+                                        group.insertBefore(outlinePath, fillPath);
                                     }
-                                    
-                                    // Get bounding box to calculate center and scale
-                                    const bbox = path.getBoundingBox();
-                                    const centerX = (bbox.x1 + bbox.x2) / 2;
-                                    const centerY = (bbox.y1 + bbox.y2) / 2;
-                                    
-                                    // Calculate scale factor - UNIFORM SCALING để không bị méo
-                                    // Scale đều cả chiều ngang và dọc (giữ nguyên tỷ lệ)
-                                    const width = bbox.x2 - bbox.x1;
-                                    const height = bbox.y2 - bbox.y1;
-                                    const avgSize = (width + height) / 2; // Average size để scale đều
-                                    
-                                    // Expand chỉ đủ để tạo outline - dùng configurable ratio
-                                    const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                                    // Scale factor đều cho cả X và Y (uniform scaling - không méo)
-                                    const scaleFactor = 1 + (expansionAmount * 2) / avgSize;
-                                    
-                                    // Ensure defs exists
-                                    let defs = svgElement.querySelector('defs');
-                                    if (!defs) {
-                                        defs = document.createElementNS(namespace, 'defs');
-                                        svgElement.insertBefore(defs, svgElement.firstChild);
-                                    }
-                                    
-                                    // Create expanded path group with UNIFORM SCALE transform
-                                    // scale(sx, sy) với sx = sy để đảm bảo không bị méo
-                                    const expandedPathGroup = document.createElementNS(namespace, 'g');
-                                    expandedPathGroup.setAttribute('transform', 
-                                        'translate(' + centerX + ',' + centerY + ') ' +
-                                        'scale(' + scaleFactor + ',' + scaleFactor + ') ' + // Uniform scale: sx = sy
-                                        'translate(' + (-centerX) + ',' + (-centerY) + ')'
-                                    );
-                                    
-                                    // Create expanded path (scaled version of original)
-                                    const expandedPath = document.createElementNS(namespace, 'path');
-                                    expandedPath.setAttribute('d', pathData);
-                                    expandedPath.setAttribute('fill', stroke); // Pattern fill (CorelDRAW compatible!)
-                                    expandedPath.setAttribute('stroke', 'none');
-                                    expandedPathGroup.appendChild(expandedPath);
-                                    
-                                    // Create mask to cut out center (original text shape)
-                                    const maskId = 'outline-mask-' + i + '-' + Date.now();
-                                    const mask = document.createElementNS(namespace, 'mask');
-                                    mask.setAttribute('id', maskId);
-                                    
-                                    // White background (show all) - large enough to cover expanded path
-                                    const maskBg = document.createElementNS(namespace, 'rect');
-                                    maskBg.setAttribute('x', bbox.x1 - strokeWidth * 3);
-                                    maskBg.setAttribute('y', bbox.y1 - strokeWidth * 3);
-                                    maskBg.setAttribute('width', (bbox.x2 - bbox.x1) + strokeWidth * 6);
-                                    maskBg.setAttribute('height', (bbox.y2 - bbox.y1) + strokeWidth * 6);
-                                    maskBg.setAttribute('fill', 'white');
-                                    mask.appendChild(maskBg);
-                                    
-                                    // Black path (cut out center - original text shape)
-                                    const maskPath = fillPath.cloneNode(true);
-                                    maskPath.setAttribute('fill', 'black');
-                                    maskPath.setAttribute('stroke', 'none');
-                                    mask.appendChild(maskPath);
-                                    
-                                    defs.appendChild(mask);
-                                    
-                                    // Apply mask to expanded path group (creates outline effect following text shape!)
-                                    expandedPathGroup.setAttribute('mask', 'url(#' + maskId + ')');
-                                    
-                                    // Insert expanded path BEFORE fill (so fill renders on top)
-                                    group.insertBefore(expandedPathGroup, fillPath);
-                                    
-                                    console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves with curve-shaped outline');
-                                    console.log('📄 ✅ Material outline follows text curve shape (chỉ lớn hơn curves một chút)');
-                                    console.log('📄 ✅ Uniform scale: ' + scaleFactor.toFixed(3) + 'x (đều cả X và Y - không bị méo)');
-                                    console.log('📄 ✅ Expands by ~' + expansionAmount.toFixed(1) + 'px mỗi bên (cả chiều ngang và dọc)');
-                                    console.log('📄 ✅ Created using uniform scaled path + mask (works in CorelDRAW!)');
-                                    console.log('📄 ✅ No Inkscape needed - pure JavaScript solution');
-                                    console.log('📄 Position: x=' + x + ', y=' + y + ', anchor=' + textAnchor + ', baseline=' + dominantBaseline);
-                                } catch (e) {
-                                    console.warn('📄 Failed to create curve-shaped outline, falling back to stroke:', e);
-                                    // Fallback: use simple pattern stroke
-                                    const outlinePath = document.createElementNS(namespace, 'path');
-                                    outlinePath.setAttribute('d', pathData);
-                                    outlinePath.setAttribute('fill', 'none');
-                                    outlinePath.setAttribute('stroke', stroke);
-                                    outlinePath.setAttribute('stroke-width', strokeWidth);
-                                    outlinePath.setAttribute('stroke-linejoin', strokeLinejoin);
-                                    outlinePath.setAttribute('stroke-linecap', strokeLinecap);
-                                    group.insertBefore(outlinePath, fillPath);
+                                } else {
+                                    // No material outline for this character
                                 }
-                            } else {
+                            }); // End forEach characterPaths
+                            
+                            // No material outline for entire text
+                            if (!stroke || stroke.indexOf('url(#') === -1 || strokeWidth <= 0) {
                                 console.log('📄 ✅ Text element ' + (i + 1) + ' converted to curves (no material outline)');
                             }
                             
@@ -1368,7 +1425,7 @@ class APD_Order_Admin_Handler
             
             if (convertedElements.length > 0) {
                 console.log('📄 ✅ Successfully converted ' + convertedElements.length + ' of ' + textElements.length + ' text elements to curves');
-                console.log('📄 ✅ Material outline created using scaled path + mask (follows text curve shape!)');
+                console.log('📄 ✅ Material outline created using PER-CHARACTER scaling (scale từng chữ riêng, không scale cả câu)');
                 
                 // Verify patterns (with PNG/JPEG images) are still in SVG
                 const patternCount = svgElement.querySelectorAll('pattern').length;
@@ -1376,19 +1433,21 @@ class APD_Order_Admin_Handler
                 const patternImages = svgElement.querySelectorAll('pattern image').length;
                 const patternFills = (new XMLSerializer().serializeToString(svgElement).match(/fill=["\']url\(#[^)]+\)["\']/g) || []).length;
                 const maskCount = svgElement.querySelectorAll('mask').length;
-                const scaledPaths = svgElement.querySelectorAll('g[mask] path[fill*="url(#"]').length;
+                const scaledPaths = svgElement.querySelectorAll('path[mask][fill*="url(#"]').length;
                 
-                console.log('📄 Pattern verification (Curve-shaped material outlines):');
+                console.log('📄 Pattern verification (Per-character scaling - không bị lệch):');
                 console.log('  - Pattern definitions:', patternCount);
                 console.log('  - Pattern images (PNG/JPEG):', patternImages);
                 console.log('  - Pattern references (total):', patternRefs);
                 console.log('  - Pattern FILLS (CorelDRAW compatible):', patternFills);
                 console.log('  - SVG masks created:', maskCount);
-                console.log('  - Scaled outline paths:', scaledPaths);
+                console.log('  - Per-character scaled paths:', scaledPaths);
                 
                 if (patternRefs > 0 && patternImages > 0 && patternFills > 0 && maskCount > 0 && scaledPaths > 0) {
-                    console.log('📄 ✅ Material outline patterns are preserved as FILLS on scaled paths');
-                    console.log('📄 ✅ Outline follows EXACT text curve shape (not rectangle!)');
+                    console.log('📄 ✅ Material outline patterns are preserved as FILLS on per-character scaled paths');
+                    console.log('📄 ✅ Mỗi CHARACTER scale từ center của chính nó - KHÔNG BỊ LỆCH');
+                    console.log('📄 ✅ Không scale cả câu - chỉ scale từng chữ riêng lẻ');
+                    console.log('📄 ✅ Outline luôn match với curves - scale đều từ center của từng character');
                     console.log('📄 ✅ CorelDRAW WILL display material outline correctly in PDF');
                     console.log('📄 ✅ No Inkscape required - pure JavaScript solution!');
                     console.log('📄 ✅ Pattern-filled paths work in PDF format (unlike pattern-stroked paths)');

@@ -34,7 +34,7 @@ class APD_AJAX_Handlers
     public function __construct($plugin)
     {
         $this->plugin = $plugin;
-        // Note: cart_service is private, access via plugin instance methods or public properties
+        $this->cart_service = $plugin->get_cart_service();
     }
 
     /**

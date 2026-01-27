@@ -23,11 +23,29 @@ class APD_Activation
     /**
      * Constructor
      * 
-     * @param AdvancedProductDesigner $plugin Main plugin instance
+     * @param AdvancedProductDesigner|null $plugin Main plugin instance (optional for static methods)
      */
-    public function __construct($plugin)
+    public function __construct($plugin = null)
     {
         $this->plugin = $plugin;
+    }
+
+    /**
+     * Static activation method for hook registration
+     */
+    public static function activate_static()
+    {
+        $instance = new self(null);
+        $instance->activate();
+    }
+
+    /**
+     * Static deactivation method for hook registration
+     */
+    public static function deactivate_static()
+    {
+        $instance = new self(null);
+        $instance->deactivate();
     }
 
     /**
@@ -134,49 +152,68 @@ class APD_Activation
 
     /**
      * Maybe create core pages
+     * Creates required pages and saves their IDs to options for consistency
      */
     private function maybe_create_core_pages()
     {
-        // Define pages with their shortcodes
+        // Define pages with their shortcodes - using same slugs as APD_Meta_Boxes
         $pages = array(
-            array(
+            'apd_cart' => array(
                 'title' => 'Cart',
-                'slug' => 'apd-cart',
-                'shortcode' => '[apd_cart]'
+                'slug' => 'cart',
+                'content' => '[apd_cart]'
             ),
-            array(
+            'apd_checkout' => array(
                 'title' => 'Checkout',
-                'slug' => 'apd-checkout',
-                'shortcode' => '[apd_checkout]'
+                'slug' => 'checkout',
+                'content' => '[apd_checkout]'
             ),
-            array(
+            'apd_thankyou' => array(
                 'title' => 'Thank You',
-                'slug' => 'apd-thankyou',
-                'shortcode' => '[apd_thankyou]'
+                'slug' => 'thank-you',
+                'content' => '[apd_thank_you]'
             ),
-            array(
+            'apd_orders' => array(
                 'title' => 'My Orders',
-                'slug' => 'apd-orders',
-                'shortcode' => '[apd_orders]'
-            )
+                'slug' => 'my-orders',
+                'content' => '[apd_orders]'
+            ),
         );
 
-        foreach ($pages as $page) {
-            // Check if page already exists
-            $existing = get_page_by_path($page['slug']);
+        foreach ($pages as $opt_key => $def) {
+            // Check if page already exists by slug
+            $existing = get_page_by_path($def['slug']);
             
-            if (!$existing) {
-                // Create the page
-                $page_data = array(
-                    'post_title' => $page['title'],
-                    'post_name' => $page['slug'],
-                    'post_content' => $page['shortcode'],
-                    'post_status' => 'publish',
-                    'post_type' => 'page',
-                    'post_author' => get_current_user_id()
-                );
-                
-                wp_insert_post($page_data);
+            if ($existing && $existing->ID) {
+                // Page exists, update option with its ID
+                update_option($opt_key, intval($existing->ID));
+                continue;
+            }
+
+            // Check if option already has a valid page ID
+            $existing_id = get_option($opt_key);
+            if ($existing_id && get_post($existing_id)) {
+                continue;
+            }
+
+            // Create the page
+            $page_data = array(
+                'post_title' => $def['title'],
+                'post_name' => $def['slug'],
+                'post_content' => $def['content'],
+                'post_status' => 'publish',
+                'post_type' => 'page',
+                'post_author' => get_current_user_id() ? get_current_user_id() : 1
+            );
+            
+            $page_id = wp_insert_post($page_data);
+            
+            if (!is_wp_error($page_id) && $page_id) {
+                // Save page ID to option for consistency
+                update_option($opt_key, intval($page_id));
+                error_log('APD: Created page "' . $def['title'] . '" with ID ' . $page_id);
+            } else {
+                error_log('APD: Failed to create page "' . $def['title'] . '"');
             }
         }
     }
