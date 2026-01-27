@@ -3921,9 +3921,14 @@ class APD_SVG_Processor
             error_log("APD Apply Material Outline NEW - Order #$order_id: Backed up " . count($custom_text_paths_before) . " custom text paths with strokes before stroke-to-path");
         }
         
+        // Count paths before stroke-to-path to verify expansion
+        $paths_before_stroke_to_path = preg_match_all('/<path[^>]*>/i', $svg_content);
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Paths before stroke-to-path: $paths_before_stroke_to_path");
+        
         file_put_contents($temp_svg_input, $svg_content);
         
         // Command: Convert strokes to paths (this creates expanded paths with pattern fills)
+        // CRITICAL: Use --actions to ensure all strokes are converted, including custom text
         $command = escapeshellarg($inkscape_path) . 
                    ' --actions="select-all;stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
@@ -3940,6 +3945,17 @@ class APD_SVG_Processor
         // STEP 3: Check if conversion was successful
         if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
             $converted_content = file_get_contents($temp_svg_output);
+            
+            // Count paths after stroke-to-path to verify expansion
+            $paths_after_stroke_to_path = preg_match_all('/<path[^>]*>/i', $converted_content);
+            $paths_added = $paths_after_stroke_to_path - $paths_before_stroke_to_path;
+            error_log("APD Apply Material Outline NEW - Order #$order_id: Paths after stroke-to-path: $paths_after_stroke_to_path (added $paths_added paths)");
+            
+            if ($paths_added > 0) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Stroke-to-path created $paths_added expanded outline paths");
+            } else {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - No additional paths created (stroke-to-path may not have expanded paths)");
+            }
             
             // Verify material outline was applied
             $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
@@ -4026,6 +4042,22 @@ class APD_SVG_Processor
                 
                 if ($custom_text_fills_after_restore > 0) {
                     error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Custom text pattern fills restored to expanded outline paths");
+                    
+                    // CRITICAL: Verify that restored paths are actually expanded outline paths
+                    // Count total paths to see if stroke-to-path created expanded paths
+                    $total_paths_after = preg_match_all('/<path[^>]*>/i', $converted_content);
+                    $total_paths_before = preg_match_all('/<path[^>]*>/i', $svg_content);
+                    
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: Path count analysis:");
+                    error_log("  - Total paths before stroke-to-path: $total_paths_before");
+                    error_log("  - Total paths after stroke-to-path: $total_paths_after");
+                    
+                    if ($total_paths_after > $total_paths_before) {
+                        $paths_added = $total_paths_after - $total_paths_before;
+                        error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Stroke-to-path created $paths_added additional paths (expanded outline paths)");
+                    } else {
+                        error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - No additional paths created by stroke-to-path (may not have expanded)");
+                    }
                 } else {
                     error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - Custom text pattern fills restoration may have failed");
                 }
@@ -5078,13 +5110,16 @@ class APD_SVG_Processor
                 
                 // Create mask with larger dimensions to create visible outline effect
                 // Mask logic: White = show pattern, Black = hide pattern
-                // White background (large) shows pattern everywhere
+                // For outline effect: We want pattern to show AROUND the path, not inside
+                // So: White background (large) shows pattern everywhere
                 // Black path (original size) cuts out center, creating outline effect
                 // Larger mask dimensions (3x) ensure outline is visible around path
+                // IMPORTANT: Path trong mask phải là path gốc (không expand) để cut out center
+                // Pattern fill trên path gốc sẽ hiển thị outline xung quanh
                 $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
                            '<rect x="' . htmlspecialchars($mask_x, ENT_QUOTES) . '" y="' . htmlspecialchars($mask_y, ENT_QUOTES) . '" ' .
                            'width="' . htmlspecialchars($mask_w, ENT_QUOTES) . '" height="' . htmlspecialchars($mask_h, ENT_QUOTES) . '" fill="white"/>' .
-                           '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="black" stroke="black" stroke-width="' . (is_numeric($svg_width) ? ($svg_width * 0.02) : '2%') . '"/>' .
+                           '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="black"/>' .
                            '</mask>';
                 
                 // Store mask to add later
