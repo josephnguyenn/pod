@@ -5001,9 +5001,9 @@ class APD_SVG_Processor
                     $svg_viewbox = $vb_match[1];
                     $vb_parts = preg_split('/\s+/', trim($svg_viewbox));
                     if (count($vb_parts) >= 4) {
-                        // Use viewBox dimensions * 2 for larger mask coverage
-                        $vb_width = floatval($vb_parts[2]) * 2;
-                        $vb_height = floatval($vb_parts[3]) * 2;
+                        // Use viewBox dimensions * 3 for larger mask coverage and visible outline effect
+                        $vb_width = floatval($vb_parts[2]) * 3;
+                        $vb_height = floatval($vb_parts[3]) * 3;
                         $svg_width = $vb_width;
                         $svg_height = $vb_height;
                     }
@@ -5011,18 +5011,18 @@ class APD_SVG_Processor
                     if (preg_match('/<svg[^>]*width=["\']([^"\']+)["\']/', $svg_content, $w_match)) {
                         $w_val = floatval(preg_replace('/[^0-9.]/', '', $w_match[1]));
                         if ($w_val > 0) {
-                            $svg_width = $w_val * 2; // Double the width for better coverage
+                            $svg_width = $w_val * 3; // Triple the width for visible outline effect
                         }
                     }
                     if (preg_match('/<svg[^>]*height=["\']([^"\']+)["\']/', $svg_content, $h_match)) {
                         $h_val = floatval(preg_replace('/[^0-9.]/', '', $h_match[1]));
                         if ($h_val > 0) {
-                            $svg_height = $h_val * 2; // Double the height for better coverage
+                            $svg_height = $h_val * 3; // Triple the height for visible outline effect
                         }
                     }
                 }
                 
-                error_log("APD Apply Pattern Mask - Order #$order_id: Using mask dimensions: width=$svg_width, height=$svg_height (2x for better CorelDraw compatibility)");
+                error_log("APD Apply Pattern Mask - Order #$order_id: Using mask dimensions: width=$svg_width, height=$svg_height (3x for visible outline effect in CorelDraw)");
         
         $mask_counter = 0;
         $masks_to_add = array();
@@ -5064,21 +5064,27 @@ class APD_SVG_Processor
                 // So: White path (show pattern), black background (hide outside)
                 // Use larger mask bounds and center it to ensure pattern displays correctly in CorelDraw
                 // Increased mask size to accommodate larger outline (48px stroke-width)
-                // Mask dimensions: 1.8x SVG dimensions for better coverage of expanded outline paths
-                $mask_x = is_numeric($svg_width) ? (-$svg_width / 3) : '-33%';
-                $mask_y = is_numeric($svg_height) ? (-$svg_height / 3) : '-33%';
-                $mask_w = is_numeric($svg_width) ? ($svg_width * 1.8) : '180%'; // Increased from 1.5x to 1.8x for 48px stroke-width
-                $mask_h = is_numeric($svg_height) ? ($svg_height * 1.8) : '180%'; // Increased from 1.5x to 1.8x for 48px stroke-width
+                // Mask dimensions: 3x SVG dimensions for better coverage and visible outline effect
+                // Larger mask = more visible outline in CorelDraw
+                $mask_x = is_numeric($svg_width) ? (-$svg_width) : '-100%';
+                $mask_y = is_numeric($svg_height) ? (-$svg_height) : '-100%';
+                $mask_w = is_numeric($svg_width) ? ($svg_width * 3) : '300%'; // Increased from 1.8x to 3x for more visible outline
+                $mask_h = is_numeric($svg_height) ? ($svg_height * 3) : '300%'; // Increased from 1.8x to 3x for more visible outline
                 
                 // Log mask dimensions for verification
                 if ($pattern_id === 'apdTextPattern') {
-                    error_log("APD Apply Pattern Mask - Order #$order_id: Custom text mask dimensions - x:$mask_x, y:$mask_y, w:$mask_w, h:$mask_h (1.8x for 48px stroke-width)");
+                    error_log("APD Apply Pattern Mask - Order #$order_id: Custom text mask dimensions - x:$mask_x, y:$mask_y, w:$mask_w, h:$mask_h (3x for visible outline effect)");
                 }
                 
+                // Create mask with larger dimensions to create visible outline effect
+                // Mask logic: White = show pattern, Black = hide pattern
+                // White background (large) shows pattern everywhere
+                // Black path (original size) cuts out center, creating outline effect
+                // Larger mask dimensions (3x) ensure outline is visible around path
                 $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
                            '<rect x="' . htmlspecialchars($mask_x, ENT_QUOTES) . '" y="' . htmlspecialchars($mask_y, ENT_QUOTES) . '" ' .
-                           'width="' . htmlspecialchars($mask_w, ENT_QUOTES) . '" height="' . htmlspecialchars($mask_h, ENT_QUOTES) . '" fill="black"/>' .
-                           '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="white"/>' .
+                           'width="' . htmlspecialchars($mask_w, ENT_QUOTES) . '" height="' . htmlspecialchars($mask_h, ENT_QUOTES) . '" fill="white"/>' .
+                           '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="black" stroke="black" stroke-width="' . (is_numeric($svg_width) ? ($svg_width * 0.02) : '2%') . '"/>' .
                            '</mask>';
                 
                 // Store mask to add later
