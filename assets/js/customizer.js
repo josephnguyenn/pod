@@ -1967,8 +1967,9 @@ jQuery(document).ready(function($) {
                             pat = document.createElementNS(NS,'pattern');
                             pat.setAttribute('id', pid);
                             pat.setAttribute('patternUnits','userSpaceOnUse');
-                            pat.setAttribute('width','150');
-                            pat.setAttribute('height','150');
+                            pat.setAttribute('patternContentUnits','userSpaceOnUse');
+                            pat.setAttribute('width','80');
+                            pat.setAttribute('height','80');
                             defs.appendChild(pat);
                         }
                         
@@ -1977,8 +1978,8 @@ jQuery(document).ready(function($) {
                             if (img) pat.removeChild(img);
                             img = document.createElementNS(NS,'image');
                             img.setAttribute('href', matUrl);
-                            img.setAttribute('width','150');
-                            img.setAttribute('height','150');
+                            img.setAttribute('width','80');
+                            img.setAttribute('height','80');
                             img.setAttribute('preserveAspectRatio','xMidYMid slice');
                             pat.appendChild(img);
                         }
@@ -1987,8 +1988,13 @@ jQuery(document).ready(function($) {
                         let appliedCount = 0;
                         $(svgEl).find('path, polygon, rect, circle, ellipse, line, polyline').each(function(){
                             this.setAttribute('fill', 'none');
+                            this.setAttribute('stroke', 'url(#'+pid+')');
+                            this.setAttribute('stroke-width', String(width));
+                            this.setAttribute('stroke-linejoin', 'round');
+                            this.setAttribute('stroke-linecap', 'round');
+                            this.setAttribute('paint-order', 'stroke fill');
                             this.style.stroke = 'url(#'+pid+')';
-                            this.style.strokeWidth = String(width);
+                            this.style.strokeWidth = String(width) + 'px';
                             this.style.vectorEffect = 'non-scaling-stroke';
                             this.style.strokeLinejoin = 'round';
                             this.style.strokeLinecap = 'round';
