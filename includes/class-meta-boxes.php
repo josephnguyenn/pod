@@ -2168,56 +2168,96 @@ class APD_Meta_Boxes
     // Enhanced cart shortcode with live preview
     private function maybe_create_core_pages()
     {
+        // Define pages with their shortcodes and page templates
         $pages = array(
             'apd_cart' => array(
                 'title' => 'Cart',
                 'slug' => 'cart',
-                'content' => '[apd_cart]'
+                'content' => '[apd_cart]',
+                'template' => '' // Cart doesn't use page template, only shortcode
             ),
             'apd_checkout' => array(
                 'title' => 'Checkout',
                 'slug' => 'checkout',
-                'content' => '[apd_checkout]'
+                'content' => '[apd_checkout]',
+                'template' => 'templates/page-checkout.php'
             ),
             'apd_thankyou' => array(
                 'title' => 'Thank You',
                 'slug' => 'thank-you',
-                'content' => '[apd_thank_you]'
+                'content' => '[apd_thank_you]',
+                'template' => 'templates/page-thankyou.php'
             ),
             'apd_orders' => array(
                 'title' => 'My Orders',
                 'slug' => 'my-orders',
-                'content' => '[apd_orders]'
+                'content' => '[apd_orders]',
+                'template' => 'templates/page-orders.php'
+            ),
+            'apd_product_list' => array(
+                'title' => 'Products',
+                'slug' => 'products',
+                'content' => '[apd_product_list]',
+                'template' => 'templates/page-product-list.php'
             ),
         );
+        
         foreach ($pages as $opt_key => $def) {
-            // Check if option already has a valid page ID
-            $existing_id = get_option($opt_key);
-            if ($existing_id && get_post($existing_id)) {
-                continue;
-            }
-
             // Check if page already exists by slug
             $existing = get_page_by_path($def['slug']);
+            
             if ($existing && $existing->ID) {
+                // Page exists, update option with its ID
                 update_option($opt_key, intval($existing->ID));
+                
+                // Assign page template if specified and not already set
+                if (!empty($def['template'])) {
+                    $current_template = get_post_meta($existing->ID, '_wp_page_template', true);
+                    if ($current_template !== $def['template']) {
+                        update_post_meta($existing->ID, '_wp_page_template', $def['template']);
+                        error_log('APD: Assigned template "' . $def['template'] . '" to existing page "' . $def['title'] . '"');
+                    }
+                }
                 error_log('APD: Found existing page "' . $def['title'] . '" with ID ' . $existing->ID);
                 continue;
             }
 
+            // Check if option already has a valid page ID
+            $existing_id = get_option($opt_key);
+            if ($existing_id && get_post($existing_id)) {
+                // Assign page template if specified and not already set
+                if (!empty($def['template'])) {
+                    $current_template = get_post_meta($existing_id, '_wp_page_template', true);
+                    if ($current_template !== $def['template']) {
+                        update_post_meta($existing_id, '_wp_page_template', $def['template']);
+                        error_log('APD: Assigned template "' . $def['template'] . '" to existing page "' . $def['title'] . '"');
+                    }
+                }
+                continue;
+            }
+
             // Create the page
-            $id = wp_insert_post(array(
+            $page_data = array(
                 'post_title' => $def['title'],
                 'post_name' => $def['slug'],
+                'post_content' => $def['content'],
                 'post_status' => 'publish',
                 'post_type' => 'page',
-                'post_content' => $def['content'],
                 'post_author' => get_current_user_id() ? get_current_user_id() : 1
-            ));
+            );
+            
+            $id = wp_insert_post($page_data);
             
             if (!is_wp_error($id) && $id) {
                 update_option($opt_key, intval($id));
-                error_log('APD: Created page "' . $def['title'] . '" with ID ' . $id);
+                
+                // Assign page template if specified
+                if (!empty($def['template'])) {
+                    update_post_meta($id, '_wp_page_template', $def['template']);
+                    error_log('APD: Created page "' . $def['title'] . '" with ID ' . $id . ' and assigned template "' . $def['template'] . '"');
+                } else {
+                    error_log('APD: Created page "' . $def['title'] . '" with ID ' . $id);
+                }
             } else {
                 error_log('APD: Failed to create page "' . $def['title'] . '"');
             }
@@ -2237,6 +2277,7 @@ class APD_Meta_Boxes
             get_option('apd_checkout') => 'checkout',
             get_option('apd_thankyou') => 'thank-you',
             get_option('apd_orders') => 'my-orders',
+            get_option('apd_product_list') => 'products',
         );
         
         $missing = false;

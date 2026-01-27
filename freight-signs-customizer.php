@@ -192,6 +192,7 @@ if (!class_exists('AdvancedProductDesigner')) {
         add_action('template_redirect', array($this, 'template_redirect'));
         add_filter('single_template', array($this, 'load_single_product_template'));
         add_filter('taxonomy_template', array($this, 'load_company_taxonomy_template'));
+        add_filter('page_template', array($this, 'load_page_template'));
         
         // Force Elementor canvas (full-width) for company archives
         add_action('wp', array($this, 'set_company_archive_elementor_template'));
@@ -282,6 +283,52 @@ if (!class_exists('AdvancedProductDesigner')) {
             }
         }
 
+        return $template;
+    }
+
+    /**
+     * Load page templates from plugin directory
+     * Allows WordPress to use page templates stored in plugin directory
+     */
+    public function load_page_template($template)
+    {
+        global $post;
+        
+        if (!$post || !is_page()) {
+            return $template;
+        }
+        
+        // Get the page template assigned to this page
+        $page_template = get_post_meta($post->ID, '_wp_page_template', true);
+        
+        // If no template is assigned or it's the default, return original template
+        if (empty($page_template) || $page_template === 'default') {
+            return $template;
+        }
+        
+        // Check if template path starts with 'templates/' (our plugin templates)
+        if (strpos($page_template, 'templates/') === 0) {
+            $plugin_template = APD_PLUGIN_PATH . $page_template;
+            
+            // If template exists in plugin directory, use it
+            if (file_exists($plugin_template)) {
+                return $plugin_template;
+            }
+        }
+        
+        // Check in theme directory first (WordPress default behavior)
+        $theme_template = get_stylesheet_directory() . '/' . $page_template;
+        if (file_exists($theme_template)) {
+            return $theme_template;
+        }
+        
+        // Check in parent theme directory
+        $parent_template = get_template_directory() . '/' . $page_template;
+        if (file_exists($parent_template)) {
+            return $parent_template;
+        }
+        
+        // Return original template if nothing found
         return $template;
     }
 
