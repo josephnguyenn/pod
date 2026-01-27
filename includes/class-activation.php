@@ -184,8 +184,8 @@ class APD_Activation
                 'template' => 'templates/page-orders.php'
             ),
             'apd_product_list' => array(
-                'title' => 'Products',
-                'slug' => 'products',
+                'title' => 'Product',
+                'slug' => 'product',
                 'content' => '[apd_product_list]',
                 'template' => 'templates/page-product-list.php'
             ),

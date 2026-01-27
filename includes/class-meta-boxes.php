@@ -2195,8 +2195,8 @@ class APD_Meta_Boxes
                 'template' => 'templates/page-orders.php'
             ),
             'apd_product_list' => array(
-                'title' => 'Products',
-                'slug' => 'products',
+                'title' => 'Product',
+                'slug' => 'product',
                 'content' => '[apd_product_list]',
                 'template' => 'templates/page-product-list.php'
             ),
@@ -2283,7 +2283,7 @@ class APD_Meta_Boxes
             get_option('apd_checkout') => 'checkout',
             get_option('apd_thankyou') => 'thank-you',
             get_option('apd_orders') => 'my-orders',
-            get_option('apd_product_list') => 'products',
+            get_option('apd_product_list') => 'product',
             get_option('apd_product_detail') => 'product-detail',
         );
         
