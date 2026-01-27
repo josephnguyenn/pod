@@ -2022,7 +2022,28 @@ jQuery(document).ready(function($) {
         applyTextOutlineAll: function(){
             try {
                                 const NS = 'http://www.w3.org/2000/svg';
-                const matUrl = FSC.resolveSelectedMaterialUrl ? FSC.resolveSelectedMaterialUrl() : (FSC.getMaterialUrl ? FSC.getMaterialUrl(FSC.currentMaterial) : null);
+                
+                // Debug: log current material state
+                console.log('🎨 Text outline - Material state:', {
+                    currentMaterial: FSC.currentMaterial,
+                    currentMaterialUrl: FSC.currentMaterialUrl,
+                    materialsMap: FSC.materialsMap
+                });
+                
+                // Try to get material URL from multiple sources
+                let matUrl = null;
+                if (FSC.currentMaterialUrl) {
+                    matUrl = FSC.currentMaterialUrl;
+                } else if (FSC.resolveSelectedMaterialUrl) {
+                    matUrl = FSC.resolveSelectedMaterialUrl();
+                } else if (FSC.getMaterialUrl && FSC.currentMaterial) {
+                    matUrl = FSC.getMaterialUrl(FSC.currentMaterial);
+                } else if (FSC.materialsMap && FSC.currentMaterial && FSC.materialsMap[FSC.currentMaterial]) {
+                    const materialData = FSC.materialsMap[FSC.currentMaterial];
+                    matUrl = typeof materialData === 'string' ? materialData : (materialData.url || null);
+                }
+                
+                console.log('🎨 Text - Resolved material URL:', matUrl);
                 
                 // Get stroke width from template data
                 let width = Math.max(2, Number(FSC.fixedTextOutlineWidth || 4));
@@ -2030,15 +2051,26 @@ jQuery(document).ready(function($) {
                 if (cachedTemplateData && cachedTemplateData.elements) {
                     const textElement = cachedTemplateData.elements.find(el => el.type === 'text');
                     if (textElement && textElement.properties && textElement.properties.textStrokeWidth !== undefined) {
-                        width = textElement.properties.textStrokeWidth;
+                        const templateWidth = Number(textElement.properties.textStrokeWidth);
+                        // Only use template width if > 0
+                        if (templateWidth > 0) {
+                            width = templateWidth;
+                        }
                     }
                 }
+                
+                // Ensure minimum width
+                width = Math.max(width, 2);
+                
+                console.log('🎨 Text outline width:', width);
 
                 if (FSC._lastTextOutline.url === matUrl && FSC._lastTextOutline.width === width) {
+                    console.log('🎨 Text outline unchanged, skipping');
                     return;
                 }
 
                 const $textSvgs = $('.apd-text-svg');
+                console.log('🎨 Found', $textSvgs.length, 'text SVG elements');
                 if ($textSvgs.length === 0) return;
 
                 $textSvgs.each(function(){
