@@ -3218,6 +3218,15 @@ class APD_SVG_Processor
         // STEP 5: Process patterns for PDF - embed as data URIs
         $svg_content = $this->process_patterns_for_pdf($svg_content, $order_id);
         
+        // STEP 5.5: Process pattern images for PDF - ensure PNG/JPEG images are embedded
+        error_log("APD PDF Compatible NEW - Order #$order_id: Processing pattern images for PDF...");
+        try {
+            $svg_content = $this->process_pattern_images_for_pdf($svg_content, $order_id);
+        } catch (Exception $e) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception in process_pattern_images_for_pdf: " . $e->getMessage());
+            // Continue without processing pattern images
+        }
+        
         // STEP 6: Convert ALL text and logos to curves (paths)
         error_log("APD PDF Compatible NEW - Order #$order_id: Converting text and logos to curves...");
         $original_svg_for_fallback = $svg_content; // Backup for fallback
@@ -3261,6 +3270,12 @@ class APD_SVG_Processor
         $path_count_final = preg_match_all('/<path[^>]*>/i', $svg_content);
         $pattern_fills_final = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
         $pattern_defs_final = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        $clip_paths_final = preg_match_all('/<clipPath[^>]*>/i', $svg_content);
+        $clip_path_refs_final = preg_match_all('/clip-path=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        
+        // Verify custom text patterns
+        $apd_text_pattern_final = preg_match_all('/apdTextPattern/i', $svg_content);
+        $text_material_pattern_final = preg_match_all('/text-material-pattern-/i', $svg_content);
         
         error_log("APD PDF Compatible NEW - Order #$order_id: Conversion verification:");
         error_log("  - Text elements remaining: $text_count_final (should be 0)");
@@ -3268,6 +3283,10 @@ class APD_SVG_Processor
         error_log("  - Path elements: $path_count_final");
         error_log("  - Pattern definitions: $pattern_defs_final");
         error_log("  - Pattern fills (material outlines): $pattern_fills_final");
+        error_log("  - ClipPaths created: $clip_paths_final");
+        error_log("  - Clip-path references: $clip_path_refs_final");
+        error_log("  - Custom text patterns (apdTextPattern): $apd_text_pattern_final");
+        error_log("  - Custom text patterns (text-material-pattern-*): $text_material_pattern_final");
         
         // STEP 9: Ensure proper XML declaration with UTF-8
         $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
@@ -3324,19 +3343,31 @@ class APD_SVG_Processor
             return $svg_content;
         }
         
-        // STEP 1: Convert images/logos to paths first (before text conversion)
+        // STEP 1: Preserve custom text material outline patterns BEFORE conversion
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Preserving custom text material outline...");
+        $preserve_result = $this->preserve_custom_text_material_outline($svg_content, $order_id);
+        $svg_content = $preserve_result['svg'];
+        $custom_text_pattern_backup = $preserve_result['patterns'];
+        
+        // STEP 2: Convert images/logos to paths first (before text conversion)
         // This ensures logos are also converted to curves
         $svg_content = $this->convert_images_to_paths($svg_content, $order_id);
         
-        // STEP 2: Backup pattern definitions and viewBox
+        // STEP 3: Backup ALL pattern definitions and viewBox (including custom text patterns)
         $pattern_backup = array();
+        // Merge custom text patterns into general backup
+        $pattern_backup = array_merge($pattern_backup, $custom_text_pattern_backup);
+        
         if (preg_match_all('/<pattern[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/pattern>/is', $svg_content, $matches, PREG_SET_ORDER)) {
             foreach ($matches as $match) {
                 $pattern_id = $match[1];
                 $pattern_full = $match[0];
-                $pattern_backup[$pattern_id] = $pattern_full;
+                // Only add if not already in backup (from custom text patterns)
+                if (!isset($pattern_backup[$pattern_id])) {
+                    $pattern_backup[$pattern_id] = $pattern_full;
+                }
             }
-            error_log("APD Convert All to Curves NEW - Order #$order_id: Backed up " . count($pattern_backup) . " pattern definitions");
+            error_log("APD Convert All to Curves NEW - Order #$order_id: Backed up " . count($pattern_backup) . " pattern definitions (including " . count($custom_text_pattern_backup) . " custom text patterns)");
         }
         
         $original_viewBox = '';
@@ -3371,25 +3402,10 @@ class APD_SVG_Processor
         if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
             $converted_content = file_get_contents($temp_svg_output);
             
-            // Restore lost patterns
+            // Restore lost patterns (including custom text patterns)
             if (!empty($pattern_backup)) {
-                $patterns_restored = 0;
-                foreach ($pattern_backup as $pattern_id => $pattern_full) {
-                    if (strpos($converted_content, 'id="' . $pattern_id . '"') === false && 
-                        strpos($converted_content, "id='" . $pattern_id . "'") === false) {
-                        error_log("APD Convert All to Curves NEW - Order #$order_id: Restoring lost pattern: $pattern_id");
-                        if (preg_match('/<defs[^>]*>/i', $converted_content)) {
-                            $converted_content = preg_replace('/<defs[^>]*>/i', '$0' . "\n" . $pattern_full, $converted_content, 1);
-                        } else {
-                            $converted_content = str_replace('</svg>', $pattern_full . "\n</svg>", $converted_content);
-                        }
-                        $patterns_restored++;
-                    }
-                }
-                if ($patterns_restored > 0) {
-                    error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Restored $patterns_restored lost patterns");
-                    file_put_contents($temp_svg_output, $converted_content);
-                }
+                $converted_content = $this->restore_custom_text_material_outline($converted_content, $pattern_backup, $order_id);
+                file_put_contents($temp_svg_output, $converted_content);
             }
             
             // Restore viewBox
@@ -3503,6 +3519,16 @@ class APD_SVG_Processor
             
             if ($pattern_fills_after > $pattern_fills) {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ SUCCESS - Material outline applied as fills");
+                
+                // STEP 4: Clip pattern images to paths for proper CorelDraw display
+                error_log("APD Apply Material Outline NEW - Order #$order_id: Clipping pattern images to paths...");
+                try {
+                    $converted_content = $this->clip_pattern_images_to_paths($converted_content, $order_id);
+                } catch (Exception $e) {
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
+                    // Continue without clipping
+                }
+                
                 unlink($temp_svg_input);
                 unlink($temp_svg_output);
                 return $converted_content;
@@ -3510,6 +3536,13 @@ class APD_SVG_Processor
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Some pattern strokes remain, trying manual conversion");
                 // Try manual conversion as fallback
                 $converted_content = $this->apply_material_outline_manual($converted_content, $order_id);
+                
+                // Clip pattern images after manual conversion
+                try {
+                    $converted_content = $this->clip_pattern_images_to_paths($converted_content, $order_id);
+                } catch (Exception $e) {
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
+                }
             }
             
             unlink($temp_svg_input);
@@ -3563,6 +3596,13 @@ class APD_SVG_Processor
         
         $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
         error_log("APD Apply Material Outline Manual - Order #$order_id: Created $pattern_fills_after pattern fills");
+        
+        // Clip pattern images after manual conversion
+        try {
+            $svg_content = $this->clip_pattern_images_to_paths($svg_content, $order_id);
+        } catch (Exception $e) {
+            error_log("APD Apply Material Outline Manual - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
+        }
         
         return $svg_content;
     }
@@ -3790,5 +3830,334 @@ class APD_SVG_Processor
             error_log("APD PDF NEW - Order #$order_id: ❌ Inkscape conversion failed. Output: " . ($output ?: 'No output'));
             return new WP_Error('inkscape_failed', 'Inkscape conversion failed. Output: ' . ($output ?: 'No output'));
         }
+    }
+
+    /**
+     * Clip pattern images to paths - NEW VERSION
+     * Clips pattern images (PNG/JPEG) to match path shape for proper CorelDraw display
+     * 
+     * @param string $svg_content SVG content with paths and pattern fills
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with clipPaths applied
+     */
+    private function clip_pattern_images_to_paths($svg_content, $order_id = 0)
+    {
+        error_log("APD Clip Pattern Images - Order #$order_id: Starting pattern image clipping");
+        
+        // Find all paths with pattern fills
+        $paths_with_patterns = preg_match_all('/<path([^>]*fill=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
+        if ($paths_with_patterns === 0) {
+            error_log("APD Clip Pattern Images - Order #$order_id: No paths with pattern fills found");
+            return $svg_content;
+        }
+        
+        error_log("APD Clip Pattern Images - Order #$order_id: Found $paths_with_patterns paths with pattern fills");
+        
+        // Ensure defs exists
+        if (!preg_match('/<defs[^>]*>/i', $svg_content)) {
+            // Insert defs after opening svg tag
+            $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
+        }
+        
+        $clip_path_counter = 0;
+        $clip_paths_to_add = array();
+        
+        // Process each path with pattern fill
+        $svg_content = preg_replace_callback(
+            '/<path([^>]*fill=["\']url\(#([^)]+)\)["\'][^>]*)>/i',
+            function($matches) use (&$clip_path_counter, &$clip_paths_to_add, $order_id) {
+                $attrs = $matches[1];
+                $pattern_id = $matches[2];
+                
+                // Extract path data (d attribute)
+                $path_data = '';
+                if (preg_match('/d=["\']([^"\']+)["\']/', $attrs, $d_match)) {
+                    $path_data = $d_match[1];
+                } else {
+                    // No path data, skip
+                    return $matches[0];
+                }
+                
+                // Check if already has clip-path
+                if (preg_match('/clip-path=/i', $attrs)) {
+                    // Already clipped, skip
+                    return $matches[0];
+                }
+                
+                // Create clipPath ID
+                $clip_path_id = 'clip-path-' . $order_id . '-' . (++$clip_path_counter);
+                
+                // Create clipPath definition
+                $clip_path_def = '<clipPath id="' . htmlspecialchars($clip_path_id, ENT_QUOTES) . '">' .
+                               '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '"/>' .
+                               '</clipPath>';
+                
+                // Store clipPath to add later
+                $clip_paths_to_add[] = "\n  " . $clip_path_def;
+                
+                // Add clip-path attribute to path
+                $new_attrs = $attrs . ' clip-path="url(#' . htmlspecialchars($clip_path_id, ENT_QUOTES) . ')"';
+                
+                error_log("APD Clip Pattern Images - Order #$order_id: Created clipPath $clip_path_id for pattern $pattern_id");
+                
+                return '<path' . $new_attrs . '>';
+            },
+            $svg_content
+        );
+        
+        // Insert clipPaths into defs
+        if (!empty($clip_paths_to_add)) {
+            $clip_paths_str = implode('', $clip_paths_to_add);
+            $svg_content = preg_replace('/(<defs[^>]*>)/i', '$1' . $clip_paths_str, $svg_content, 1);
+        }
+        
+        // Verify clipPaths were created
+        $clip_path_count = preg_match_all('/<clipPath[^>]*>/i', $svg_content);
+        $clip_path_refs = preg_match_all('/clip-path=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        
+        error_log("APD Clip Pattern Images - Order #$order_id: Created $clip_path_count clipPaths, $clip_path_refs clip-path references");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Preserve custom text material outline - NEW VERSION
+     * Ensures custom text patterns (apdTextPattern, text-material-pattern-*) are preserved
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return array Array with 'svg' => processed SVG, 'patterns' => backup patterns
+     */
+    private function preserve_custom_text_material_outline($svg_content, $order_id = 0)
+    {
+        error_log("APD Preserve Custom Text Material - Order #$order_id: Starting custom text pattern preservation");
+        
+        $pattern_backup = array();
+        
+        // Detect custom text patterns (apdTextPattern, text-material-pattern-*)
+        $pattern_ids_to_preserve = array('apdTextPattern');
+        
+        // Find all text-material-pattern-* patterns
+        if (preg_match_all('/<pattern[^>]*id=["\'](text-material-pattern-[^"\']+)["\'][^>]*>/i', $svg_content, $text_pattern_matches)) {
+            $pattern_ids_to_preserve = array_merge($pattern_ids_to_preserve, $text_pattern_matches[1]);
+        }
+        
+        error_log("APD Preserve Custom Text Material - Order #$order_id: Found " . count($pattern_ids_to_preserve) . " custom text pattern IDs to preserve");
+        
+        // Backup pattern definitions với PNG/JPEG images
+        foreach ($pattern_ids_to_preserve as $pattern_id) {
+            // Match pattern with its full content including image
+            $pattern_regex = '/<pattern[^>]*id=["\']' . preg_quote($pattern_id, '/') . '["\'][^>]*>(.*?)<\/pattern>/is';
+            if (preg_match($pattern_regex, $svg_content, $pattern_match)) {
+                $pattern_full = $pattern_match[0];
+                
+                // Verify pattern contains image (PNG/JPEG)
+                if (preg_match('/<image[^>]*href=["\']data:image\/(png|jpeg|jpg);base64/i', $pattern_full)) {
+                    $pattern_backup[$pattern_id] = $pattern_full;
+                    error_log("APD Preserve Custom Text Material - Order #$order_id: Backed up pattern $pattern_id with PNG/JPEG image");
+                } else {
+                    error_log("APD Preserve Custom Text Material - Order #$order_id: Pattern $pattern_id found but no PNG/JPEG image detected");
+                }
+            }
+        }
+        
+        // Also backup any pattern that has apdTextPattern in references
+        $apd_text_pattern_refs = preg_match_all('/url\(#apdTextPattern\)/i', $svg_content);
+        if ($apd_text_pattern_refs > 0) {
+            error_log("APD Preserve Custom Text Material - Order #$order_id: Found $apd_text_pattern_refs references to apdTextPattern");
+            
+            // Ensure apdTextPattern is in backup
+            if (!isset($pattern_backup['apdTextPattern'])) {
+                // Try to find it with different regex
+                if (preg_match('/<pattern[^>]*id=["\']apdTextPattern["\'][^>]*>(.*?)<\/pattern>/is', $svg_content, $apd_match)) {
+                    $pattern_backup['apdTextPattern'] = $apd_match[0];
+                    error_log("APD Preserve Custom Text Material - Order #$order_id: Found and backed up apdTextPattern");
+                }
+            }
+        }
+        
+        error_log("APD Preserve Custom Text Material - Order #$order_id: Total patterns backed up: " . count($pattern_backup));
+        
+        return array(
+            'svg' => $svg_content,
+            'patterns' => $pattern_backup
+        );
+    }
+
+    /**
+     * Restore custom text material outline patterns
+     * Restores backed-up patterns if they were lost during conversion
+     * 
+     * @param string $svg_content SVG content after conversion
+     * @param array $pattern_backup Backed-up patterns
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with patterns restored
+     */
+    private function restore_custom_text_material_outline($svg_content, $pattern_backup, $order_id = 0)
+    {
+        if (empty($pattern_backup)) {
+            return $svg_content;
+        }
+        
+        error_log("APD Restore Custom Text Material - Order #$order_id: Restoring " . count($pattern_backup) . " patterns");
+        
+        $patterns_restored = 0;
+        
+        foreach ($pattern_backup as $pattern_id => $pattern_full) {
+            // Check if pattern still exists
+            $pattern_exists = (strpos($svg_content, 'id="' . $pattern_id . '"') !== false || 
+                              strpos($svg_content, "id='" . $pattern_id . "'") !== false);
+            
+            if (!$pattern_exists) {
+                error_log("APD Restore Custom Text Material - Order #$order_id: Restoring lost pattern: $pattern_id");
+                
+                // Insert pattern in defs if exists, otherwise before </svg>
+                if (preg_match('/<defs[^>]*>/i', $svg_content)) {
+                    $svg_content = preg_replace('/<defs[^>]*>/i', '$0' . "\n  " . $pattern_full, $svg_content, 1);
+                } else {
+                    // Create defs and insert pattern
+                    if (preg_match('/(<svg[^>]*>)/i', $svg_content, $svg_match)) {
+                        $defs_with_pattern = "\n<defs>\n  " . $pattern_full . "\n</defs>";
+                        $svg_content = str_replace($svg_match[0], $svg_match[0] . $defs_with_pattern, $svg_content);
+                    } else {
+                        // Fallback: insert before </svg>
+                        $svg_content = str_replace('</svg>', $pattern_full . "\n</svg>", $svg_content);
+                    }
+                }
+                $patterns_restored++;
+            }
+        }
+        
+        if ($patterns_restored > 0) {
+            error_log("APD Restore Custom Text Material - Order #$order_id: ✅ Restored $patterns_restored lost patterns");
+        } else {
+            error_log("APD Restore Custom Text Material - Order #$order_id: All patterns already present");
+        }
+        
+        return $svg_content;
+    }
+
+    /**
+     * Process pattern images for PDF - NEW VERSION
+     * Ensures pattern images (PNG/JPEG) are properly embedded for PDF export
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with processed pattern images
+     */
+    private function process_pattern_images_for_pdf($svg_content, $order_id = 0)
+    {
+        error_log("APD Process Pattern Images PDF - Order #$order_id: Starting pattern image processing");
+        
+        // Find all pattern definitions với image elements
+        $pattern_count = preg_match_all('/<pattern[^>]*>/i', $svg_content);
+        error_log("APD Process Pattern Images PDF - Order #$order_id: Found $pattern_count pattern definitions");
+        
+        // Process each pattern
+        $svg_content = preg_replace_callback(
+            '/<pattern([^>]*)>(.*?)<\/pattern>/is',
+            function($matches) use ($order_id) {
+                $pattern_attrs = $matches[1];
+                $pattern_content = $matches[2];
+                
+                // Extract pattern ID
+                $pattern_id = '';
+                if (preg_match('/id=["\']([^"\']+)["\']/', $pattern_attrs, $id_match)) {
+                    $pattern_id = $id_match[1];
+                }
+                
+                // Process image elements in pattern
+                $pattern_content = preg_replace_callback(
+                    '/<image([^>]*)>/i',
+                    function($img_matches) use ($pattern_id, $order_id) {
+                        $img_attrs = $img_matches[1];
+                        
+                        // Check if image already has data URI
+                        if (preg_match('/(?:href|xlink:href)=["\']data:image\/(png|jpeg|jpg);base64,([^"\']+)["\']/i', $img_attrs, $data_match)) {
+                            // Already embedded - verify format
+                            $format = strtolower($data_match[1]);
+                            error_log("APD Process Pattern Images PDF - Order #$order_id: Pattern $pattern_id already has embedded $format image");
+                            return $img_matches[0];
+                        }
+                        
+                        // Check if image has external URL
+                        if (preg_match('/(?:href|xlink:href)=["\']([^"\']+)["\']/', $img_attrs, $url_match)) {
+                            $image_url = $url_match[1];
+                            
+                            // Try to fetch and convert to data URI
+                            if (strpos($image_url, 'http') === 0 || strpos($image_url, '/') === 0) {
+                                $upload_dir = wp_upload_dir();
+                                $image_path = '';
+                                
+                                // Check if it's a local file
+                                if (strpos($image_url, $upload_dir['url']) === 0) {
+                                    $image_path = str_replace($upload_dir['url'], $upload_dir['path'], $image_url);
+                                } elseif (strpos($image_url, '/') === 0) {
+                                    $image_path = ABSPATH . ltrim($image_url, '/');
+                                }
+                                
+                                if ($image_path && file_exists($image_path)) {
+                                    $image_data = file_get_contents($image_path);
+                                    $image_info = getimagesize($image_path);
+                                    $mime_type = $image_info ? $image_info['mime'] : 'image/png';
+                                    $base64_data = base64_encode($image_data);
+                                    $data_uri = 'data:' . $mime_type . ';base64,' . $base64_data;
+                                    
+                                    // Replace URL with data URI
+                                    $new_attrs = preg_replace(
+                                        '/(?:href|xlink:href)=["\'][^"\']*["\']/',
+                                        'href="' . $data_uri . '" xlink:href="' . $data_uri . '"',
+                                        $img_attrs
+                                    );
+                                    
+                                    error_log("APD Process Pattern Images PDF - Order #$order_id: Converted pattern $pattern_id image to embedded data URI");
+                                    return '<image' . $new_attrs . '>';
+                                } else {
+                                    // Try to fetch via HTTP
+                                    $response = wp_remote_get($image_url);
+                                    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                                        $image_data = wp_remote_retrieve_body($response);
+                                        $headers = wp_remote_retrieve_headers($response);
+                                        $content_type = isset($headers['content-type']) ? $headers['content-type'] : 'image/png';
+                                        $base64_data = base64_encode($image_data);
+                                        $data_uri = 'data:' . $content_type . ';base64,' . $base64_data;
+                                        
+                                        $new_attrs = preg_replace(
+                                            '/(?:href|xlink:href)=["\'][^"\']*["\']/',
+                                            'href="' . $data_uri . '" xlink:href="' . $data_uri . '"',
+                                            $img_attrs
+                                        );
+                                        
+                                        error_log("APD Process Pattern Images PDF - Order #$order_id: Fetched and embedded pattern $pattern_id image");
+                                        return '<image' . $new_attrs . '>';
+                                    }
+                                }
+                            }
+                        }
+                        
+                        return $img_matches[0];
+                    },
+                    $pattern_content
+                );
+                
+                // Ensure pattern units are correct
+                $pattern_attrs_new = $pattern_attrs;
+                if (!preg_match('/patternUnits=/i', $pattern_attrs_new)) {
+                    $pattern_attrs_new .= ' patternUnits="userSpaceOnUse"';
+                }
+                if (!preg_match('/patternContentUnits=/i', $pattern_attrs_new)) {
+                    $pattern_attrs_new .= ' patternContentUnits="userSpaceOnUse"';
+                }
+                
+                return '<pattern' . $pattern_attrs_new . '>' . $pattern_content . '</pattern>';
+            },
+            $svg_content
+        );
+        
+        // Verify pattern images
+        $embedded_images = preg_match_all('/data:image\/(png|jpeg|jpg);base64/i', $svg_content);
+        error_log("APD Process Pattern Images PDF - Order #$order_id: After processing - $embedded_images embedded pattern images");
+        
+        return $svg_content;
     }
 }
