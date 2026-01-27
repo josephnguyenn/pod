@@ -3250,7 +3250,60 @@ class APD_SVG_Processor
         // This ensures custom text material outline is not lost during material outline processing
         error_log("APD PDF Compatible NEW - Order #$order_id: Preserving custom text pattern fills before material outline...");
         $custom_text_pattern_fills_before = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        $custom_text_pattern_strokes_before = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
         error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern fills before material outline: $custom_text_pattern_fills_before");
+        error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern strokes before material outline: $custom_text_pattern_strokes_before");
+        
+        // CRITICAL: Add pattern STROKES to custom text paths if they only have fills
+        // This ensures custom text paths can be converted via stroke-to-path like logo
+        if ($custom_text_pattern_fills_before > 0 && $custom_text_pattern_strokes_before === 0) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Custom text paths have fills but no strokes - adding strokes for stroke-to-path conversion...");
+            
+            $paths_with_strokes_added = 0;
+            $svg_content = preg_replace_callback(
+                '/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*)>/i',
+                function($matches) use (&$paths_with_strokes_added, $order_id) {
+                    $attrs = $matches[1];
+                    
+                    // Skip if already has pattern stroke
+                    if (preg_match('/stroke=["\']url\(#apdTextPattern\)["\']/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Add pattern stroke for stroke-to-path conversion
+                    $new_attrs = $attrs;
+                    $new_attrs .= ' stroke="url(#apdTextPattern)"';
+                    
+                    // Add stroke attributes if not present
+                    if (!preg_match('/stroke-width=/i', $attrs)) {
+                        $new_attrs .= ' stroke-width="24"'; // Default stroke width
+                    }
+                    if (!preg_match('/stroke-linejoin=/i', $attrs)) {
+                        $new_attrs .= ' stroke-linejoin="round"';
+                    }
+                    if (!preg_match('/stroke-linecap=/i', $attrs)) {
+                        $new_attrs .= ' stroke-linecap="round"';
+                    }
+                    if (!preg_match('/paint-order=/i', $attrs)) {
+                        $new_attrs .= ' paint-order="stroke fill"';
+                    }
+                    
+                    $paths_with_strokes_added++;
+                    error_log("APD PDF Compatible NEW - Order #$order_id: Added pattern stroke to custom text path #$paths_with_strokes_added");
+                    
+                    return '<path' . $new_attrs . '>';
+                },
+                $svg_content
+            );
+            
+            error_log("APD PDF Compatible NEW - Order #$order_id: Added pattern strokes to $paths_with_strokes_added custom text paths");
+            
+            // Verify strokes were added
+            $custom_text_strokes_after = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+            if ($custom_text_strokes_after > 0) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text paths now have pattern strokes - will be converted via stroke-to-path");
+            }
+        }
         
         // Backup paths with apdTextPattern fills
         $custom_text_paths_backup = array();
@@ -3263,6 +3316,20 @@ class APD_SVG_Processor
         
         // STEP 7: Apply material outline to curves
         error_log("APD PDF Compatible NEW - Order #$order_id: Applying material outline to curves...");
+        
+        // Verify custom text paths have pattern strokes before applying material outline
+        $custom_text_strokes_before = preg_match_all('/<path([^>]*stroke=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content);
+        $logo_strokes_before = preg_match_all('/<path([^>]*stroke=["\']url\(#logoMaterialPattern\)["\'][^>]*)>/i', $svg_content);
+        error_log("APD PDF Compatible NEW - Order #$order_id: Before material outline:");
+        error_log("  - Custom text paths with apdTextPattern stroke: $custom_text_strokes_before");
+        error_log("  - Logo paths with logoMaterialPattern stroke: $logo_strokes_before");
+        
+        if ($custom_text_strokes_before > 0) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text paths have pattern strokes - will be converted via stroke-to-path");
+        } else {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text paths don't have pattern strokes - may not get material outline");
+        }
+        
         $svg_before_outline = $svg_content; // Backup
         try {
             $outline_result = $this->apply_material_outline_to_curves($svg_content, $order_id);
@@ -3281,9 +3348,23 @@ class APD_SVG_Processor
         
         // STEP 7.5: Restore custom text pattern fills if they were lost
         $custom_text_pattern_fills_after = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        $custom_text_pattern_strokes_after = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
         error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern fills after material outline: $custom_text_pattern_fills_after");
+        error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern strokes after material outline: $custom_text_pattern_strokes_after");
         
-        if ($custom_text_pattern_fills_before > 0 && $custom_text_pattern_fills_after === 0) {
+        // Check if custom text was successfully converted via stroke-to-path
+        // After stroke-to-path, strokes should be converted to fills on expanded paths
+        // So we should have MORE fills than before (expanded outline paths + original fill paths)
+        $custom_text_paths_after = preg_match_all('/<path([^>]*)/i', $svg_content);
+        $custom_text_paths_with_apd_pattern = preg_match_all('/<path([^>]*(?:fill|stroke)=["\']url\(#apdTextPattern\)["\'][^>]*)/i', $svg_content);
+        
+        error_log("APD PDF Compatible NEW - Order #$order_id: Custom text paths analysis:");
+        error_log("  - Total paths: $custom_text_paths_after");
+        error_log("  - Paths with apdTextPattern (fill or stroke): $custom_text_paths_with_apd_pattern");
+        
+        // If custom text was converted via stroke-to-path, we should have expanded paths
+        // Don't restore if we already have paths with apdTextPattern (they were converted)
+        if ($custom_text_pattern_fills_before > 0 && $custom_text_pattern_fills_after === 0 && $custom_text_paths_with_apd_pattern === 0) {
             error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Custom text pattern fills were lost, attempting to restore...");
             
             // Try to restore by finding paths that might be from custom text and applying apdTextPattern
@@ -3305,11 +3386,43 @@ class APD_SVG_Processor
                     }
                     
                     // Apply apdTextPattern to paths without fills (likely from custom text)
+                    // CRITICAL: Add BOTH pattern stroke AND fill
+                    // Stroke is needed for stroke-to-path conversion to create expanded outline paths
+                    // Fill is needed for the actual pattern display
                     // Only apply to first few paths to avoid over-applying
                     if ($paths_restored < 5) {
-                        $new_attrs = $attrs . ' fill="url(#apdTextPattern)"';
+                        $new_attrs = $attrs;
+                        
+                        // Add pattern fill if not present
+                        if (!preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                            $new_attrs .= ' fill="url(#apdTextPattern)"';
+                        } else {
+                            // Replace existing fill with apdTextPattern
+                            $new_attrs = preg_replace('/fill=["\'][^"\']*["\']/', 'fill="url(#apdTextPattern)"', $new_attrs);
+                        }
+                        
+                        // CRITICAL: Add pattern STROKE for stroke-to-path conversion
+                        // This ensures custom text paths get expanded outline paths like logo
+                        if (!preg_match('/stroke=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                            $new_attrs .= ' stroke="url(#apdTextPattern)"';
+                            // Add stroke-width for material outline thickness (same as logo default)
+                            if (!preg_match('/stroke-width=/i', $attrs)) {
+                                $new_attrs .= ' stroke-width="24"'; // Default stroke width for material outline
+                            }
+                            // Add stroke attributes for proper rendering
+                            if (!preg_match('/stroke-linejoin=/i', $attrs)) {
+                                $new_attrs .= ' stroke-linejoin="round"';
+                            }
+                            if (!preg_match('/stroke-linecap=/i', $attrs)) {
+                                $new_attrs .= ' stroke-linecap="round"';
+                            }
+                            if (!preg_match('/paint-order=/i', $attrs)) {
+                                $new_attrs .= ' paint-order="stroke fill"';
+                            }
+                        }
+                        
                         $paths_restored++;
-                        error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern fill to path #$paths_restored");
+                        error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern fill AND stroke to path #$paths_restored (for stroke-to-path conversion)");
                         return '<path' . $new_attrs . '>';
                     }
                     
@@ -3321,7 +3434,44 @@ class APD_SVG_Processor
             
             error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern to $paths_restored paths");
             
-            // STEP 7.5.1: Apply mask creation for restored custom text paths
+            // Verify custom text paths now have pattern strokes for stroke-to-path conversion
+            $custom_text_strokes_after_restore = preg_match_all('/<path([^>]*stroke=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content);
+            error_log("APD PDF Compatible NEW - Order #$order_id: Custom text paths with apdTextPattern stroke: $custom_text_strokes_after_restore");
+            
+            if ($custom_text_strokes_after_restore > 0) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text paths now have pattern strokes - will be converted via stroke-to-path");
+            } else {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text paths may not have pattern strokes");
+            }
+            
+            // STEP 7.5.1: Apply material outline AGAIN for restored custom text paths with strokes
+            // This ensures custom text paths get stroke-to-path conversion like logo
+            if ($paths_restored > 0 && $custom_text_strokes_after_restore > 0) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: Applying material outline (stroke-to-path) for restored custom text paths...");
+                try {
+                    // Apply material outline processing again to convert custom text strokes to expanded paths
+                    // This creates expanded outline paths with pattern fills (material outline effect)
+                    $svg_content = $this->apply_material_outline_to_curves($svg_content, $order_id);
+                    
+                    // Verify custom text was converted
+                    $custom_text_fills_after_outline = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+                    $custom_text_strokes_after_outline = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+                    
+                    error_log("APD PDF Compatible NEW - Order #$order_id: After material outline for restored custom text:");
+                    error_log("  - Custom text pattern fills: $custom_text_fills_after_outline");
+                    error_log("  - Custom text pattern strokes: $custom_text_strokes_after_outline");
+                    
+                    if ($custom_text_fills_after_outline > $custom_text_pattern_fills_after) {
+                        error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Custom text paths converted via stroke-to-path (expanded outline paths created)");
+                    } else {
+                        error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ WARNING - Custom text stroke-to-path conversion may have failed");
+                    }
+                } catch (Exception $e) {
+                    error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception applying material outline to restored custom text: " . $e->getMessage());
+                }
+            }
+            
+            // STEP 7.5.2: Apply mask creation for restored custom text paths
             // This ensures custom text paths get masks just like logo paths
             if ($paths_restored > 0) {
                 error_log("APD PDF Compatible NEW - Order #$order_id: Applying mask creation for restored custom text paths...");
@@ -3645,9 +3795,17 @@ class APD_SVG_Processor
             $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
             $pattern_strokes_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content);
             
-            error_log("APD Apply Material Outline NEW - Order #$order_id: After conversion:");
+            // Verify custom text paths were converted
+            $custom_text_fills_after = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
+            $custom_text_strokes_after = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
+            $logo_fills_after = preg_match_all('/fill=["\']url\(#logoMaterialPattern\)["\']/i', $converted_content);
+            
+            error_log("APD Apply Material Outline NEW - Order #$order_id: After stroke-to-path conversion:");
             error_log("  - Pattern fills: $pattern_fills_after (was $pattern_fills)");
             error_log("  - Pattern strokes: $pattern_strokes_after (was $pattern_strokes)");
+            error_log("  - Custom text (apdTextPattern) fills: $custom_text_fills_after");
+            error_log("  - Custom text (apdTextPattern) strokes: $custom_text_strokes_after");
+            error_log("  - Logo (logoMaterialPattern) fills: $logo_fills_after");
             
             if ($pattern_fills_after > $pattern_fills) {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ SUCCESS - Material outline applied as fills");
