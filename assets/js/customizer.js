@@ -1939,9 +1939,16 @@ jQuery(document).ready(function($) {
                 if (cachedTemplateData && cachedTemplateData.elements) {
                     const logoElement = cachedTemplateData.elements.find(el => el.type === 'logo');
                     if (logoElement && logoElement.properties && logoElement.properties.logoStrokeWidth !== undefined) {
-                        width = logoElement.properties.logoStrokeWidth;
+                        const templateWidth = Number(logoElement.properties.logoStrokeWidth);
+                        // Only use template width if it's > 0, otherwise keep default
+                        if (templateWidth > 0) {
+                            width = templateWidth;
+                        }
                     }
                 }
+                
+                // Ensure minimum width for visibility
+                width = Math.max(width, 2);
                 
                 console.log('🎨 Logo outline width:', width, '(from template or default)');
                 
