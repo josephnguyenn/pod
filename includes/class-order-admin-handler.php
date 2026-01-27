@@ -942,13 +942,33 @@ class APD_Order_Admin_Handler
                 // Verify conversion
                 const textCountAfter = svgElement.querySelectorAll('text').length;
                 const pathCountAfter = svgElement.querySelectorAll('path').length;
+                const maskCountAfter = svgElement.querySelectorAll('mask').length;
+                const maskRefsAfter = (svgContent.match(/mask=["\']url\(#[^)]+\)["\']/g) || []).length;
+                const patternFillsAfter = (svgContent.match(/fill=["\']url\(#[^)]+\)["\']/g) || []).length;
+                
                 console.log('📄 Conversion verification:');
                 console.log('  - Text elements remaining:', textCountAfter);
                 console.log('  - Path elements created:', pathCountAfter);
+                console.log('  - SVG masks created:', maskCountAfter);
+                console.log('  - Mask references:', maskRefsAfter);
+                console.log('  - Pattern fills (CorelDRAW compatible):', patternFillsAfter);
+                
                 if (textCountAfter === 0) {
                     console.log('📄 ✅ All text converted to curves!');
                 } else {
                     console.log('📄 ⚠️ Some text elements were not converted');
+                }
+                
+                // Verify masks are ready for PDF export
+                if (maskCountAfter > 0 && maskRefsAfter > 0 && patternFillsAfter > 0) {
+                    console.log('📄 ✅ Masks and pattern fills are ready for PDF export');
+                    console.log('📄 ✅ Material outline will be visible in CorelDRAW (mask-based approach)');
+                } else if (maskCountAfter > 0 && maskRefsAfter === 0) {
+                    console.warn('📄 ⚠️ WARNING: Masks created but no mask references found');
+                    console.warn('📄 ⚠️ Mask-based material outline may not work');
+                } else if (maskCountAfter === 0 && patternFillsAfter > 0) {
+                    console.warn('📄 ⚠️ WARNING: Pattern fills found but no masks created');
+                    console.warn('📄 ⚠️ Material outline may not display correctly in CorelDRAW');
                 }
                 
                 // Get SVG dimensions
@@ -1119,6 +1139,62 @@ class APD_Order_Admin_Handler
                 console.log('📄 Pattern ' + (idx + 1) + ' (id=' + pat.getAttribute('id') + '): ' + images.length + ' image(s)');
             });
             
+            // STEP 0: Detect and preserve custom text material outline patterns
+            // This ensures custom text (text without pattern stroke) gets material outline applied
+            console.log('📄 Detecting custom text elements and ensuring material outline patterns...');
+            
+            // Find apdTextPattern - the pattern used for custom text material outline
+            let apdTextPattern = defs.querySelector('pattern#apdTextPattern');
+            const hasApdTextPattern = apdTextPattern !== null;
+            
+            // Verify pattern has image (PNG/JPEG) - required for material outline
+            let apdTextPatternHasImage = false;
+            if (apdTextPattern) {
+                const patternImages = apdTextPattern.querySelectorAll('image');
+                apdTextPatternHasImage = patternImages.length > 0;
+                if (apdTextPatternHasImage) {
+                    patternImages.forEach(function(img, idx) {
+                        const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+                        const isDataUri = href && (href.indexOf('data:image/') === 0 || href.indexOf('data:image/png') === 0 || href.indexOf('data:image/jpeg') === 0);
+                        console.log('📄 apdTextPattern image ' + (idx + 1) + ': ' + (isDataUri ? 'data URI (embedded)' : 'URL: ' + (href ? href.substring(0, 50) + '...' : 'none')));
+                    });
+                } else {
+                    console.warn('📄 ⚠️ apdTextPattern exists but has no image elements - material outline may not work');
+                }
+            }
+            
+            // Count text elements with and without pattern strokes
+            let textWithPattern = 0;
+            let textWithoutPattern = 0;
+            textElements.forEach(function(textEl) {
+                const stroke = textEl.getAttribute('stroke') || 'none';
+                if (stroke && stroke.indexOf('url(#') !== -1) {
+                    textWithPattern++;
+                } else {
+                    textWithoutPattern++;
+                }
+            });
+            
+            console.log('📄 Text elements analysis:');
+            console.log('  - Text with pattern stroke: ' + textWithPattern);
+            console.log('  - Text without pattern stroke: ' + textWithoutPattern);
+            console.log('  - apdTextPattern exists: ' + hasApdTextPattern);
+            console.log('  - apdTextPattern has image: ' + apdTextPatternHasImage);
+            
+            // If we have text without pattern but apdTextPattern exists with image, we should apply it
+            // This handles custom text that was added to the file but doesn't have material outline yet
+            if (textWithoutPattern > 0 && hasApdTextPattern && apdTextPatternHasImage) {
+                console.log('📄 ✅ Found ' + textWithoutPattern + ' text elements without pattern stroke');
+                console.log('📄 ✅ apdTextPattern is available with image - will apply to custom text elements');
+            } else if (textWithoutPattern > 0 && !hasApdTextPattern) {
+                console.warn('📄 ⚠️ Found ' + textWithoutPattern + ' text elements without pattern stroke');
+                console.warn('📄 ⚠️ apdTextPattern not found in SVG - custom text material outline cannot be applied');
+                console.warn('📄 💡 Custom text may not have material outline in exported PDF');
+            } else if (textWithoutPattern > 0 && hasApdTextPattern && !apdTextPatternHasImage) {
+                console.warn('📄 ⚠️ Found ' + textWithoutPattern + ' text elements without pattern stroke');
+                console.warn('📄 ⚠️ apdTextPattern exists but has no image - material outline may not work');
+            }
+            
             // Step 1: Extract font data from SVG @font-face
             const fontCache = new Map();
             const styleElements = svgElement.querySelectorAll('style');
@@ -1172,8 +1248,8 @@ class APD_Order_Admin_Handler
                     
                     // Get text properties
                     const fill = textEl.getAttribute('fill') || '#000000';
-                    const stroke = textEl.getAttribute('stroke') || 'none';
-                    const strokeWidth = parseFloat(textEl.getAttribute('stroke-width') || '0');
+                    let stroke = textEl.getAttribute('stroke') || 'none';
+                    let strokeWidth = parseFloat(textEl.getAttribute('stroke-width') || '0');
                     const strokeLinejoin = textEl.getAttribute('stroke-linejoin') || 'round';
                     const strokeLinecap = textEl.getAttribute('stroke-linecap') || 'round';
                     const paintOrder = textEl.getAttribute('paint-order') || 'stroke fill';
@@ -1185,6 +1261,47 @@ class APD_Order_Admin_Handler
                     const textAnchor = textEl.getAttribute('text-anchor') || 'start';
                     const dominantBaseline = textEl.getAttribute('dominant-baseline') || 'auto';
                     const transform = textEl.getAttribute('transform') || '';
+                    
+                    // CUSTOM TEXT FIX: If text doesn't have pattern stroke but apdTextPattern exists with image,
+                    // apply it to ensure custom text gets material outline
+                    // This handles the case where custom text was added to file but doesn't have material outline
+                    const textContent = (textEl.textContent || textEl.innerText || '').trim();
+                    
+                    if ((stroke === 'none' || !stroke || stroke.indexOf('url(#') === -1) && hasApdTextPattern && apdTextPatternHasImage) {
+                        // Check if this might be custom text that should have material outline
+                        // Look for clues: text content, position, or other attributes
+                        
+                        // If text has meaningful content and no pattern, it might be custom text
+                        // Apply apdTextPattern if available with image
+                        if (textContent.length > 0) {
+                            console.log('📄 🔧 Custom text detected (no pattern stroke): "' + textContent.substring(0, 20) + (textContent.length > 20 ? '...' : '') + '"');
+                            console.log('📄 🔧 Applying apdTextPattern for material outline...');
+                            
+                            stroke = 'url(#apdTextPattern)';
+                            // Use default stroke width if not specified
+                            if (strokeWidth === 0 || !strokeWidth) {
+                                strokeWidth = 24; // Default stroke width for material outline
+                            }
+                            
+                            // Update text element attributes
+                            textEl.setAttribute('stroke', stroke);
+                            textEl.setAttribute('stroke-width', String(strokeWidth));
+                            textEl.setAttribute('stroke-linejoin', strokeLinejoin);
+                            textEl.setAttribute('stroke-linecap', strokeLinecap);
+                            textEl.setAttribute('paint-order', paintOrder);
+                            
+                            console.log('📄 ✅ Applied apdTextPattern to custom text element (stroke-width: ' + strokeWidth + ')');
+                        }
+                    } else if ((stroke === 'none' || !stroke || stroke.indexOf('url(#') === -1) && textContent && textContent.length > 0) {
+                        // Text without pattern but apdTextPattern not available
+                        // Log for debugging but don't apply (would fail anyway)
+                        console.log('📄 ⚠️ Custom text without pattern stroke: "' + textContent.substring(0, 20) + (textContent.length > 20 ? '...' : '') + '"');
+                        if (!hasApdTextPattern) {
+                            console.log('📄 ⚠️ apdTextPattern not found in SVG - material outline will not be applied');
+                        } else if (!apdTextPatternHasImage) {
+                            console.log('📄 ⚠️ apdTextPattern exists but has no image - material outline may not work');
+                        }
+                    }
                     
                     // Get parent for replacement
                     const parent = textEl.parentNode;
@@ -1467,6 +1584,11 @@ class APD_Order_Admin_Handler
                 const maskCount = svgElement.querySelectorAll('mask').length;
                 const scaledPaths = svgElement.querySelectorAll('path[mask][fill*="url(#"]').length;
                 
+                // Verify apdTextPattern specifically (for custom text)
+                const apdTextPatternAfter = svgElement.querySelector('defs pattern#apdTextPattern');
+                const apdTextPatternImagesAfter = apdTextPatternAfter ? apdTextPatternAfter.querySelectorAll('image').length : 0;
+                const apdTextPatternFills = (new XMLSerializer().serializeToString(svgElement).match(/fill=["\']url\(#apdTextPattern\)["\']/g) || []).length;
+                
                 console.log('📄 Pattern verification (Per-character scaling - không bị lệch):');
                 console.log('  - Pattern definitions:', patternCount);
                 console.log('  - Pattern images (PNG/JPEG):', patternImages);
@@ -1474,6 +1596,9 @@ class APD_Order_Admin_Handler
                 console.log('  - Pattern FILLS (CorelDRAW compatible):', patternFills);
                 console.log('  - SVG masks created:', maskCount);
                 console.log('  - Per-character scaled paths:', scaledPaths);
+                console.log('  - apdTextPattern exists:', apdTextPatternAfter !== null);
+                console.log('  - apdTextPattern images:', apdTextPatternImagesAfter);
+                console.log('  - apdTextPattern fills:', apdTextPatternFills);
                 
                 if (patternRefs > 0 && patternImages > 0 && patternFills > 0 && maskCount > 0 && scaledPaths > 0) {
                     console.log('📄 ✅ Material outline patterns are preserved as FILLS on per-character scaled paths');
@@ -1483,6 +1608,18 @@ class APD_Order_Admin_Handler
                     console.log('📄 ✅ CorelDRAW WILL display material outline correctly in PDF');
                     console.log('📄 ✅ No Inkscape required - pure JavaScript solution!');
                     console.log('📄 ✅ Pattern-filled paths work in PDF format (unlike pattern-stroked paths)');
+                    
+                    // Custom text verification
+                    if (apdTextPatternAfter && apdTextPatternImagesAfter > 0 && apdTextPatternFills > 0) {
+                        console.log('📄 ✅ Custom text material outline (apdTextPattern) is preserved and applied');
+                        console.log('📄 ✅ Custom text will display material outline in CorelDRAW');
+                    } else if (apdTextPatternAfter && apdTextPatternImagesAfter > 0 && apdTextPatternFills === 0) {
+                        console.warn('📄 ⚠️ WARNING: apdTextPattern exists with image but no fills found');
+                        console.warn('📄 ⚠️ Custom text material outline may not be applied to converted paths');
+                    } else if (!apdTextPatternAfter && textWithoutPattern > 0) {
+                        console.warn('📄 ⚠️ WARNING: Custom text elements found but apdTextPattern not in SVG');
+                        console.warn('📄 ⚠️ Custom text material outline cannot be applied');
+                    }
                 } else if (patternRefs > 0 && patternImages === 0) {
                     console.warn('📄 ⚠️ WARNING: Pattern references found but no PNG/JPEG images in patterns!');
                     console.warn('📄 ⚠️ Material outlines may be lost - patterns need image elements');
@@ -1501,6 +1638,11 @@ class APD_Order_Admin_Handler
                 console.warn('  - opentype.js library not loaded');
                 console.warn('  - Font format not supported');
                 console.warn('📄 Text elements will remain as text (not curves)');
+                
+                // Even if no conversion, check if custom text has patterns
+                if (textWithoutPattern > 0) {
+                    console.warn('📄 ⚠️ Custom text elements without pattern stroke will not have material outline');
+                }
             }
         }
 
