@@ -37,8 +37,8 @@ jQuery(document).ready(function($) {
         _updatePreviewTimeout: null,
         _outlineApplyScheduled: false,
         _lastTextOutline: { url: null, width: null },
-        fixedLogoOutlineWidth: 4,
-        fixedTextOutlineWidth: 4,
+        fixedLogoOutlineWidth: 6,
+        fixedTextOutlineWidth: 6,
         _base64ConversionStats: { total: 0, converted: 0, failed: 0 },
 
         // Function to update checkout preview with materials
@@ -1580,7 +1580,7 @@ jQuery(document).ready(function($) {
                     const weight = (el.properties && el.properties.fontWeight) || 'bold';
                     
                     // Get stroke width from template data
-                    let originalOutline = Number($('#fsc-text-outline-width').val()) || (FSC.fixedTextOutlineWidth || 4);
+                    let originalOutline = Number($('#fsc-text-outline-width').val()) || (FSC.fixedTextOutlineWidth || 6);
                     if (el.properties && el.properties.textStrokeWidth !== undefined) {
                         originalOutline = el.properties.textStrokeWidth;
                     }
@@ -1695,7 +1695,7 @@ jQuery(document).ready(function($) {
                         const pid = matUrl ? ensureTextPattern(svgEl, matUrl) : null;
                         
                         // Get stroke width from template data
-                        let originalWidth = Math.max(2, Number(FSC.fixedTextOutlineWidth || 4));
+                        let originalWidth = Math.max(2, Number(FSC.fixedTextOutlineWidth || 6));
                         if (el.properties && el.properties.textStrokeWidth !== undefined) {
                             originalWidth = el.properties.textStrokeWidth;
                         }
@@ -1933,8 +1933,8 @@ jQuery(document).ready(function($) {
                     return;
                 }
                 
-                // Get stroke width from template data - default 4px for better visibility
-                let width = Math.max(2, Number(FSC.fixedLogoOutlineWidth || 4));
+                // Get stroke width from template data - default 6px for better visibility
+                let width = Math.max(2, Number(FSC.fixedLogoOutlineWidth || 6));
                 const cachedTemplateData = FSC._cachedTemplateData;
                 if (cachedTemplateData && cachedTemplateData.elements) {
                     const logoElement = cachedTemplateData.elements.find(el => el.type === 'logo');
@@ -2052,7 +2052,7 @@ jQuery(document).ready(function($) {
                 console.log('🎨 Text - Resolved material URL:', matUrl);
                 
                 // Get stroke width from template data
-                let width = Math.max(2, Number(FSC.fixedTextOutlineWidth || 4));
+                let width = Math.max(2, Number(FSC.fixedTextOutlineWidth || 6));
                 const cachedTemplateData = FSC._cachedTemplateData;
                 if (cachedTemplateData && cachedTemplateData.elements) {
                     const textElement = cachedTemplateData.elements.find(el => el.type === 'text');
