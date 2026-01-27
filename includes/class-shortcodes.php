@@ -726,7 +726,7 @@ class APD_Shortcodes
                                     <div class="apd-related-grid">
                                         <?php foreach ($related_products as $related): ?>
                                             <div class="apd-related-item">
-                                                <a href="<?php echo home_url('/product-detail/?id=' . $related->ID); ?>">
+                                                <a href="<?php echo esc_url(APD_Helpers::get_product_detail_url($related->ID)); ?>">
                                                     <?php if (has_post_thumbnail($related->ID)): ?>
                                                         <?php echo get_the_post_thumbnail($related->ID, 'medium'); ?>
                                                     <?php else: ?>

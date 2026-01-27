@@ -103,7 +103,7 @@ $items_per_page = -1;
                                 
                                 <?php if ($show_title): ?>
                                     <h3 class="apd-product-title">
-                                        <a href="<?php echo esc_url(home_url('/product-detail/?id=' . $product['id'])); ?>">
+                                        <a href="<?php echo esc_url(APD_Helpers::get_product_detail_url($product['id'])); ?>">
                                             <?php echo esc_html($product['title']); ?>
                                         </a>
                                     </h3>
@@ -686,7 +686,16 @@ $items_per_page = -1;
             return;
         }
         const productId = $(this).data('product-id');
-        window.location.href = `<?php echo home_url(); ?>/product-detail/?id=${productId}`;
+        const productDetailBaseUrl = '<?php 
+            $page_id = intval(get_option('apd_product_detail'));
+            if ($page_id) {
+                echo esc_js(get_permalink($page_id));
+            } else {
+                echo esc_js(home_url('/product-detail/'));
+            }
+        ?>';
+        const separator = productDetailBaseUrl.indexOf('?') !== -1 ? '&' : '?';
+        window.location.href = productDetailBaseUrl + separator + 'id=' + productId;
     });
 
     // --- CARD TEMPLATE PREVIEW ---

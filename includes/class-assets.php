@@ -235,6 +235,12 @@ class APD_Assets
         ));
 
         // Prepare apd_ajax data
+        $product_detail_page_id = intval(get_option('apd_product_detail'));
+        $product_detail_base_url = $product_detail_page_id ? get_permalink($product_detail_page_id) : home_url('/product-detail/');
+        
+        $customizer_page_id = intval(get_option('apd_customizer'));
+        $customizer_base_url = $customizer_page_id ? get_permalink($customizer_page_id) : home_url('/customizer/');
+        
         $apd_ajax_data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('apd_ajax_nonce'),
@@ -243,7 +249,10 @@ class APD_Assets
             'checkout_url' => home_url(get_option('apd_checkout_url', '/checkout/')),
             'products_url' => home_url(get_option('apd_products_url', '/products/')),
             'orders_url' => home_url(get_option('apd_orders_url', '/my-orders/')),
-            'customizer_url' => home_url(get_option('apd_customizer_url', '/customizer/')),
+            'customizer_url' => $customizer_base_url,
+            'customizer_base_url' => $customizer_base_url,
+            'product_detail_url' => $product_detail_base_url,
+            'product_detail_base_url' => $product_detail_base_url,
             'thank_you_url' => home_url(get_option('apd_thank_you_url', '/thank-you/'))
         );
         

@@ -1246,6 +1246,12 @@ class APD_Meta_Boxes
         ));
 
         // Prepare apd_ajax data
+        $product_detail_page_id = intval(get_option('apd_product_detail'));
+        $product_detail_base_url = $product_detail_page_id ? get_permalink($product_detail_page_id) : home_url('/product-detail/');
+        
+        $customizer_page_id = intval(get_option('apd_customizer'));
+        $customizer_base_url = $customizer_page_id ? get_permalink($customizer_page_id) : home_url('/customizer/');
+        
         $apd_ajax_data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('apd_ajax_nonce'),
@@ -1254,7 +1260,10 @@ class APD_Meta_Boxes
             'checkout_url' => home_url(get_option('apd_checkout_url', '/checkout/')),
             'products_url' => home_url(get_option('apd_products_url', '/products/')),
             'orders_url' => home_url(get_option('apd_orders_url', '/my-orders/')),
-            'customizer_url' => home_url(get_option('apd_customizer_url', '/customizer/')),
+            'customizer_url' => $customizer_base_url,
+            'customizer_base_url' => $customizer_base_url,
+            'product_detail_url' => $product_detail_base_url,
+            'product_detail_base_url' => $product_detail_base_url,
             'thank_you_url' => home_url(get_option('apd_thank_you_url', '/thank-you/'))
         );
         
@@ -2206,6 +2215,12 @@ class APD_Meta_Boxes
                 'content' => '[apd_product_detail]',
                 'template' => 'templates/page-product-detail.php'
             ),
+            'apd_customizer' => array(
+                'title' => 'Customizer',
+                'slug' => 'customizer',
+                'content' => '[apd_customizer]',
+                'template' => 'templates/page-customizer.php'
+            ),
         );
         
         foreach ($pages as $opt_key => $def) {
@@ -2285,6 +2300,7 @@ class APD_Meta_Boxes
             get_option('apd_orders') => 'my-orders',
             get_option('apd_product_list') => 'product',
             get_option('apd_product_detail') => 'product-detail',
+            get_option('apd_customizer') => 'customizer',
         );
         
         $missing = false;
@@ -2548,7 +2564,7 @@ class APD_Meta_Boxes
                                     <div class="apd-related-grid">
                                         <?php foreach ($related_products as $related): ?>
                                             <div class="apd-related-item">
-                                                <a href="<?php echo home_url('/product-detail/?id=' . $related->ID); ?>">
+                                                <a href="<?php echo esc_url(APD_Helpers::get_product_detail_url($related->ID)); ?>">
                                                     <?php if (has_post_thumbnail($related->ID)): ?>
                                                         <?php echo get_the_post_thumbnail($related->ID, 'medium'); ?>
                                                     <?php else: ?>

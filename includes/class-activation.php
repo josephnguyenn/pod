@@ -195,6 +195,12 @@ class APD_Activation
                 'content' => '[apd_product_detail]',
                 'template' => 'templates/page-product-detail.php'
             ),
+            'apd_customizer' => array(
+                'title' => 'Customizer',
+                'slug' => 'customizer',
+                'content' => '[apd_customizer]',
+                'template' => 'templates/page-customizer.php'
+            ),
         );
 
         foreach ($pages as $opt_key => $def) {

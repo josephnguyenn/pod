@@ -214,4 +214,48 @@ class APD_Helpers
         $logo_path = $plugin_dir . 'uploads/object/Logo-PNG.svg';
         return self::get_processed_svg_content($logo_path);
     }
+
+    /**
+     * Get product detail page URL with product ID
+     * 
+     * @param int $product_id Product ID
+     * @return string Product detail URL
+     */
+    public static function get_product_detail_url($product_id)
+    {
+        $page_id = intval(get_option('apd_product_detail'));
+        if ($page_id) {
+            $url = get_permalink($page_id);
+            if ($url) {
+                // Add product ID as query parameter
+                $separator = (strpos($url, '?') !== false) ? '&' : '?';
+                return $url . $separator . 'id=' . intval($product_id);
+            }
+        }
+        
+        // Fallback to slug-based URL
+        return home_url('/product-detail/?id=' . intval($product_id));
+    }
+
+    /**
+     * Get customizer page URL with product ID
+     * 
+     * @param int $product_id Product ID
+     * @return string Customizer URL
+     */
+    public static function get_customizer_url($product_id)
+    {
+        $page_id = intval(get_option('apd_customizer'));
+        if ($page_id) {
+            $url = get_permalink($page_id);
+            if ($url) {
+                // Add product ID as query parameter
+                $separator = (strpos($url, '?') !== false) ? '&' : '?';
+                return $url . $separator . 'product_id=' . intval($product_id);
+            }
+        }
+        
+        // Fallback to slug-based URL
+        return home_url('/customizer/?product_id=' . intval($product_id));
+    }
 }

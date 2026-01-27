@@ -1422,7 +1422,7 @@
             }
             
             // Go to product detail page with Add to Cart, Customize, Checkout options
-            const productDetailUrl = `${apd_ajax.site_url}/product-detail/?id=${product.id}`;
+            const productDetailUrl = getProductUrl(product.id);
             window.location.href = productDetailUrl;
         });
 
@@ -1430,17 +1430,27 @@
         $block.find('.apd-customize-btn').on('click', function(e) {
             e.stopPropagation(); // Prevent product click
             const productId = $(this).data('product-id') || product.id;
-            // Go directly to customizer URL
-            const customizerUrl = `${apd_ajax.site_url}/customizer/${productId}/`;
+            // Go directly to customizer URL using page
+            let customizerBaseUrl = '';
+            if (apd_ajax && apd_ajax.customizer_base_url) {
+                customizerBaseUrl = apd_ajax.customizer_base_url;
+            } else if (apd_ajax && apd_ajax.customizer_url) {
+                customizerBaseUrl = apd_ajax.customizer_url;
+            } else {
+                customizerBaseUrl = (apd_ajax && apd_ajax.site_url) ? apd_ajax.site_url : window.location.origin;
+                customizerBaseUrl += '/customizer/';
+            }
+            const separator = customizerBaseUrl.indexOf('?') !== -1 ? '&' : '?';
+            const customizerUrl = `${customizerBaseUrl}${separator}product_id=${productId}`;
             window.location.href = customizerUrl;
         });
 
-        // View Details button click (secondary button) - goes to product detail page
+            // View Details button click (secondary button) - goes to product detail page
         $block.find('.apd-view-details-btn').on('click', function(e) {
             e.stopPropagation(); // Prevent product click
             const productId = $(this).data('product-id') || product.id;
             // Go to product detail page
-            const productDetailUrl = `${apd_ajax.site_url}/product-detail/?id=${productId}`;
+            const productDetailUrl = getProductUrl(productId);
             window.location.href = productDetailUrl;
         });
 
@@ -1448,7 +1458,7 @@
         $block.find('.apd-product-image').on('click', function(e) {
             e.stopPropagation(); // Prevent product click
             // Go to product detail page
-            const productDetailUrl = `${apd_ajax.site_url}/product-detail/?id=${product.id}`;
+            const productDetailUrl = getProductUrl(product.id);
             window.location.href = productDetailUrl;
         });
 
@@ -1491,10 +1501,22 @@
 
     function getProductUrl(productId) {
         // Helper function to generate product URL based on configuration
-        let baseUrl = apd_ajax && apd_ajax.site_url ? apd_ajax.site_url : window.location.origin;
+        let baseUrl = '';
         
-        // Use product detail page with all action options (Add to Cart, Customize, Checkout)
-        return `${baseUrl}/product-detail/?id=${productId}`;
+        // Use product detail page URL from apd_ajax if available
+        if (apd_ajax && apd_ajax.product_detail_base_url) {
+            baseUrl = apd_ajax.product_detail_base_url;
+        } else if (apd_ajax && apd_ajax.product_detail_url) {
+            baseUrl = apd_ajax.product_detail_url;
+        } else {
+            // Fallback to site_url
+            baseUrl = (apd_ajax && apd_ajax.site_url) ? apd_ajax.site_url : window.location.origin;
+            baseUrl += '/product-detail/';
+        }
+        
+        // Add product ID as query parameter
+        const separator = baseUrl.indexOf('?') !== -1 ? '&' : '?';
+        return `${baseUrl}${separator}id=${productId}`;
         
         // Alternative approaches:
         // 1. Customizer page directly: return `${baseUrl}/customizer/${productId}/`;
