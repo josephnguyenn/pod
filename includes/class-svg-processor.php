@@ -2899,50 +2899,30 @@ class APD_SVG_Processor
             error_log("APD Text to Path - Order #$order_id: Output file not created or empty");
         }
         
-        // If that fails, try alternative method for older Inkscape versions
+        // DISABLE Method 2 (PDF intermediate) as it loses all patterns and colors
+        // If Method 1 fails, we should return original SVG and let client-side handle it
         if (!$conversion_success) {
-            error_log("APD Text to Path - Order #$order_id: Method 1 failed, trying alternative method");
+            error_log("APD Text to Path - Order #$order_id: Method 1 failed");
+            error_log("APD Text to Path - Order #$order_id: Method 2 (PDF intermediate) is DISABLED because it loses patterns and colors");
+            error_log("APD Text to Path - Order #$order_id: Returning original SVG - client-side will handle conversion");
             
-            // Clean up failed attempt
+            // Clean up and return original SVG
+            unlink($temp_svg_input);
             if (file_exists($temp_svg_output)) {
                 unlink($temp_svg_output);
             }
-            
+            return $svg_content;
+        }
+        
+        /* DISABLED: Method 2 loses all patterns and colors
+        if (!$conversion_success) {
             // Alternative: Use --export-text-to-path with temporary PDF, then convert back to SVG
             // This works with older Inkscape versions
             $temp_pdf_intermediate = $upload_dir['path'] . '/temp-text-pdf-' . $order_id . '-' . time() . '.pdf';
             
-            $command2 = escapeshellarg($inkscape_path) . 
-                       ' --export-type=pdf' .
-                       ' --export-text-to-path' .
-                       ' --export-filename=' . escapeshellarg($temp_pdf_intermediate) .
-                       ' ' . escapeshellarg($temp_svg_input) . 
-                       ' 2>&1';
-            
-            $output2 = shell_exec($command2);
-            
-            if (file_exists($temp_pdf_intermediate) && filesize($temp_pdf_intermediate) > 0) {
-                // Convert PDF back to SVG (text is now paths)
-                $command3 = escapeshellarg($inkscape_path) . 
-                           ' --export-type=svg' .
-                           ' --export-filename=' . escapeshellarg($temp_svg_output) .
-                           ' ' . escapeshellarg($temp_pdf_intermediate) . 
-                           ' 2>&1';
-                
-                $output3 = shell_exec($command3);
-                
-                if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
-                    $converted_content = file_get_contents($temp_svg_output);
-                    $text_count_check = preg_match_all('/<text[^>]*>/i', $converted_content);
-                    if ($text_count_check < $text_count_before) {
-                        $conversion_success = true;
-                        error_log("APD Text to Path - Order #$order_id: Method 2 (PDF intermediate) succeeded");
-                    }
-                }
-                
-                unlink($temp_pdf_intermediate);
-            }
+            // Method 2 code DISABLED - it loses patterns and colors
         }
+        */
         
         if ($conversion_success && file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
             $converted_svg = file_get_contents($temp_svg_output);
