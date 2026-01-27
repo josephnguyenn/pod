@@ -2731,6 +2731,36 @@ class APD_SVG_Processor
             error_log("APD Text to Path - Order #$order_id: Backed up " . count($pattern_backup) . " pattern definitions before Inkscape");
         }
         
+        // CRITICAL: Track which elements have which patterns BEFORE Inkscape conversion
+        // This allows us to re-apply correct patterns after text-to-path conversion
+        $text_with_pattern = array();
+        if (preg_match_all('/<text([^>]*)>(.*?)<\/text>/is', $svg_content, $text_matches, PREG_SET_ORDER)) {
+            foreach ($text_matches as $idx => $match) {
+                $attrs = $match[1];
+                $text_content = $match[2];
+                
+                // Check for pattern in stroke
+                if (preg_match('/stroke=["\']url\(#?([^)"\'\s]+)\)["\']/i', $attrs, $pattern_match)) {
+                    $pattern_id = $pattern_match[1];
+                    $text_with_pattern[$idx] = array(
+                        'pattern' => $pattern_id,
+                        'text' => trim(strip_tags($text_content)),
+                        'stroke_width' => 12 // Default stroke width for material outline
+                    );
+                    
+                    // Extract stroke-width if present
+                    if (preg_match('/stroke-width=["\']([^"\']+)["\']/', $attrs, $sw)) {
+                        $text_with_pattern[$idx]['stroke_width'] = floatval($sw[1]);
+                    }
+                    
+                    error_log("APD Text to Path - Order #$order_id: Text #$idx has pattern: $pattern_id, content: " . substr($text_with_pattern[$idx]['text'], 0, 50));
+                }
+            }
+            if (!empty($text_with_pattern)) {
+                error_log("APD Text to Path - Order #$order_id: Tracked " . count($text_with_pattern) . " text elements with patterns for restoration");
+            }
+        }
+        
         // Backup original viewBox to preserve positioning
         $original_viewBox = '';
         if (preg_match('/<svg[^>]*viewBox=["\']([^"\']+)["\']/', $svg_content, $m)) {
