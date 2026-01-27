@@ -303,6 +303,9 @@ class APD_Order_Admin_Handler
             echo '<button type="button" class="button button-secondary" onclick="exportVectorPDF(' . $order_id . ')" style="background: #d63638; color: white; border-color: #d63638;">';
             echo '<span class="dashicons dashicons-media-document" style="margin-top: 3px;"></span> Export Vector PDF';
             echo '</button>';
+            echo '<button type="button" class="button" onclick="testInkscape()" style="margin-left: 5px;">';
+            echo '<span class="dashicons dashicons-yes-alt" style="margin-top: 3px;"></span> Test Inkscape';
+            echo '</button>';
             echo '</div>';
             echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers). Vector PDF preserves all styles and material patterns - open in CorelDRAW to convert to editable vectors.</p>';
             echo '</div>';
@@ -512,6 +515,35 @@ class APD_Order_Admin_Handler
         <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
         <script>
         window.exportVectorPDF = function(){ console.warn('PDF export loading...'); };
+        
+        // Test Inkscape availability
+        window.testInkscape = function() {
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'apd_test_inkscape',
+                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        alert('✅ Inkscape Status: WORKING!\n\n' + 
+                              'Path: ' + response.data.inkscape_path + '\n' +
+                              'Version: ' + response.data.version + '\n\n' +
+                              '✅ PDF export will use server-side Inkscape processing.\n' +
+                              '✅ Material outlines will be preserved for CorelDRAW.');
+                    } else {
+                        alert('❌ Inkscape Not Available\n\n' + 
+                              response.data.message + '\n\n' +
+                              'Shell_exec: ' + response.data.shell_exec + '\n\n' +
+                              'Recommendation:\n' + response.data.recommendation);
+                    }
+                },
+                error: function() {
+                    alert('Error checking Inkscape status');
+                }
+            });
+        };
         </script>
         <script>
         (function(){

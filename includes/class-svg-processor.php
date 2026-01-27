@@ -38,6 +38,39 @@ class APD_SVG_Processor
         add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
         add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
         add_action('wp_ajax_apd_export_pdf_from_svg', array($this, 'apd_export_pdf_from_svg'));
+        add_action('wp_ajax_apd_test_inkscape', array($this, 'test_inkscape_availability'));
+    }
+    
+    /**
+     * Test Inkscape availability - AJAX endpoint for diagnostics
+     */
+    public function test_inkscape_availability()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+        
+        $inkscape_path = $this->find_inkscape();
+        
+        if (!$inkscape_path) {
+            wp_send_json_error(array(
+                'message' => 'Inkscape not found on server',
+                'paths_checked' => ['/usr/bin/inkscape', '/usr/local/bin/inkscape', '/opt/homebrew/bin/inkscape'],
+                'shell_exec' => function_exists('shell_exec') ? 'enabled' : 'DISABLED',
+                'recommendation' => 'Contact hosting support to install Inkscape, or use Cut-Ready SVG export instead'
+            ));
+            return;
+        }
+        
+        $version = shell_exec(escapeshellarg($inkscape_path) . ' --version 2>&1');
+        
+        wp_send_json_success(array(
+            'inkscape_path' => $inkscape_path,
+            'version' => trim($version),
+            'working' => true,
+            'message' => 'Inkscape is installed and working! PDF export will use server-side processing for best CorelDRAW compatibility.'
+        ));
     }
 
     public function apd_process_cut_ready_svg()
@@ -2418,10 +2451,12 @@ class APD_SVG_Processor
         // --export-pdf-version=1.4 for CorelDRAW compatibility
         // We don't need --export-text-to-path here since text is already converted to paths
         // CRITICAL: Use --export-pdf-version=1.4 to ensure patterns are embedded in PDF
+        // Use --export-area-page to preserve exact canvas dimensions and positioning
+        // This prevents text/elements from shifting after conversion
         $command = escapeshellarg($inkscape_path) . 
                    ' --export-type=pdf' .
                    ' --export-filename=' . escapeshellarg($temp_pdf) .
-                   ' --export-area-drawing' .
+                   ' --export-area-page' .  // Changed from --export-area-drawing to preserve positions
                    ' --export-ignore-filters' .
                    ' --export-pdf-version=1.4' .
                    ' --export-text-to-path' .  // Extra safety: convert any remaining text
@@ -2684,6 +2719,25 @@ class APD_SVG_Processor
         
         error_log("APD Text to Path - Order #$order_id: Converting $text_count_before text elements to paths using Inkscape");
         
+        // CRITICAL: Backup pattern definitions before Inkscape conversion
+        // Inkscape sometimes loses or modifies patterns, so we backup and restore them
+        $pattern_backup = array();
+        if (preg_match_all('/<pattern[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/pattern>/is', $svg_content, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $pattern_id = $match[1];
+                $pattern_full = $match[0];
+                $pattern_backup[$pattern_id] = $pattern_full;
+            }
+            error_log("APD Text to Path - Order #$order_id: Backed up " . count($pattern_backup) . " pattern definitions before Inkscape");
+        }
+        
+        // Backup original viewBox to preserve positioning
+        $original_viewBox = '';
+        if (preg_match('/<svg[^>]*viewBox=["\']([^"\']+)["\']/', $svg_content, $m)) {
+            $original_viewBox = $m[1];
+            error_log("APD Text to Path - Order #$order_id: Backed up viewBox: $original_viewBox");
+        }
+        
         // Save SVG temporarily
         $upload_dir = wp_upload_dir();
         $temp_svg_input = $upload_dir['path'] . '/temp-text-' . $order_id . '-' . time() . '.svg';
@@ -2714,14 +2768,30 @@ class APD_SVG_Processor
                    ' --actions="select-all:text;object-to-path;select-all;stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
                    ' --export-type=svg' .
+                   ' --export-plain-svg' .  // Ensure plain SVG output (no Inkscape-specific metadata)
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
-        error_log("APD Text to Path - Order #$order_id: Running Inkscape command: " . $command);
+        error_log("APD Text to Path - Order #$order_id: Running Inkscape command (method 1 - modern): " . $command);
         
         $output = shell_exec($command);
         $return_code = 0;
         exec($command . '; echo $?', $output_array, $return_code);
+        
+        // If modern command failed, try legacy Inkscape 0.9x syntax
+        if (!file_exists($temp_svg_output) || filesize($temp_svg_output) == 0) {
+            error_log("APD Text to Path - Order #$order_id: Modern command failed, trying legacy method...");
+            
+            $command_legacy = escapeshellarg($inkscape_path) . 
+                              ' --export-plain-svg=' . escapeshellarg($temp_svg_output) .
+                              ' --export-text-to-path' .
+                              ' ' . escapeshellarg($temp_svg_input) . 
+                              ' 2>&1';
+            
+            error_log("APD Text to Path - Order #$order_id: Running legacy command: " . $command_legacy);
+            $output = shell_exec($command_legacy);
+            exec($command_legacy . '; echo $?', $output_array, $return_code);
+        }
         
         error_log("APD Text to Path - Order #$order_id: Inkscape return code: $return_code");
         if ($output) {
@@ -2733,6 +2803,35 @@ class APD_SVG_Processor
         if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
             // Verify text was actually converted
             $converted_content = file_get_contents($temp_svg_output);
+            
+            // RESTORE LOST PATTERNS: Check if any backed-up patterns are missing and restore them
+            if (!empty($pattern_backup)) {
+                foreach ($pattern_backup as $pattern_id => $pattern_full) {
+                    if (strpos($converted_content, 'id="' . $pattern_id . '"') === false && 
+                        strpos($converted_content, "id='" . $pattern_id . "'") === false) {
+                        // Pattern lost during Inkscape conversion, restore it
+                        error_log("APD Text to Path - Order #$order_id: Restoring lost pattern: $pattern_id");
+                        // Insert pattern in <defs> if exists, otherwise before </svg>
+                        if (preg_match('/<defs[^>]*>/i', $converted_content)) {
+                            $converted_content = preg_replace('/<defs[^>]*>/i', '$0' . "\n" . $pattern_full, $converted_content, 1);
+                        } else {
+                            $converted_content = str_replace('</svg>', $pattern_full . "\n</svg>", $converted_content);
+                        }
+                    }
+                }
+            }
+            
+            // RESTORE VIEWBOX: Ensure viewBox is preserved for correct positioning
+            if ($original_viewBox && !preg_match('/viewBox=/i', $converted_content)) {
+                error_log("APD Text to Path - Order #$order_id: Restoring lost viewBox: $original_viewBox");
+                $converted_content = preg_replace(
+                    '/<svg([^>]*)>/i',
+                    '<svg$1 viewBox="' . $original_viewBox . '">',
+                    $converted_content,
+                    1
+                );
+            }
+            
             $text_count_check = preg_match_all('/<text[^>]*>/i', $converted_content);
             $path_count_check = preg_match_all('/<path[^>]*>/i', $converted_content);
             
