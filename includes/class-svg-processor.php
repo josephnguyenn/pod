@@ -2790,6 +2790,7 @@ class APD_SVG_Processor
             
             // RESTORE LOST PATTERNS: Check if any backed-up patterns are missing and restore them
             if (!empty($pattern_backup)) {
+                $patterns_restored = 0;
                 foreach ($pattern_backup as $pattern_id => $pattern_full) {
                     if (strpos($converted_content, 'id="' . $pattern_id . '"') === false && 
                         strpos($converted_content, "id='" . $pattern_id . "'") === false) {
@@ -2801,7 +2802,13 @@ class APD_SVG_Processor
                         } else {
                             $converted_content = str_replace('</svg>', $pattern_full . "\n</svg>", $converted_content);
                         }
+                        $patterns_restored++;
                     }
+                }
+                if ($patterns_restored > 0) {
+                    error_log("APD Text to Path - Order #$order_id: ✅ Restored $patterns_restored lost patterns");
+                    // Save restored content back to file
+                    file_put_contents($temp_svg_output, $converted_content);
                 }
             }
             
@@ -2814,6 +2821,7 @@ class APD_SVG_Processor
                     $converted_content,
                     1
                 );
+                file_put_contents($temp_svg_output, $converted_content);
             }
             
             $text_count_check = preg_match_all('/<text[^>]*>/i', $converted_content);
@@ -2831,6 +2839,12 @@ class APD_SVG_Processor
             error_log("  - Pattern definitions: $pattern_defs_check");
             error_log("  - Pattern fills (material outlines as fills): $pattern_fills_check");
             error_log("  - Pattern strokes (remaining): $pattern_strokes_check");
+            
+            // DETAILED ANALYSIS for custom text material outline
+            $apdTextPattern_refs = substr_count($converted_content, 'apdTextPattern');
+            $apdTextPattern_fills = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
+            $apdTextPattern_strokes = preg_match_all('/stroke=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
+            error_log("  - apdTextPattern total refs: $apdTextPattern_refs, fills: $apdTextPattern_fills, strokes: $apdTextPattern_strokes");
             
             if ($text_count_check < $text_count_before && $path_count_check > 0) {
                 $conversion_success = true;
