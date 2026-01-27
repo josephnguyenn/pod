@@ -1943,9 +1943,13 @@ jQuery(document).ready(function($) {
                     }
                 }
                 
+                console.log('🎨 Logo outline width:', width, '(from template or default)');
+                
                 $logoOutlines.each(function(){
                     const svgEl = this;
                     if (!svgEl) return;
+                    
+                    console.log('🎨 Processing logo SVG - matUrl:', !!matUrl, 'width:', width, 'condition:', (matUrl && width > 0));
                     
                     if (matUrl && width > 0) {
                         const defs = svgEl.querySelector('defs') || svgEl.insertBefore(document.createElementNS(NS,'defs'), svgEl.firstChild);
