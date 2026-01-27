@@ -5116,10 +5116,24 @@ class APD_SVG_Processor
                 // Larger mask dimensions (3x) ensure outline is visible around path
                 // IMPORTANT: Path trong mask phải là path gốc (không expand) để cut out center
                 // Pattern fill trên path gốc sẽ hiển thị outline xung quanh
+                // Create mask with scaled path to create visible outline gap
+                // Scale path in mask to 70% to create larger gap/outline
+                // Smaller path in mask = larger visible outline around original path
+                $mask_path_scale = 0.7; // Scale to 70% to create visible outline gap
+                
+                // Calculate approximate center for scaling (use SVG center as approximation)
+                $svg_center_x = is_numeric($svg_width) ? ($svg_width / 2) : 400; // Default to 400 if not numeric
+                $svg_center_y = is_numeric($svg_height) ? ($svg_height / 2) : 300; // Default to 300 if not numeric
+                
+                // Create mask with scaled path to create visible outline
+                // White background shows pattern everywhere
+                // Black path (scaled smaller) cuts out smaller center, creating visible gap
                 $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
                            '<rect x="' . htmlspecialchars($mask_x, ENT_QUOTES) . '" y="' . htmlspecialchars($mask_y, ENT_QUOTES) . '" ' .
                            'width="' . htmlspecialchars($mask_w, ENT_QUOTES) . '" height="' . htmlspecialchars($mask_h, ENT_QUOTES) . '" fill="white"/>' .
+                           '<g transform="translate(' . htmlspecialchars($svg_center_x, ENT_QUOTES) . ',' . htmlspecialchars($svg_center_y, ENT_QUOTES) . ') scale(' . $mask_path_scale . ') translate(' . htmlspecialchars(-$svg_center_x, ENT_QUOTES) . ',' . htmlspecialchars(-$svg_center_y, ENT_QUOTES) . ')">' .
                            '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="black"/>' .
+                           '</g>' .
                            '</mask>';
                 
                 // Store mask to add later
