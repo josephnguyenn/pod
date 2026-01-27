@@ -3270,11 +3270,12 @@ class APD_SVG_Processor
         $path_count_final = preg_match_all('/<path[^>]*>/i', $svg_content);
         $pattern_fills_final = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
         $pattern_defs_final = preg_match_all('/<pattern[^>]*>/i', $svg_content);
-        $clip_paths_final = preg_match_all('/<clipPath[^>]*>/i', $svg_content);
-        $clip_path_refs_final = preg_match_all('/clip-path=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        $masks_final = preg_match_all('/<mask[^>]*>/i', $svg_content);
+        $mask_refs_final = preg_match_all('/mask=["\']url\(#[^)]+\)["\']/i', $svg_content);
         
         // Verify custom text patterns
         $apd_text_pattern_final = preg_match_all('/apdTextPattern/i', $svg_content);
+        $apd_text_pattern_fills = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
         $text_material_pattern_final = preg_match_all('/text-material-pattern-/i', $svg_content);
         
         error_log("APD PDF Compatible NEW - Order #$order_id: Conversion verification:");
@@ -3283,9 +3284,10 @@ class APD_SVG_Processor
         error_log("  - Path elements: $path_count_final");
         error_log("  - Pattern definitions: $pattern_defs_final");
         error_log("  - Pattern fills (material outlines): $pattern_fills_final");
-        error_log("  - ClipPaths created: $clip_paths_final");
-        error_log("  - Clip-path references: $clip_path_refs_final");
+        error_log("  - Masks created (CorelDraw compatible): $masks_final");
+        error_log("  - Mask references: $mask_refs_final");
         error_log("  - Custom text patterns (apdTextPattern): $apd_text_pattern_final");
+        error_log("  - Custom text pattern fills (apdTextPattern): $apd_text_pattern_fills");
         error_log("  - Custom text patterns (text-material-pattern-*): $text_material_pattern_final");
         
         // STEP 9: Ensure proper XML declaration with UTF-8
@@ -3343,7 +3345,11 @@ class APD_SVG_Processor
             return $svg_content;
         }
         
-        // STEP 1: Preserve custom text material outline patterns BEFORE conversion
+        // STEP 1: Track custom text elements TRƯỚC conversion
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Tracking custom text elements...");
+        $custom_text_elements = $this->track_custom_text_elements($svg_content, $order_id);
+        
+        // STEP 1.5: Preserve custom text material outline patterns BEFORE conversion
         error_log("APD Convert All to Curves NEW - Order #$order_id: Preserving custom text material outline...");
         $preserve_result = $this->preserve_custom_text_material_outline($svg_content, $order_id);
         $svg_content = $preserve_result['svg'];
@@ -3420,13 +3426,26 @@ class APD_SVG_Processor
                 file_put_contents($temp_svg_output, $converted_content);
             }
             
+            // STEP 6: Apply custom text patterns to converted paths
+            if (!empty($custom_text_elements)) {
+                error_log("APD Convert All to Curves NEW - Order #$order_id: Applying custom text patterns to converted paths...");
+                try {
+                    $converted_content = $this->apply_custom_text_pattern_to_paths($converted_content, $custom_text_elements, $order_id);
+                    file_put_contents($temp_svg_output, $converted_content);
+                } catch (Exception $e) {
+                    error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ Exception in apply_custom_text_pattern_to_paths: " . $e->getMessage());
+                }
+            }
+            
             // Verify conversion
             $text_count_after = preg_match_all('/<text[^>]*>/i', $converted_content);
             $path_count_after = preg_match_all('/<path[^>]*>/i', $converted_content);
+            $apd_text_pattern_fills = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
             
             error_log("APD Convert All to Curves NEW - Order #$order_id: Conversion results:");
             error_log("  - Text elements: $text_count_before -> $text_count_after");
             error_log("  - Path elements: $path_count_after");
+            error_log("  - apdTextPattern fills: $apd_text_pattern_fills");
             
             if ($text_count_after < $text_count_before && $path_count_after > 0) {
                 error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ SUCCESS - Text converted to curves");
@@ -3520,13 +3539,13 @@ class APD_SVG_Processor
             if ($pattern_fills_after > $pattern_fills) {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ SUCCESS - Material outline applied as fills");
                 
-                // STEP 4: Clip pattern images to paths for proper CorelDraw display
-                error_log("APD Apply Material Outline NEW - Order #$order_id: Clipping pattern images to paths...");
+                // STEP 4: Apply pattern masks to paths for proper CorelDraw display (thay clipPath bằng mask)
+                error_log("APD Apply Material Outline NEW - Order #$order_id: Applying pattern masks to paths (CorelDraw compatible)...");
                 try {
-                    $converted_content = $this->clip_pattern_images_to_paths($converted_content, $order_id);
+                    $converted_content = $this->apply_pattern_mask_to_paths($converted_content, $order_id);
                 } catch (Exception $e) {
-                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
-                    // Continue without clipping
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in apply_pattern_mask_to_paths: " . $e->getMessage());
+                    // Continue without masking
                 }
                 
                 unlink($temp_svg_input);
@@ -3537,11 +3556,11 @@ class APD_SVG_Processor
                 // Try manual conversion as fallback
                 $converted_content = $this->apply_material_outline_manual($converted_content, $order_id);
                 
-                // Clip pattern images after manual conversion
+                // Apply pattern masks after manual conversion (thay clipPath bằng mask)
                 try {
-                    $converted_content = $this->clip_pattern_images_to_paths($converted_content, $order_id);
+                    $converted_content = $this->apply_pattern_mask_to_paths($converted_content, $order_id);
                 } catch (Exception $e) {
-                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in apply_pattern_mask_to_paths: " . $e->getMessage());
                 }
             }
             
@@ -3597,11 +3616,11 @@ class APD_SVG_Processor
         $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $svg_content);
         error_log("APD Apply Material Outline Manual - Order #$order_id: Created $pattern_fills_after pattern fills");
         
-        // Clip pattern images after manual conversion
+        // Apply pattern masks after manual conversion (thay clipPath bằng mask)
         try {
-            $svg_content = $this->clip_pattern_images_to_paths($svg_content, $order_id);
+            $svg_content = $this->apply_pattern_mask_to_paths($svg_content, $order_id);
         } catch (Exception $e) {
-            error_log("APD Apply Material Outline Manual - Order #$order_id: ⚠️ Exception in clip_pattern_images_to_paths: " . $e->getMessage());
+            error_log("APD Apply Material Outline Manual - Order #$order_id: ⚠️ Exception in apply_pattern_mask_to_paths: " . $e->getMessage());
         }
         
         return $svg_content;
@@ -4157,6 +4176,354 @@ class APD_SVG_Processor
         // Verify pattern images
         $embedded_images = preg_match_all('/data:image\/(png|jpeg|jpg);base64/i', $svg_content);
         error_log("APD Process Pattern Images PDF - Order #$order_id: After processing - $embedded_images embedded pattern images");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Track custom text elements với apdTextPattern - NEW VERSION
+     * Tracks text elements với material outline pattern trước khi convert
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return array Array of custom text element info
+     */
+    private function track_custom_text_elements($svg_content, $order_id = 0)
+    {
+        error_log("APD Track Custom Text - Order #$order_id: Tracking custom text elements with apdTextPattern");
+        
+        $custom_text_elements = array();
+        
+        // Find all text elements với apdTextPattern
+        if (preg_match_all('/<text([^>]*stroke=["\']url\(#apdTextPattern\)["\'][^>]*)>(.*?)<\/text>/is', $svg_content, $text_matches, PREG_SET_ORDER)) {
+            foreach ($text_matches as $idx => $match) {
+                $attrs = $match[1];
+                $text_content = $match[2];
+                
+                // Extract position và transform
+                $x = '0';
+                $y = '0';
+                $transform = '';
+                $stroke_width = '6';
+                $fill = '';
+                
+                if (preg_match('/x=["\']([^"\']+)["\']/', $attrs, $x_match)) {
+                    $x = $x_match[1];
+                }
+                if (preg_match('/y=["\']([^"\']+)["\']/', $attrs, $y_match)) {
+                    $y = $y_match[1];
+                }
+                if (preg_match('/transform=["\']([^"\']+)["\']/', $attrs, $t_match)) {
+                    $transform = $t_match[1];
+                }
+                if (preg_match('/stroke-width=["\']([^"\']+)["\']/', $attrs, $sw_match)) {
+                    $stroke_width = $sw_match[1];
+                }
+                if (preg_match('/fill=["\']([^"\']+)["\']/', $attrs, $f_match)) {
+                    $fill = $f_match[1];
+                }
+                
+                $text_clean = trim(strip_tags($text_content));
+                
+                $custom_text_elements[] = array(
+                    'pattern' => 'apdTextPattern',
+                    'text' => $text_clean,
+                    'x' => $x,
+                    'y' => $y,
+                    'transform' => $transform,
+                    'stroke_width' => $stroke_width,
+                    'fill' => $fill,
+                    'index' => $idx
+                );
+                
+                error_log("APD Track Custom Text - Order #$order_id: Tracked text #$idx: '$text_clean' at ($x, $y) with apdTextPattern");
+            }
+        }
+        
+        // Also find text-material-pattern-* patterns
+        if (preg_match_all('/<text([^>]*stroke=["\']url\(#(text-material-pattern-[^)]+)\)["\'][^>]*)>(.*?)<\/text>/is', $svg_content, $text_pattern_matches, PREG_SET_ORDER)) {
+            foreach ($text_pattern_matches as $idx => $match) {
+                $attrs = $match[1];
+                $pattern_id = $match[2];
+                $text_content = $match[3];
+                
+                $x = '0';
+                $y = '0';
+                $transform = '';
+                $stroke_width = '6';
+                $fill = '';
+                
+                if (preg_match('/x=["\']([^"\']+)["\']/', $attrs, $x_match)) {
+                    $x = $x_match[1];
+                }
+                if (preg_match('/y=["\']([^"\']+)["\']/', $attrs, $y_match)) {
+                    $y = $y_match[1];
+                }
+                if (preg_match('/transform=["\']([^"\']+)["\']/', $attrs, $t_match)) {
+                    $transform = $t_match[1];
+                }
+                if (preg_match('/stroke-width=["\']([^"\']+)["\']/', $attrs, $sw_match)) {
+                    $stroke_width = $sw_match[1];
+                }
+                if (preg_match('/fill=["\']([^"\']+)["\']/', $attrs, $f_match)) {
+                    $fill = $f_match[1];
+                }
+                
+                $text_clean = trim(strip_tags($text_content));
+                
+                $custom_text_elements[] = array(
+                    'pattern' => $pattern_id,
+                    'text' => $text_clean,
+                    'x' => $x,
+                    'y' => $y,
+                    'transform' => $transform,
+                    'stroke_width' => $stroke_width,
+                    'fill' => $fill,
+                    'index' => count($custom_text_elements)
+                );
+                
+                error_log("APD Track Custom Text - Order #$order_id: Tracked text with pattern $pattern_id: '$text_clean'");
+            }
+        }
+        
+        error_log("APD Track Custom Text - Order #$order_id: Total custom text elements tracked: " . count($custom_text_elements));
+        
+        return $custom_text_elements;
+    }
+
+    /**
+     * Apply custom text pattern to converted paths - NEW VERSION
+     * Applies apdTextPattern lên paths từ custom text sau khi convert
+     * 
+     * @param string $svg_content SVG content after conversion
+     * @param array $custom_text_elements Tracked custom text elements
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with patterns applied
+     */
+    private function apply_custom_text_pattern_to_paths($svg_content, $custom_text_elements, $order_id = 0)
+    {
+        if (empty($custom_text_elements)) {
+            return $svg_content;
+        }
+        
+        error_log("APD Apply Custom Text Pattern - Order #$order_id: Applying patterns to " . count($custom_text_elements) . " custom text paths");
+        
+        // Find all paths that might be from custom text
+        // Strategy: Apply pattern to paths that don't have pattern fills yet
+        // and are likely from text conversion (new paths created)
+        
+        $paths_modified = 0;
+        $pattern_applied_count = 0;
+        
+        // For each custom text element, try to find corresponding paths
+        foreach ($custom_text_elements as $text_info) {
+            $pattern_id = $text_info['pattern'];
+            $text_content = $text_info['text'];
+            
+            // Find paths in groups or near the text position
+            // Since Inkscape converts text to paths, we need to find paths that:
+            // 1. Don't have pattern fills yet
+            // 2. Are in the same group or position as the original text
+            
+            // Strategy: Apply pattern to ALL paths that don't have pattern fills
+            // This is safer than trying to match positions exactly
+            $svg_content = preg_replace_callback(
+                '/<path([^>]*)>/i',
+                function($matches) use ($pattern_id, &$paths_modified, &$pattern_applied_count, $order_id) {
+                    $attrs = $matches[1];
+                    
+                    // Skip if already has pattern fill
+                    if (preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Skip if has clip-path or mask (already processed)
+                    if (preg_match('/(clip-path|mask)=/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Apply apdTextPattern as fill
+                    $new_attrs = $attrs;
+                    $new_attrs .= ' fill="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    
+                    // Also add stroke for compatibility
+                    if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
+                        $new_attrs .= ' stroke="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    }
+                    
+                    $paths_modified++;
+                    $pattern_applied_count++;
+                    
+                    return '<path' . $new_attrs . '>';
+                },
+                $svg_content,
+                1 // Limit to first match per text element (safer)
+            );
+        }
+        
+        // Alternative approach: Apply pattern to paths that might be from custom text
+        // Strategy: Look for paths in groups that might contain converted text
+        // Or apply to paths that don't have any fill/stroke yet (likely from text conversion)
+        if ($pattern_applied_count === 0 && !empty($custom_text_elements)) {
+            error_log("APD Apply Custom Text Pattern - Order #$order_id: Applying pattern to paths without fills (likely from custom text)");
+            
+            $pattern_id = $custom_text_elements[0]['pattern']; // Use first custom text pattern
+            
+            $svg_content = preg_replace_callback(
+                '/<path([^>]*)>/i',
+                function($matches) use ($pattern_id, &$paths_modified, $order_id) {
+                    $attrs = $matches[1];
+                    
+                    // Skip if already has pattern fill
+                    if (preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Skip if has clip-path or mask (already processed)
+                    if (preg_match('/(clip-path|mask)=/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Only apply if path has no fill or has default fill
+                    $has_fill = preg_match('/fill=/i', $attrs);
+                    $fill_value = '';
+                    if (preg_match('/fill=["\']([^"\']+)["\']/', $attrs, $f_match)) {
+                        $fill_value = $f_match[1];
+                    }
+                    
+                    // Apply pattern if no fill or fill is black/default
+                    if (!$has_fill || $fill_value === '#000000' || $fill_value === '#000' || $fill_value === 'black') {
+                        $new_attrs = $attrs;
+                        if (!$has_fill) {
+                            $new_attrs .= ' fill="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                        } else {
+                            // Replace fill with pattern
+                            $new_attrs = preg_replace('/fill=["\'][^"\']*["\']/', 'fill="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"', $new_attrs);
+                        }
+                        
+                        if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
+                            $new_attrs .= ' stroke="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                        }
+                        
+                        $paths_modified++;
+                        return '<path' . $new_attrs . '>';
+                    }
+                    
+                    return $matches[0];
+                },
+                $svg_content
+            );
+        }
+        
+        error_log("APD Apply Custom Text Pattern - Order #$order_id: Applied pattern to $paths_modified paths");
+        
+        // Verify pattern was applied
+        $pattern_fills_after = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        error_log("APD Apply Custom Text Pattern - Order #$order_id: Pattern fills with apdTextPattern: $pattern_fills_after");
+        
+        return $svg_content;
+    }
+
+    /**
+     * Apply pattern mask to paths - NEW VERSION
+     * Thay clipPath bằng mask cho CorelDraw compatibility
+     * 
+     * @param string $svg_content SVG content with paths and pattern fills
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with masks applied
+     */
+    private function apply_pattern_mask_to_paths($svg_content, $order_id = 0)
+    {
+        error_log("APD Apply Pattern Mask - Order #$order_id: Starting pattern mask application (CorelDraw compatible)");
+        
+        // Find all paths with pattern fills
+        $paths_with_patterns = preg_match_all('/<path([^>]*fill=["\']url\(#[^)]+\)["\'][^>]*)>/i', $svg_content);
+        if ($paths_with_patterns === 0) {
+            error_log("APD Apply Pattern Mask - Order #$order_id: No paths with pattern fills found");
+            return $svg_content;
+        }
+        
+        error_log("APD Apply Pattern Mask - Order #$order_id: Found $paths_with_patterns paths with pattern fills");
+        
+        // Ensure defs exists
+        if (!preg_match('/<defs[^>]*>/i', $svg_content)) {
+            $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
+        }
+        
+        // Extract SVG dimensions for mask bounds
+        $svg_width = '100%';
+        $svg_height = '100%';
+        if (preg_match('/<svg[^>]*width=["\']([^"\']+)["\']/', $svg_content, $w_match)) {
+            $svg_width = $w_match[1];
+        }
+        if (preg_match('/<svg[^>]*height=["\']([^"\']+)["\']/', $svg_content, $h_match)) {
+            $svg_height = $h_match[1];
+        }
+        
+        $mask_counter = 0;
+        $masks_to_add = array();
+        
+        // Process each path with pattern fill
+        $svg_content = preg_replace_callback(
+            '/<path([^>]*fill=["\']url\(#([^)]+)\)["\'][^>]*)>/i',
+            function($matches) use (&$mask_counter, &$masks_to_add, $order_id, $svg_width, $svg_height) {
+                $attrs = $matches[1];
+                $pattern_id = $matches[2];
+                
+                // Extract path data
+                $path_data = '';
+                if (preg_match('/d=["\']([^"\']+)["\']/', $attrs, $d_match)) {
+                    $path_data = $d_match[1];
+                } else {
+                    return $matches[0];
+                }
+                
+                // Check if already has mask
+                if (preg_match('/mask=/i', $attrs)) {
+                    return $matches[0];
+                }
+                
+                // Remove clip-path if exists (we're replacing with mask)
+                $attrs = preg_replace('/\s+clip-path=["\'][^"\']*["\']/i', '', $attrs);
+                
+                // Create mask ID
+                $mask_id = 'mask-pattern-' . $order_id . '-' . (++$mask_counter);
+                
+                // Create mask definition
+                // Mask logic: White = show, Black = hide
+                // For pattern clipping: We want pattern to show ONLY inside path
+                // So: White path (show pattern), black background (hide outside)
+                // Actually, simpler: Just use the path itself as mask (white fill)
+                // This will show pattern only where path is
+                $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
+                           '<rect x="0" y="0" width="' . htmlspecialchars($svg_width, ENT_QUOTES) . '" height="' . htmlspecialchars($svg_height, ENT_QUOTES) . '" fill="black"/>' .
+                           '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="white"/>' .
+                           '</mask>';
+                
+                // Store mask to add later
+                $masks_to_add[] = "\n  " . $mask_def;
+                
+                // Add mask attribute to path
+                $new_attrs = $attrs . ' mask="url(#' . htmlspecialchars($mask_id, ENT_QUOTES) . ')"';
+                
+                error_log("APD Apply Pattern Mask - Order #$order_id: Created mask $mask_id for pattern $pattern_id");
+                
+                return '<path' . $new_attrs . '>';
+            },
+            $svg_content
+        );
+        
+        // Insert masks into defs
+        if (!empty($masks_to_add)) {
+            $masks_str = implode('', $masks_to_add);
+            $svg_content = preg_replace('/(<defs[^>]*>)/i', '$1' . $masks_str, $svg_content, 1);
+        }
+        
+        // Verify masks were created
+        $mask_count = preg_match_all('/<mask[^>]*>/i', $svg_content);
+        $mask_refs = preg_match_all('/mask=["\']url\(#[^)]+\)["\']/i', $svg_content);
+        
+        error_log("APD Apply Pattern Mask - Order #$order_id: Created $mask_count masks, $mask_refs mask references");
         
         return $svg_content;
     }
