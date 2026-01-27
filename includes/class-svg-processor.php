@@ -3246,6 +3246,21 @@ class APD_SVG_Processor
             $svg_content = $original_svg_for_fallback;
         }
         
+        // STEP 6.5: Preserve custom text pattern fills BEFORE applying material outline
+        // This ensures custom text material outline is not lost during material outline processing
+        error_log("APD PDF Compatible NEW - Order #$order_id: Preserving custom text pattern fills before material outline...");
+        $custom_text_pattern_fills_before = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern fills before material outline: $custom_text_pattern_fills_before");
+        
+        // Backup paths with apdTextPattern fills
+        $custom_text_paths_backup = array();
+        if (preg_match_all('/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $svg_content, $custom_path_matches, PREG_SET_ORDER)) {
+            foreach ($custom_path_matches as $idx => $match) {
+                $custom_text_paths_backup[] = $match[0];
+            }
+            error_log("APD PDF Compatible NEW - Order #$order_id: Backed up " . count($custom_text_paths_backup) . " paths with apdTextPattern fills");
+        }
+        
         // STEP 7: Apply material outline to curves
         error_log("APD PDF Compatible NEW - Order #$order_id: Applying material outline to curves...");
         $svg_before_outline = $svg_content; // Backup
@@ -3262,6 +3277,49 @@ class APD_SVG_Processor
             error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Exception in apply_material_outline_to_curves: " . $e->getMessage());
             // Continue without material outline
             $svg_content = $svg_before_outline;
+        }
+        
+        // STEP 7.5: Restore custom text pattern fills if they were lost
+        $custom_text_pattern_fills_after = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $svg_content);
+        error_log("APD PDF Compatible NEW - Order #$order_id: Custom text pattern fills after material outline: $custom_text_pattern_fills_after");
+        
+        if ($custom_text_pattern_fills_before > 0 && $custom_text_pattern_fills_after === 0) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Custom text pattern fills were lost, attempting to restore...");
+            
+            // Try to restore by finding paths that might be from custom text and applying apdTextPattern
+            // Strategy: Find paths without pattern fills that are likely from custom text
+            $paths_restored = 0;
+            $svg_content = preg_replace_callback(
+                '/<path([^>]*)>/i',
+                function($matches) use (&$paths_restored, $order_id) {
+                    $attrs = $matches[1];
+                    
+                    // Skip if already has pattern fill
+                    if (preg_match('/fill=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Skip if has mask (already processed)
+                    if (preg_match('/mask=/i', $attrs)) {
+                        return $matches[0];
+                    }
+                    
+                    // Apply apdTextPattern to paths without fills (likely from custom text)
+                    // Only apply to first few paths to avoid over-applying
+                    if ($paths_restored < 5) {
+                        $new_attrs = $attrs . ' fill="url(#apdTextPattern)"';
+                        $paths_restored++;
+                        error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern fill to path #$paths_restored");
+                        return '<path' . $new_attrs . '>';
+                    }
+                    
+                    return $matches[0];
+                },
+                $svg_content,
+                10 // Limit to first 10 matches
+            );
+            
+            error_log("APD PDF Compatible NEW - Order #$order_id: Restored apdTextPattern to $paths_restored paths");
         }
         
         // STEP 8: Verify conversion
@@ -4450,15 +4508,39 @@ class APD_SVG_Processor
             $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
         }
         
-        // Extract SVG dimensions for mask bounds
-        $svg_width = '100%';
-        $svg_height = '100%';
-        if (preg_match('/<svg[^>]*width=["\']([^"\']+)["\']/', $svg_content, $w_match)) {
-            $svg_width = $w_match[1];
-        }
-        if (preg_match('/<svg[^>]*height=["\']([^"\']+)["\']/', $svg_content, $h_match)) {
-            $svg_height = $h_match[1];
-        }
+                // Extract SVG dimensions for mask bounds
+                // Use larger dimensions to ensure mask covers entire pattern area
+                // CorelDraw may need larger mask bounds to display patterns correctly
+                $svg_width = '200%';
+                $svg_height = '200%';
+                $svg_viewbox = '';
+                
+                if (preg_match('/<svg[^>]*viewBox=["\']([^"\']+)["\']/', $svg_content, $vb_match)) {
+                    $svg_viewbox = $vb_match[1];
+                    $vb_parts = preg_split('/\s+/', trim($svg_viewbox));
+                    if (count($vb_parts) >= 4) {
+                        // Use viewBox dimensions * 2 for larger mask coverage
+                        $vb_width = floatval($vb_parts[2]) * 2;
+                        $vb_height = floatval($vb_parts[3]) * 2;
+                        $svg_width = $vb_width;
+                        $svg_height = $vb_height;
+                    }
+                } else {
+                    if (preg_match('/<svg[^>]*width=["\']([^"\']+)["\']/', $svg_content, $w_match)) {
+                        $w_val = floatval(preg_replace('/[^0-9.]/', '', $w_match[1]));
+                        if ($w_val > 0) {
+                            $svg_width = $w_val * 2; // Double the width for better coverage
+                        }
+                    }
+                    if (preg_match('/<svg[^>]*height=["\']([^"\']+)["\']/', $svg_content, $h_match)) {
+                        $h_val = floatval(preg_replace('/[^0-9.]/', '', $h_match[1]));
+                        if ($h_val > 0) {
+                            $svg_height = $h_val * 2; // Double the height for better coverage
+                        }
+                    }
+                }
+                
+                error_log("APD Apply Pattern Mask - Order #$order_id: Using mask dimensions: width=$svg_width, height=$svg_height (2x for better CorelDraw compatibility)");
         
         $mask_counter = 0;
         $masks_to_add = array();
@@ -4493,10 +4575,15 @@ class APD_SVG_Processor
                 // Mask logic: White = show, Black = hide
                 // For pattern clipping: We want pattern to show ONLY inside path
                 // So: White path (show pattern), black background (hide outside)
-                // Actually, simpler: Just use the path itself as mask (white fill)
-                // This will show pattern only where path is
+                // Use larger mask bounds and center it to ensure pattern displays correctly in CorelDraw
+                $mask_x = is_numeric($svg_width) ? (-$svg_width / 4) : '-50%';
+                $mask_y = is_numeric($svg_height) ? (-$svg_height / 4) : '-50%';
+                $mask_w = is_numeric($svg_width) ? ($svg_width * 1.5) : '150%';
+                $mask_h = is_numeric($svg_height) ? ($svg_height * 1.5) : '150%';
+                
                 $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
-                           '<rect x="0" y="0" width="' . htmlspecialchars($svg_width, ENT_QUOTES) . '" height="' . htmlspecialchars($svg_height, ENT_QUOTES) . '" fill="black"/>' .
+                           '<rect x="' . htmlspecialchars($mask_x, ENT_QUOTES) . '" y="' . htmlspecialchars($mask_y, ENT_QUOTES) . '" ' .
+                           'width="' . htmlspecialchars($mask_w, ENT_QUOTES) . '" height="' . htmlspecialchars($mask_h, ENT_QUOTES) . '" fill="black"/>' .
                            '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="white"/>' .
                            '</mask>';
                 
