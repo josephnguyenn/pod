@@ -2875,6 +2875,38 @@ class APD_SVG_Processor
                         }
                     }
                     unlink($temp_svg_fixed);
+                } else if ($pattern_strokes_check > 0) {
+                    // stroke-to-path failed, manually convert pattern strokes to fills
+                    error_log("  - ⚠️ stroke-to-path failed, converting pattern strokes to fills manually...");
+                    
+                    $converted_content = preg_replace_callback(
+                        '/<path([^>]*)>/i',
+                        function($matches) use ($order_id) {
+                            $attrs = $matches[1];
+                            
+                            // If path has pattern stroke but no pattern fill, copy stroke to fill
+                            if (preg_match('/stroke=["\']url\(([^)]+)\)["\']/i', $attrs, $stroke_match)) {
+                                $pattern_ref = $stroke_match[1];
+                                
+                                // Check if already has pattern fill
+                                if (!preg_match('/fill=["\']url\([^)]+\)["\']/i', $attrs)) {
+                                    // Add pattern as fill
+                                    error_log("APD: Converting pattern stroke to fill for CorelDRAW: $pattern_ref");
+                                    $attrs .= ' fill="url(' . htmlspecialchars($pattern_ref, ENT_QUOTES) . ')"';
+                                }
+                            }
+                            
+                            return '<path' . $attrs . '>';
+                        },
+                        $converted_content
+                    );
+                    
+                    // Save manually fixed version
+                    file_put_contents($temp_svg_output, $converted_content);
+                    
+                    // Re-check pattern fills
+                    $pattern_fills_fixed = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+                    error_log("  - ✅ Manual fix applied: $pattern_fills_fixed pattern fills created");
                 } else {
                     error_log("  - ❌ ERROR: No pattern references found - material outlines are LOST!");
                 }
