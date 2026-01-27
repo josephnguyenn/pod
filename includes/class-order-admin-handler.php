@@ -1278,9 +1278,9 @@ class APD_Order_Admin_Handler
                             console.log('📄 🔧 Applying apdTextPattern for material outline...');
                             
                             stroke = 'url(#apdTextPattern)';
-                            // Use default stroke width if not specified
+                            // Use larger stroke width for more visible outline in CorelDraw (mask-based approach)
                             if (strokeWidth === 0 || !strokeWidth) {
-                                strokeWidth = 24; // Default stroke width for material outline
+                                strokeWidth = 48; // Increased from 24 to 48 for more visible outline
                             }
                             
                             // Update text element attributes

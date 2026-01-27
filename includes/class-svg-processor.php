@@ -3275,8 +3275,9 @@ class APD_SVG_Processor
                     $new_attrs .= ' stroke="url(#apdTextPattern)"';
                     
                     // Add stroke attributes if not present
+                    // Use larger stroke-width for more visible outline in CorelDraw
                     if (!preg_match('/stroke-width=/i', $attrs)) {
-                        $new_attrs .= ' stroke-width="24"'; // Default stroke width
+                        $new_attrs .= ' stroke-width="48"'; // Increased from 24 to 48 for more visible outline
                     }
                     if (!preg_match('/stroke-linejoin=/i', $attrs)) {
                         $new_attrs .= ' stroke-linejoin="round"';
@@ -3405,9 +3406,10 @@ class APD_SVG_Processor
                         // This ensures custom text paths get expanded outline paths like logo
                         if (!preg_match('/stroke=["\']url\(#[^)]+\)["\']/i', $attrs)) {
                             $new_attrs .= ' stroke="url(#apdTextPattern)"';
-                            // Add stroke-width for material outline thickness (same as logo default)
+                            // Add stroke-width for material outline thickness
+                            // Use larger stroke-width for more visible outline in CorelDraw (mask-based approach)
                             if (!preg_match('/stroke-width=/i', $attrs)) {
-                                $new_attrs .= ' stroke-width="24"'; // Default stroke width for material outline
+                                $new_attrs .= ' stroke-width="48"'; // Increased from 24 to 48 for more visible outline
                             }
                             // Add stroke attributes for proper rendering
                             if (!preg_match('/stroke-linejoin=/i', $attrs)) {
@@ -4882,10 +4884,11 @@ class APD_SVG_Processor
                 // For pattern clipping: We want pattern to show ONLY inside path
                 // So: White path (show pattern), black background (hide outside)
                 // Use larger mask bounds and center it to ensure pattern displays correctly in CorelDraw
-                $mask_x = is_numeric($svg_width) ? (-$svg_width / 4) : '-50%';
-                $mask_y = is_numeric($svg_height) ? (-$svg_height / 4) : '-50%';
-                $mask_w = is_numeric($svg_width) ? ($svg_width * 1.5) : '150%';
-                $mask_h = is_numeric($svg_height) ? ($svg_height * 1.5) : '150%';
+                // Increased mask size to accommodate larger outline (48px stroke-width)
+                $mask_x = is_numeric($svg_width) ? (-$svg_width / 3) : '-33%';
+                $mask_y = is_numeric($svg_height) ? (-$svg_height / 3) : '-33%';
+                $mask_w = is_numeric($svg_width) ? ($svg_width * 1.8) : '180%'; // Increased from 1.5x to 1.8x
+                $mask_h = is_numeric($svg_height) ? ($svg_height * 1.8) : '180%'; // Increased from 1.5x to 1.8x
                 
                 $mask_def = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' .
                            '<rect x="' . htmlspecialchars($mask_x, ENT_QUOTES) . '" y="' . htmlspecialchars($mask_y, ENT_QUOTES) . '" ' .
