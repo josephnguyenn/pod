@@ -1976,14 +1976,42 @@ class APD_Order_Admin_Handler
             }
             
             // Find all elements with logoMaterialPattern stroke
-            const logoElements = Array.from(svgElement.querySelectorAll('[stroke*="url(#logoMaterialPattern)"]'));
+            const logoElementsRaw = Array.from(svgElement.querySelectorAll('[stroke*="url(#logoMaterialPattern)"]'));
             
-            if (logoElements.length === 0) {
+            if (logoElementsRaw.length === 0) {
                 console.log('🎨 No logo elements with material outline found');
                 return;
             }
             
-            console.log('🎨 Found ' + logoElements.length + ' logo element(s) with material outline');
+            // Explode groups to individual paths - process each path separately from its own center
+            // This ensures each logo element has outline scaled from its own center, not group center
+            const logoElements = [];
+            const strokeValue = 'url(#logoMaterialPattern)';
+            
+            logoElementsRaw.forEach((el) => {
+                if (el.tagName.toLowerCase() === 'g') {
+                    // Group element - get all child paths/shapes
+                    console.log('🎨 Found group element with logoMaterialPattern - exploding to child paths');
+                    const children = el.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line');
+                    children.forEach((child) => {
+                        // Inherit stroke from parent group if child doesn't have it
+                        if (!child.getAttribute('stroke')) {
+                            child.setAttribute('stroke', strokeValue);
+                        }
+                        // Inherit stroke-width from parent group if child doesn't have it
+                        const parentStrokeWidth = el.getAttribute('stroke-width');
+                        if (parentStrokeWidth && !child.getAttribute('stroke-width')) {
+                            child.setAttribute('stroke-width', parentStrokeWidth);
+                        }
+                        logoElements.push(child);
+                    });
+                } else {
+                    // Individual path/shape element
+                    logoElements.push(el);
+                }
+            });
+            
+            console.log('🎨 Found ' + logoElements.length + ' logo element(s) with material outline (after exploding groups)');
             
             // Create temporary SVG for bbox calculations
             const tempSvg = document.createElementNS(namespace, 'svg');
