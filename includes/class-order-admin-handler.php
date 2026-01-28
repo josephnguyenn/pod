@@ -1786,19 +1786,46 @@ class APD_Order_Admin_Handler
                         // Check if pattern exists
                         const pattern = svgClone.querySelector('pattern#' + patternId);
                         if (pattern) {
+                            // Fix 2: Add logging to track logo elements processing
+                            if (patternId === 'logoMaterialPattern') {
+                                console.log('🎨 Processing logo element #' + index + ' with logoMaterialPattern');
+                            }
+                            
                             try {
                                 // Get stroke attributes
                                 const strokeWidth = parseFloat(element.getAttribute('stroke-width') || '6');
                                 const strokeLinejoin = element.getAttribute('stroke-linejoin') || 'round';
                                 const strokeLinecap = element.getAttribute('stroke-linecap') || 'round';
                                 
-                                // Get bounding box by temporarily appending to temp SVG
-                                // This works for ALL SVG shape elements (path, polygon, rect, circle, ellipse, line, polyline)
-                                const tempElement = element.cloneNode(true);
-                                tempElement.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
-                                tempSvg.appendChild(tempElement);
-                                const bbox = tempElement.getBBox();
-                                tempSvg.removeChild(tempElement);
+                                // Fix 3: Improve error handling for bbox calculation
+                                // Get bounding box - handle errors gracefully
+                                let bbox;
+                                try {
+                                    const tempElement = element.cloneNode(true);
+                                    tempElement.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
+                                    tempSvg.appendChild(tempElement);
+                                    bbox = tempElement.getBBox();
+                                    tempSvg.removeChild(tempElement);
+                                    
+                                    // Check if bbox is valid
+                                    if (bbox.width === 0 || bbox.height === 0) {
+                                        console.warn('🎨 Element #' + index + ' has invalid bbox - using element bounds');
+                                        // Fallback: use element's own bounds
+                                        bbox = element.getBBox();
+                                    }
+                                } catch (error) {
+                                    console.warn('🎨 Element #' + index + ' bbox error:', error);
+                                    // Fallback: try element's own bbox
+                                    try {
+                                        bbox = element.getBBox();
+                                    } catch (e) {
+                                        console.warn('🎨 Element #' + index + ' cannot get bbox - skipping');
+                                        if (patternId === 'logoMaterialPattern') {
+                                            console.warn('🎨 ⚠️ Logo element #' + index + ' skipped due to bbox error');
+                                        }
+                                        return;
+                                    }
+                                }
                                 
                                 // Calculate center and scale factor
                                 const centerX = bbox.x + bbox.width / 2;
@@ -1923,17 +1950,42 @@ class APD_Order_Admin_Handler
                                 // Both are visible: outline shows around original element
                                 element.parentNode.insertBefore(expandedPath, element);
                                 
-                                // Also remove stroke from original element to avoid double rendering
-                                // Original element should only have fill (logo/text shape)
-                                const originalFill = element.getAttribute('fill');
-                                if (!originalFill || originalFill === 'none') {
-                                    // If no fill, keep original fill or set to current color
-                                    // Don't change if already has fill
+                                // Fix 4: Verify logo outline path được tạo
+                                if (patternId === 'logoMaterialPattern') {
+                                    // Verify expanded path was inserted
+                                    const insertedPath = element.previousSibling;
+                                    if (insertedPath && insertedPath.tagName === 'path' && insertedPath.getAttribute('fill') === stroke) {
+                                        console.log('🎨 ✅ Logo outline path verified - inserted before element #' + index);
+                                    } else {
+                                        console.warn('🎨 ⚠️ Logo outline path not found after insertion');
+                                    }
                                 }
-                                // Remove pattern stroke from original (outline is now separate)
-                                element.setAttribute('stroke', 'none');
+                                
+                                // Fix 1: Preserve logo fill khi remove stroke
+                                // Only remove stroke if element has fill
+                                const originalFill = element.getAttribute('fill');
+                                const originalStroke = element.getAttribute('stroke');
+                                
+                                if (originalFill && originalFill !== 'none') {
+                                    // Element has fill - safe to remove stroke (outline is separate)
+                                    element.setAttribute('stroke', 'none');
+                                    if (patternId === 'logoMaterialPattern') {
+                                        console.log('🎨 Logo element #' + index + ' has fill - removed stroke (outline is separate)');
+                                    }
+                                } else {
+                                    // Element has no fill - keep stroke for visibility
+                                    // Don't remove stroke, just ensure outline path is behind
+                                    if (patternId === 'logoMaterialPattern') {
+                                        console.log('🎨 Logo element #' + index + ' has no fill - keeping stroke for visibility');
+                                    }
+                                }
                                 
                                 pathsProcessed++;
+                                
+                                // Fix 2: Add logging after processing
+                                if (patternId === 'logoMaterialPattern') {
+                                    console.log('🎨 ✅ Logo element #' + index + ' processed - expanded outline path created');
+                                }
                                 
                                 if (pathsProcessed === 1) {
                                     console.log('🎨 ✅ Using mask approach for material outline (expanded paths with pattern fills)');
