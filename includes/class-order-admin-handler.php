@@ -1730,6 +1730,89 @@ class APD_Order_Admin_Handler
             } else {
                 console.log('🎨 No pattern images found to preload');
             }
+            
+            // Get SVG dimensions
+            const viewBox = svgElement.getAttribute('viewBox').split(' ');
+            const width = parseFloat(viewBox[2]);
+            const height = parseFloat(viewBox[3]);
+            
+            // Create high-resolution canvas for quality
+            const scale = 3; // 3x resolution for print quality
+            const canvas = document.createElement('canvas');
+            canvas.width = width * scale;
+            canvas.height = height * scale;
+            const ctx = canvas.getContext('2d');
+            
+            // Scale context for high-res rendering
+            ctx.scale(scale, scale);
+            
+            // Set white background (optional, for transparency use transparent)
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Masks already pre-processed by convertLogoToPathsWithMaterialOutline()
+            // Just clone and serialize the SVG with pre-existing masks
+            console.log('🎨 Using pre-processed material outline masks...');
+            console.log('🎨 Logo masks created in SVG DOM before rasterization (same approach as custom text)');
+            
+            const svgClone = svgElement.cloneNode(true);
+            
+            // Serialize modified SVG to string
+            const svgData = new XMLSerializer().serializeToString(svgClone);
+            
+            // Create blob and object URL
+            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+            const url = URL.createObjectURL(svgBlob);
+            
+            // Load and draw SVG to canvas
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                
+                img.onload = function() {
+                    try {
+                        // Wait a bit more to ensure SVG is fully rendered
+                        setTimeout(() => {
+                            try {
+                                // Draw SVG image to canvas (material outline is rendered by browser)
+                                ctx.drawImage(img, 0, 0, width, height);
+                                
+                                // Export canvas to PNG with high quality
+                                const pngDataUrl = canvas.toDataURL('image/png', 1.0);
+                                
+                                // Cleanup
+                                URL.revokeObjectURL(url);
+                                
+                                console.log('✅ Rasterization complete');
+                                console.log('   - Original SVG size:', width, 'x', height);
+                                console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
+                                console.log('   - PNG data length:', pngDataUrl.length);
+                                console.log('   - Material outline: Pre-processed masks (logo + text both use same mask approach)');
+                                console.log('   - Material outline is BAKED IN - perfect for CorelDraw');
+                                
+                                resolve({
+                                    pngDataUrl: pngDataUrl,
+                                    width: width,
+                                    height: height,
+                                    scale: scale
+                                });
+                            } catch (error) {
+                                URL.revokeObjectURL(url);
+                                reject(error);
+                            }
+                        }, 100); // Small delay to ensure rendering
+                    } catch (error) {
+                        URL.revokeObjectURL(url);
+                        reject(error);
+                    }
+                };
+                
+                img.onerror = function(error) {
+                    URL.revokeObjectURL(url);
+                    reject(new Error('Failed to load SVG for rasterization: ' + error));
+                };
+                
+                img.src = url;
+            });
         }
 
         /**
@@ -1906,89 +1989,6 @@ class APD_Order_Admin_Handler
             } finally {
                 document.body.removeChild(tempSvg);
             }
-            
-            // Get SVG dimensions
-            const viewBox = svgElement.getAttribute('viewBox').split(' ');
-            const width = parseFloat(viewBox[2]);
-            const height = parseFloat(viewBox[3]);
-            
-            // Create high-resolution canvas for quality
-            const scale = 3; // 3x resolution for print quality
-            const canvas = document.createElement('canvas');
-            canvas.width = width * scale;
-            canvas.height = height * scale;
-            const ctx = canvas.getContext('2d');
-            
-            // Scale context for high-res rendering
-            ctx.scale(scale, scale);
-            
-            // Set white background (optional, for transparency use transparent)
-            ctx.fillStyle = 'white';
-            ctx.fillRect(0, 0, width, height);
-            
-            // Masks already pre-processed by convertLogoToPathsWithMaterialOutline()
-            // Just clone and serialize the SVG with pre-existing masks
-            console.log('🎨 Using pre-processed material outline masks...');
-            console.log('🎨 Logo masks created in SVG DOM before rasterization (same approach as custom text)');
-            
-            const svgClone = svgElement.cloneNode(true);
-            
-            // Serialize modified SVG to string
-            const svgData = new XMLSerializer().serializeToString(svgClone);
-            
-            // Create blob and object URL
-            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
-            const url = URL.createObjectURL(svgBlob);
-            
-            // Load and draw SVG to canvas
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                
-                img.onload = function() {
-                    try {
-                        // Wait a bit more to ensure SVG is fully rendered
-                        setTimeout(() => {
-                            try {
-                                // Draw SVG image to canvas (material outline is rendered by browser)
-                                ctx.drawImage(img, 0, 0, width, height);
-                                
-                                // Export canvas to PNG with high quality
-                                const pngDataUrl = canvas.toDataURL('image/png', 1.0);
-                                
-                                // Cleanup
-                                URL.revokeObjectURL(url);
-                                
-                                console.log('✅ Rasterization complete');
-                                console.log('   - Original SVG size:', width, 'x', height);
-                                console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
-                                console.log('   - PNG data length:', pngDataUrl.length);
-                                console.log('   - Material outline: Pre-processed masks (logo + text both use same mask approach)');
-                                console.log('   - Material outline is BAKED IN - perfect for CorelDraw');
-                                
-                                resolve({
-                                    pngDataUrl: pngDataUrl,
-                                    width: width,
-                                    height: height,
-                                    scale: scale
-                                });
-                            } catch (error) {
-                                URL.revokeObjectURL(url);
-                                reject(error);
-                            }
-                        }, 100); // Small delay to ensure rendering
-                    } catch (error) {
-                        URL.revokeObjectURL(url);
-                        reject(error);
-                    }
-                };
-                
-                img.onerror = function(error) {
-                    URL.revokeObjectURL(url);
-                    reject(new Error('Failed to load SVG for rasterization: ' + error));
-                };
-                
-                img.src = url;
-            });
         }
 
         /**
