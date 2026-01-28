@@ -2102,20 +2102,16 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // Calculate expansion - SAME AS CUSTOM TEXT for uniform thickness
-                        // Use OUTLINE_EXPANSION_RATIO (0.5) to match text outline thickness
-                        const OUTLINE_EXPANSION_RATIO = 0.5; // Same as custom text (line 1113)
+                        // Calculate expansion - THICKER than custom text for better visibility
+                        // Custom text uses OUTLINE_EXPANSION_RATIO = 0.5, but logo needs thicker outline
+                        const OUTLINE_EXPANSION_RATIO = 0.6; // Increased from 0.5 for thicker outline
                         const centerX = bbox.x + bbox.width / 2;
                         const centerY = bbox.y + bbox.height / 2;
                         const avgSize = (bbox.width + bbox.height) / 2;
                         const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                        // Same formula as text (line 1500) - uniform scaling with multiplier 1.7
-                        // Note: Using 1.7 multiplier (same as text) for consistent outline thickness
-                        // Ensure minimum scale factor for visible outline (especially for large elements)
-                        const baseScaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
-                        // For very large elements, ensure minimum expansion
-                        const minExpansion = expansionAmount * 0.5; // Minimum 50% of expansionAmount
-                        const scaleFactor = Math.max(baseScaleFactor, 1 + minExpansion / avgSize);
+                        // Use multiplier 2.0 (instead of 1.7) for thicker, more visible outline
+                        // This ensures logo outline is thick and clear like custom text
+                        const scaleFactor = 1 + (expansionAmount * 2.0) / avgSize;
                         
                         // Path data already extracted above (before bbox calculation)
                         
