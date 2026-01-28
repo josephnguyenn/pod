@@ -1986,8 +1986,7 @@ class APD_Order_Admin_Handler
             
             console.log('🎨 Found ' + logoElementsRaw.length + ' element(s) with logoMaterialPattern stroke');
             
-            // Explode groups to individual paths - process each path separately from its own center
-            // This ensures each logo element has outline scaled from its own center, not group center
+            // Explode groups to individual paths - xử lý từng element logo riêng biệt
             const logoElements = [];
             const strokeValue = 'url(#logoMaterialPattern)';
             
@@ -2023,16 +2022,8 @@ class APD_Order_Admin_Handler
             
             console.log('🎨 Total ' + logoElements.length + ' logo element(s) to process (after exploding groups)');
             
-            // Create temporary SVG for bbox calculations
-            const tempSvg = document.createElementNS(namespace, 'svg');
-            const viewBox = svgElement.getAttribute('viewBox');
-            if (viewBox) {
-                tempSvg.setAttribute('viewBox', viewBox);
-            }
-            document.body.appendChild(tempSvg);
-            
             // Pre-rasterize patterns to PNG (browser canvas can render PNG fills in masks)
-            console.log('🎨 Pre-rasterizing material patterns...');
+            console.log('🎨 Pre-rasterizing material patterns for logo fill...');
             const logoPatternPng = await rasterizePattern(svgElement, 'logoMaterialPattern');
             
             if (!logoPatternPng) {
@@ -2059,163 +2050,62 @@ class APD_Order_Admin_Handler
             
             console.log('🎨 ✅ Created rasterized pattern:', rasterPatternId);
             
-            try {
-                logoElements.forEach((element, index) => {
-                    console.log('🎨 Processing logo element #' + index);
+            // === FULL MATERIAL FILL FOR EACH LOGO ELEMENT ===
+            // Thay vì tạo ring bằng filter/mask, chúng ta fill luôn toàn bộ shape logo
+            // bằng material rasterized. Điều này đảm bảo không còn phần \"rỗng\" ở giữa.
+            let processedCount = 0;
+            let skippedCount = 0;
+            
+            logoElements.forEach((element, index) => {
+                console.log('🎨 Processing logo element #' + index + ' for FULL material fill');
+                
+                try {
+                    // Lấy path data (ưu tiên d, nếu không có thì convert shape → path)
+                    let pathData = element.getAttribute('d');
                     
-                    const stroke = element.getAttribute('stroke');
-                    // Normalize strokeWidth so all logo elements have sufficiently thick outline
-                    // Many logo paths from source SVG have tiny stroke-width (1–2px) which makes dilation invisible.
-                    // We treat anything below 48 as \"thin\" and use 48 for outline generation.
-                    const originalStrokeWidthAttr = element.getAttribute('stroke-width');
-                    let strokeWidth = parseFloat(originalStrokeWidthAttr || '0');
-                    if (!strokeWidth || strokeWidth < 48) {
-                        strokeWidth = 48; // Same as custom text (line 1311)
-                    }
-                    // Debug: log effective strokeWidth for first few elements
-                    if (index < 5) {
-                        console.log('🎨 Logo element #' + index + ' stroke-width original=',
-                            originalStrokeWidthAttr, 'effective=', strokeWidth);
+                    if (!pathData) {
+                        pathData = convertShapeToPath(element);
                     }
                     
-                    try {
-                        // Get path data FIRST (before bbox calculation)
-                        // This ensures we work with path data directly, not element transforms
-                        let pathData = element.getAttribute('d');
-                        
-                        // Convert non-path elements to path
-                        if (!pathData) {
-                            pathData = convertShapeToPath(element);
-                        }
-                        
-                        if (!pathData) {
-                            console.warn('🎨 Logo element #' + index + ' cannot be converted to path - skipping');
-                            return;
-                        }
-                        
-                        // === BBOX CALCULATION (LOGO) - FIXED ===
-                        // Use ONLY element's own transform for bbox calculation (NOT parent transforms)
-                        // This matches custom text approach where opentype.js gives us local coordinates
-                        // 
-                        // Parent transforms are applied AUTOMATICALLY when we insert expandedPath
-                        // into element.parentNode, so we must NOT include them in the transform attribute
-                        // to avoid double-application of transforms.
-                        const elementTransform = element.getAttribute('transform');
-                        
-                        // Create temp path with pathData and ONLY element's own transform
-                        const tempPath = document.createElementNS(namespace, 'path');
-                        tempPath.setAttribute('d', pathData);
-                        tempPath.setAttribute('stroke', 'none');
-                        tempPath.setAttribute('fill', 'none');
-                        if (elementTransform) {
-                            tempPath.setAttribute('transform', elementTransform);
-                        }
-                        tempSvg.appendChild(tempPath);
-                        const bbox = tempPath.getBBox();
-                        tempSvg.removeChild(tempPath);
-                        
-                        if (bbox.width === 0 || bbox.height === 0 || !isFinite(bbox.width) || !isFinite(bbox.height)) {
-                            console.warn('🎨 Logo element #' + index + ' has invalid bbox (width=' + bbox.width + ', height=' + bbox.height + ') - skipping');
-                            return;
-                        }
-                        
-
-                        // === CONSTANT WIDTH RING OUTLINE (NO BACKGROUND FILL) ===
-                        // Lỗi \"đổ nền khối vàng\" xảy ra vì dilate trực tiếp lên fill -> toàn bộ shape bị phủ pattern.
-                        // Giải pháp đúng: tạo \"vành\" (ring) bằng cách:
-                        // 1) Dilate(SourceAlpha)
-                        // 2) Ring = Dilated OUT SourceAlpha
-                        // 3) Dùng ring làm mask để pattern chỉ hiện trên vành viền.
-                        //
-                        // Vì output cuối là raster baked-in, filter+mask là cách ổn định nhất trong browser.
-                        const OUTLINE_EXPANSION_RATIO = 0.5;
-                        const outlineRadius = Math.max(1, Math.round(strokeWidth * OUTLINE_EXPANSION_RATIO));
-                        const pad = outlineRadius * 6;
-                        const regionX = bbox.x - pad;
-                        const regionY = bbox.y - pad;
-                        const regionW = bbox.width + pad * 2;
-                        const regionH = bbox.height + pad * 2;
-                        
-                        // Per-element ring filter (unique id to avoid clipping issues)
-                        const ringFilterId = 'logo-outline-ring-filter-' + index + '-' + Date.now();
-                        const ringFilter = document.createElementNS(namespace, 'filter');
-                        ringFilter.setAttribute('id', ringFilterId);
-                        ringFilter.setAttribute('filterUnits', 'userSpaceOnUse');
-                        ringFilter.setAttribute('x', String(regionX));
-                        ringFilter.setAttribute('y', String(regionY));
-                        ringFilter.setAttribute('width', String(regionW));
-                        ringFilter.setAttribute('height', String(regionH));
-                        
-                        const morph = document.createElementNS(namespace, 'feMorphology');
-                        morph.setAttribute('in', 'SourceAlpha');
-                        morph.setAttribute('operator', 'dilate');
-                        morph.setAttribute('radius', String(outlineRadius));
-                        morph.setAttribute('result', 'dilated');
-                        ringFilter.appendChild(morph);
-                        
-                        const ring = document.createElementNS(namespace, 'feComposite');
-                        ring.setAttribute('in', 'dilated');
-                        ring.setAttribute('in2', 'SourceAlpha');
-                        ring.setAttribute('operator', 'out');
-                        ring.setAttribute('result', 'ringAlpha');
-                        ringFilter.appendChild(ring);
-                        
-                        defs.appendChild(ringFilter);
-                        
-                        // Mask: apply ring filter to a white path (so mask alpha becomes the ring)
-                        const maskId = 'logo-outline-ring-mask-' + index + '-' + Date.now();
-                        const mask = document.createElementNS(namespace, 'mask');
-                        mask.setAttribute('id', maskId);
-                        mask.setAttribute('maskUnits', 'userSpaceOnUse');
-                        mask.setAttribute('x', String(regionX));
-                        mask.setAttribute('y', String(regionY));
-                        mask.setAttribute('width', String(regionW));
-                        mask.setAttribute('height', String(regionH));
-                        
-                        const maskShape = document.createElementNS(namespace, 'path');
-                        maskShape.setAttribute('d', pathData);
-                        maskShape.setAttribute('fill', 'white');
-                        maskShape.setAttribute('stroke', 'none');
-                        maskShape.setAttribute('filter', 'url(#' + ringFilterId + ')');
-                        if (elementTransform) {
-                            maskShape.setAttribute('transform', elementTransform);
-                        }
-                        mask.appendChild(maskShape);
-                        defs.appendChild(mask);
-                        
-                        // Outline path: pattern fill, clipped by ring mask
-                        const outlinePath = document.createElementNS(namespace, 'path');
-                        outlinePath.setAttribute('d', pathData);
-                        outlinePath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
-                        outlinePath.setAttribute('stroke', 'none');
-                        outlinePath.setAttribute('mask', 'url(#' + maskId + ')');
-                        if (elementTransform) {
-                            outlinePath.setAttribute('transform', elementTransform);
-                        }
-                        
-                        // Put outline behind original element (z-order)
-                        element.parentNode.insertBefore(outlinePath, element);
-                        
-                        // Preserve original element fill, remove stroke
-                        const originalFill = element.getAttribute('fill');
-                        if (!originalFill || originalFill === 'none') {
-                            element.setAttribute('fill', '#000000');
-                        }
-                        element.removeAttribute('stroke');
-                        element.removeAttribute('stroke-width');
-                        
-                        console.log('🎨 ✅ Logo element #' + index + ' processed - ring outline (no background fill)');
-                        
-                    } catch (error) {
-                        console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
+                    if (!pathData) {
+                        console.warn('🎨 Logo element #' + index + ' cannot be converted to path - skipping');
+                        skippedCount++;
+                        return;
                     }
-                });
-                
-                console.log('🎨 ✅ Logo material outline pre-processing complete');
-                
-            } finally {
-                document.body.removeChild(tempSvg);
-            }
+                    
+                    const elementTransform = element.getAttribute('transform');
+                    
+                    // Path mới: fill toàn bộ diện tích element bằng material rasterized
+                    const fillPath = document.createElementNS(namespace, 'path');
+                    fillPath.setAttribute('d', pathData);
+                    fillPath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
+                    fillPath.setAttribute('stroke', 'none');
+                    if (elementTransform) {
+                        fillPath.setAttribute('transform', elementTransform);
+                    }
+                    
+                    // Insert ngay trước element gốc (z-order: fillPath phía sau, nhưng element gốc sẽ bị clear fill/stroke)
+                    if (element.parentNode) {
+                        element.parentNode.insertBefore(fillPath, element);
+                    }
+                    
+                    // Clear fill/stroke gốc để tránh màu cũ che material
+                    element.setAttribute('fill', 'none');
+                    element.removeAttribute('stroke');
+                    element.removeAttribute('stroke-width');
+                    
+                    processedCount++;
+                    console.log('🎨 ✅ Logo element #' + index + ' processed - FULL material fill');
+                    
+                } catch (error) {
+                    console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
+                    skippedCount++;
+                }
+            });
+            
+            console.log('🎨 ✅ Logo material fill pre-processing complete');
+            console.log('🎨    - Elements processed with material fill:', processedCount);
+            console.log('🎨    - Elements skipped:', skippedCount);
         }
 
         /**
