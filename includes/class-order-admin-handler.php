@@ -1875,13 +1875,13 @@ class APD_Order_Admin_Handler
                                     }
                                 }
                                 
-                                // Create expanded path (scale from center)
+                                // Create expanded path (scale from center) for material outline
                                 const expandedPath = document.createElementNS(namespace, 'path');
                                 expandedPath.setAttribute('d', pathData);
-                                expandedPath.setAttribute('fill', stroke); // Pattern fill
+                                expandedPath.setAttribute('fill', stroke); // Pattern fill (material outline)
                                 expandedPath.setAttribute('stroke', 'none');
                                 
-                                // Apply scale transform from center
+                                // Apply scale transform from center to expand path
                                 expandedPath.setAttribute('transform', 
                                     'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                                     'scale(' + scaleFactor.toFixed(4) + ') ' +
@@ -1889,6 +1889,7 @@ class APD_Order_Admin_Handler
                                 );
                                 
                                 // Create mask to cut out center (original element shape)
+                                // This creates outline effect: expanded path with center cut out
                                 const maskId = 'raster-outline-mask-' + index + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
                                 const mask = document.createElementNS(namespace, 'mask');
                                 mask.setAttribute('id', maskId);
@@ -1903,20 +1904,34 @@ class APD_Order_Admin_Handler
                                 mask.appendChild(maskBg);
                                 
                                 // Black element (cut out center - original shape)
+                                // This creates the outline by hiding the center
                                 const maskElement = element.cloneNode(true);
                                 maskElement.setAttribute('fill', 'black');
                                 maskElement.setAttribute('stroke', 'none');
+                                // Remove any transforms from mask element to ensure accurate masking
+                                maskElement.removeAttribute('transform');
                                 mask.appendChild(maskElement);
                                 
                                 defs.appendChild(mask);
                                 
-                                // Apply mask to expanded path
+                                // Apply mask to expanded path (creates outline effect)
                                 expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
                                 
                                 // CRITICAL: Insert expanded outline path BEFORE original element
                                 // This preserves original logo/text while adding material outline
-                                // Don't replace - keep both original and outline
+                                // Order: expanded outline (behind) -> original element (in front)
+                                // Both are visible: outline shows around original element
                                 element.parentNode.insertBefore(expandedPath, element);
+                                
+                                // Also remove stroke from original element to avoid double rendering
+                                // Original element should only have fill (logo/text shape)
+                                const originalFill = element.getAttribute('fill');
+                                if (!originalFill || originalFill === 'none') {
+                                    // If no fill, keep original fill or set to current color
+                                    // Don't change if already has fill
+                                }
+                                // Remove pattern stroke from original (outline is now separate)
+                                element.setAttribute('stroke', 'none');
                                 
                                 pathsProcessed++;
                                 
