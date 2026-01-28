@@ -1195,6 +1195,34 @@ class APD_Order_Admin_Handler
                 console.warn('📄 ⚠️ apdTextPattern exists but has no image - material outline may not work');
             }
             
+            // Pre-rasterize apdTextPattern if exists
+            let textPatternRasterized = null;
+            let rasterTextPatternId = null;
+            const textPatternExists = svgElement.querySelector('pattern#apdTextPattern');
+            if (textPatternExists) {
+                console.log('🎨 Pre-rasterizing apdTextPattern...');
+                textPatternRasterized = await rasterizePattern(svgElement, 'apdTextPattern');
+                
+                if (textPatternRasterized) {
+                    rasterTextPatternId = 'apdTextPattern-rasterized';
+                    const rasterPattern = document.createElementNS(namespace, 'pattern');
+                    rasterPattern.setAttribute('id', rasterTextPatternId);
+                    rasterPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+                    rasterPattern.setAttribute('width', '256');
+                    rasterPattern.setAttribute('height', '256');
+                    
+                    const rasterImage = document.createElementNS(namespace, 'image');
+                    rasterImage.setAttribute('href', textPatternRasterized);
+                    rasterImage.setAttribute('width', '256');
+                    rasterImage.setAttribute('height', '256');
+                    rasterPattern.appendChild(rasterImage);
+                    
+                    defs.appendChild(rasterPattern);
+                    
+                    console.log('🎨 ✅ Created rasterized apdTextPattern');
+                }
+            }
+            
             // Step 1: Extract font data from SVG @font-face
             const fontCache = new Map();
             const styleElements = svgElement.querySelectorAll('style');
@@ -1482,7 +1510,17 @@ class APD_Order_Admin_Handler
                                         // Scale từng character riêng lẻ từ center của chính nó
                                         const expandedPath = document.createElementNS(namespace, 'path');
                                         expandedPath.setAttribute('d', charInfo.pathData); // Path data của character này
-                                        expandedPath.setAttribute('fill', stroke); // Pattern fill (CorelDRAW compatible!)
+                                        
+                                        // Use rasterized pattern if available
+                                        const patternId = stroke.match(/url\(#([^)]+)\)/)[1];
+                                        if (patternId === 'apdTextPattern' && textPatternRasterized && rasterTextPatternId) {
+                                            expandedPath.setAttribute('fill', 'url(#' + rasterTextPatternId + ')');
+                                            if (charIdx === 0) { // Log once per text element
+                                                console.log('🎨 Using rasterized pattern for text character');
+                                            }
+                                        } else {
+                                            expandedPath.setAttribute('fill', stroke); // Fallback to original
+                                        }
                                         expandedPath.setAttribute('stroke', 'none');
                                         
                                         // Transform riêng cho character này - scale từ center của chính nó
@@ -1855,6 +1893,73 @@ class APD_Order_Admin_Handler
         }
 
         /**
+         * Rasterize SVG pattern to PNG data URL
+         * Patterns are material textures (PNG/JPEG) that browser canvas can't render in masked elements
+         * Solution: Pre-rasterize pattern to solid PNG tile that browser CAN render
+         */
+        async function rasterizePattern(svgElement, patternId) {
+            console.log('🎨 Rasterizing pattern:', patternId);
+            
+            const pattern = svgElement.querySelector('pattern#' + patternId);
+            if (!pattern) {
+                console.warn('🎨 Pattern not found:', patternId);
+                return null;
+            }
+            
+            // Get pattern image
+            const patternImage = pattern.querySelector('image');
+            if (!patternImage) {
+                console.warn('🎨 Pattern has no image:', patternId);
+                return null;
+            }
+            
+            const href = patternImage.getAttribute('href') || patternImage.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+            if (!href) {
+                console.warn('🎨 Pattern image has no href:', patternId);
+                return null;
+            }
+            
+            // Get pattern dimensions (or default)
+            const patternWidth = parseFloat(pattern.getAttribute('width') || '100');
+            const patternHeight = parseFloat(pattern.getAttribute('height') || '100');
+            
+            // Create canvas for pattern tile
+            const tileSize = 256; // Fixed tile size for consistency
+            const canvas = document.createElement('canvas');
+            canvas.width = tileSize;
+            canvas.height = tileSize;
+            const ctx = canvas.getContext('2d');
+            
+            // Load and draw pattern image
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = function() {
+                    // Draw pattern as repeating tile
+                    const scaleX = tileSize / patternWidth;
+                    const scaleY = tileSize / patternHeight;
+                    
+                    for (let y = 0; y < tileSize; y += patternHeight * scaleY) {
+                        for (let x = 0; x < tileSize; x += patternWidth * scaleX) {
+                            ctx.drawImage(img, x, y, patternWidth * scaleX, patternHeight * scaleY);
+                        }
+                    }
+                    
+                    // Export to PNG
+                    const pngDataUrl = canvas.toDataURL('image/png', 1.0);
+                    console.log('🎨 ✅ Pattern rasterized:', patternId, '(', pngDataUrl.length, 'bytes)');
+                    resolve(pngDataUrl);
+                };
+                
+                img.onerror = function() {
+                    console.warn('🎨 Failed to load pattern image:', patternId);
+                    resolve(null);
+                };
+                
+                img.src = href;
+            });
+        }
+
+        /**
          * Convert logo pattern strokes to expanded outline paths with masks
          * Same approach as convertTextToPathsWithMaterialOutline - pre-process before rasterization
          * This ensures browser canvas can render the masks correctly
@@ -1888,6 +1993,34 @@ class APD_Order_Admin_Handler
                 tempSvg.setAttribute('viewBox', viewBox);
             }
             document.body.appendChild(tempSvg);
+            
+            // Pre-rasterize patterns to PNG (browser canvas can render PNG fills in masks)
+            console.log('🎨 Pre-rasterizing material patterns...');
+            const logoPatternPng = await rasterizePattern(svgElement, 'logoMaterialPattern');
+            
+            if (!logoPatternPng) {
+                console.warn('🎨 Failed to rasterize logoMaterialPattern - material outline may be lost');
+                document.body.removeChild(tempSvg);
+                return;
+            }
+            
+            // Create new pattern with rasterized PNG tile
+            const rasterPatternId = 'logoMaterialPattern-rasterized';
+            const rasterPattern = document.createElementNS(namespace, 'pattern');
+            rasterPattern.setAttribute('id', rasterPatternId);
+            rasterPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+            rasterPattern.setAttribute('width', '256');
+            rasterPattern.setAttribute('height', '256');
+            
+            const rasterImage = document.createElementNS(namespace, 'image');
+            rasterImage.setAttribute('href', logoPatternPng);
+            rasterImage.setAttribute('width', '256');
+            rasterImage.setAttribute('height', '256');
+            rasterPattern.appendChild(rasterImage);
+            
+            defs.appendChild(rasterPattern);
+            
+            console.log('🎨 ✅ Created rasterized pattern:', rasterPatternId);
             
             try {
                 logoElements.forEach((element, index) => {
@@ -1932,8 +2065,11 @@ class APD_Order_Admin_Handler
                         // Create expanded path for outline
                         const expandedPath = document.createElementNS(namespace, 'path');
                         expandedPath.setAttribute('d', pathData);
-                        expandedPath.setAttribute('fill', stroke); // Pattern fill
+                        // Use rasterized pattern instead of original pattern
+                        // Rasterized PNG patterns work in browser canvas.drawImage() with masks
+                        expandedPath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
                         expandedPath.setAttribute('stroke', 'none');
+                        console.log('🎨 Using rasterized pattern fill for logo element #' + index);
                         expandedPath.setAttribute('transform', 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                             'scale(' + scaleFactor.toFixed(4) + ') ' +
