@@ -2079,6 +2079,7 @@ class APD_Order_Admin_Handler
                             return;
                         }
                         
+
                         // Calculate expansion - FIXED WIDTH for uniform thickness across all elements
                         // Problem: scaleFactor based on avgSize causes uneven thickness
                         // Solution: Use FIXED expansion amount (pixels) for all elements
@@ -2123,10 +2124,10 @@ class APD_Order_Admin_Handler
                         
                         // White background (show all)
                         const maskBg = document.createElementNS(namespace, 'rect');
-                        maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
-                        maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
-                        maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
-                        maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
+                        maskBg.setAttribute('x', bbox.x - FIXED_OUTLINE_WIDTH * 2);
+                        maskBg.setAttribute('y', bbox.y - FIXED_OUTLINE_WIDTH * 2);
+                        maskBg.setAttribute('width', bbox.width + FIXED_OUTLINE_WIDTH * 4);
+                        maskBg.setAttribute('height', bbox.height + FIXED_OUTLINE_WIDTH * 4);
                         maskBg.setAttribute('fill', 'white');
                         mask.appendChild(maskBg);
                         
