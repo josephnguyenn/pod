@@ -1903,6 +1903,7 @@ class APD_Order_Admin_Handler
                                 }
                                 
                                 // Create expanded path (scale from center) for material outline
+                                // Composite path approach: No mask needed - z-order handles visibility
                                 const expandedPath = document.createElementNS(namespace, 'path');
                                 expandedPath.setAttribute('d', pathData);
                                 expandedPath.setAttribute('fill', stroke); // Pattern fill (material outline)
@@ -1915,47 +1916,20 @@ class APD_Order_Admin_Handler
                                     'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
                                 );
                                 
-                                // Create mask to cut out center (original element shape)
-                                // This creates outline effect: expanded path with center cut out
-                                const maskId = 'raster-outline-mask-' + index + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-                                const mask = document.createElementNS(namespace, 'mask');
-                                mask.setAttribute('id', maskId);
-                                
-                                // White background (show all) - large enough to cover expanded path
-                                const maskBg = document.createElementNS(namespace, 'rect');
-                                maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
-                                maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
-                                maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
-                                maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
-                                maskBg.setAttribute('fill', 'white');
-                                mask.appendChild(maskBg);
-                                
-                                // Black element (cut out center - original shape)
-                                // This creates the outline by hiding the center
-                                const maskElement = element.cloneNode(true);
-                                maskElement.setAttribute('fill', 'black');
-                                maskElement.setAttribute('stroke', 'none');
-                                // Remove any transforms from mask element to ensure accurate masking
-                                maskElement.removeAttribute('transform');
-                                mask.appendChild(maskElement);
-                                
-                                defs.appendChild(mask);
-                                
-                                // Apply mask to expanded path (creates outline effect)
-                                expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
-                                
                                 // CRITICAL: Insert expanded outline path BEFORE original element
-                                // This preserves original logo/text while adding material outline
+                                // Composite path approach: No mask - z-order ensures outline visible
                                 // Order: expanded outline (behind) -> original element (in front)
-                                // Both are visible: outline shows around original element
+                                // Expanded path với pattern fill (lớn hơn) shows around original element (nhỏ hơn)
+                                // Result: Material outline visible xung quanh original element
                                 element.parentNode.insertBefore(expandedPath, element);
                                 
-                                // Fix 4: Verify logo outline path được tạo
+                                // Verify logo outline path được tạo (composite path approach, no mask)
                                 if (patternId === 'logoMaterialPattern') {
                                     // Verify expanded path was inserted
                                     const insertedPath = element.previousSibling;
                                     if (insertedPath && insertedPath.tagName === 'path' && insertedPath.getAttribute('fill') === stroke) {
-                                        console.log('🎨 ✅ Logo outline path verified - inserted before element #' + index);
+                                        console.log('🎨 ✅ Logo outline path verified - composite path approach (no mask)');
+                                        console.log('🎨 ✅ Expanded path with pattern fill inserted before element #' + index);
                                     } else {
                                         console.warn('🎨 ⚠️ Logo outline path not found after insertion');
                                     }
@@ -1996,10 +1970,12 @@ class APD_Order_Admin_Handler
                                 }
                                 
                                 if (pathsProcessed === 1) {
-                                    console.log('🎨 ✅ Using mask approach for material outline (expanded paths with pattern fills)');
+                                    console.log('🎨 ✅ Using composite path approach for material outline (no mask)');
+                                    console.log('🎨 ✅ Expanded paths with pattern fills (behind) + original elements (in front)');
                                     console.log('🎨 ✅ Supports all SVG shapes: path, polygon, rect, circle, ellipse, line, polyline');
                                     console.log('🎨 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per element');
                                     console.log('🎨 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per element');
+                                    console.log('🎨 ✅ Z-order ensures material outline visible around original elements');
                                 }
                             } catch (error) {
                                 console.warn('🎨 ⚠️ Error processing element #' + index + ':', error);
@@ -2016,7 +1992,8 @@ class APD_Order_Admin_Handler
             document.body.removeChild(tempSvg);
             
             if (pathsProcessed > 0) {
-                console.log('🎨 ✅ Processed ' + pathsProcessed + ' path(s) with expanded outline (mask approach)');
+                console.log('🎨 ✅ Processed ' + pathsProcessed + ' path(s) with expanded outline (composite path approach, no mask)');
+                console.log('🎨 ✅ Material outline created using z-order: expanded paths (behind) + original elements (in front)');
             } else {
                 console.log('🎨 ⚠️ No paths with pattern strokes found to process');
             }
@@ -2050,7 +2027,7 @@ class APD_Order_Admin_Handler
                                 console.log('   - Original SVG size:', width, 'x', height);
                                 console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
                                 console.log('   - PNG data length:', pngDataUrl.length);
-                                console.log('   - Material outline: Expanded paths with pattern fills (mask approach)');
+                                console.log('   - Material outline: Composite path approach (expanded paths + original elements, no mask)');
                                 console.log('   - Material outline is BAKED IN - perfect for CorelDraw');
                                 
                                 resolve({
