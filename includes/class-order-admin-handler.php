@@ -2085,16 +2085,46 @@ class APD_Order_Admin_Handler
                             return;
                         }
                         
-                        // Get bounding box from path data (not element) - avoids transform issues
-                        // Create temp path element with pathData to get accurate bbox
-                        const tempPath = document.createElementNS(namespace, 'path');
-                        tempPath.setAttribute('d', pathData);
-                        tempPath.setAttribute('stroke', 'none');
-                        tempPath.setAttribute('fill', 'none');
-                        // NO transform - path data is already in correct coordinates
-                        tempSvg.appendChild(tempPath);
-                        const bbox = tempPath.getBBox();
-                        tempSvg.removeChild(tempPath);
+                        // Get bounding box from ELEMENT in DOM context (with parent transforms)
+                        // This ensures bbox includes parent group transforms, like custom text's absolute bbox
+                        // CRITICAL: element.getBBox() returns bbox in SVG coordinate space (absolute)
+                        // Includes all parent group transforms - same as custom text's absolute bbox from opentype.js
+                        let bbox;
+                        try {
+                            // Method 1: Try getBBox from element directly (if in DOM with parent transforms)
+                            const originalStroke = element.getAttribute('stroke');
+                            element.setAttribute('stroke', 'none');
+                            bbox = element.getBBox(); // Accurate bbox with parent transforms applied
+                            if (originalStroke) {
+                                element.setAttribute('stroke', originalStroke);
+                            } else {
+                                element.removeAttribute('stroke');
+                            }
+                        } catch (e) {
+                            // Method 2: Fallback - create temp element with parent transform context
+                            // Get parent group transform if exists
+                            let parentGroup = element.parentNode;
+                            let parentTransform = '';
+                            while (parentGroup && parentGroup.tagName.toLowerCase() !== 'svg') {
+                                const transform = parentGroup.getAttribute('transform');
+                                if (transform) {
+                                    parentTransform = transform + ' ' + parentTransform;
+                                }
+                                parentGroup = parentGroup.parentNode;
+                            }
+                            
+                            // Create temp path with pathData AND parent transform
+                            const tempPath = document.createElementNS(namespace, 'path');
+                            tempPath.setAttribute('d', pathData);
+                            tempPath.setAttribute('stroke', 'none');
+                            tempPath.setAttribute('fill', 'none');
+                            if (parentTransform) {
+                                tempPath.setAttribute('transform', parentTransform);
+                            }
+                            tempSvg.appendChild(tempPath);
+                            bbox = tempPath.getBBox();
+                            tempSvg.removeChild(tempPath);
+                        }
                         
                         if (bbox.width === 0 || bbox.height === 0 || !isFinite(bbox.width) || !isFinite(bbox.height)) {
                             console.warn('🎨 Logo element #' + index + ' has invalid bbox (width=' + bbox.width + ', height=' + bbox.height + ') - skipping');
