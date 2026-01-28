@@ -463,6 +463,11 @@ class APD_Template_Manager
             return;
         }
 
+        // CRITICAL: Ensure material outline for logo is preserved in SVG
+        // Check if logoMaterialPattern exists but logo paths don't have stroke with it
+        // This ensures material outline is preserved correctly (consistent with PDF export)
+        $svg_content = $this->ensure_logo_material_outline($svg_content, $order_id);
+
         $upload_dir = wp_upload_dir();
         $filename = 'order-' . $order_id . '-design.svg';
         $filepath = $upload_dir['path'] . '/' . $filename;
@@ -477,5 +482,115 @@ class APD_Template_Manager
         } else {
             wp_send_json_error(array('message' => 'Failed to save SVG file'));
         }
+    }
+
+    /**
+     * Ensure material outline for logo is preserved in SVG
+     * Similar to applyLogoMaterialOutline() in customizer.js
+     * 
+     * @param string $svg_content SVG content
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with logo material outline preserved
+     */
+    private function ensure_logo_material_outline($svg_content, $order_id = 0)
+    {
+        // Check if logoMaterialPattern pattern definition exists
+        $has_logo_pattern = preg_match('/<pattern[^>]*id=["\']logoMaterialPattern["\'][^>]*>/i', $svg_content);
+        
+        if (!$has_logo_pattern) {
+            // No logoMaterialPattern found - material outline may not be applied
+            error_log("APD Download SVG - Order #$order_id: ⚠️ logoMaterialPattern not found in SVG - material outline may be missing");
+            return $svg_content;
+        }
+
+        // Check if pattern has embedded image (PNG/JPEG)
+        $pattern_has_image = preg_match('/<pattern[^>]*id=["\']logoMaterialPattern["\'][^>]*>.*?<image[^>]*>/is', $svg_content);
+        
+        if (!$pattern_has_image) {
+            error_log("APD Download SVG - Order #$order_id: ⚠️ logoMaterialPattern found but has no image - material outline may not work");
+            return $svg_content;
+        }
+
+        // Check if logo paths have logoMaterialPattern stroke
+        $logo_paths_with_stroke = preg_match_all('/<(path|polygon|rect|circle|ellipse|line|polyline)([^>]*stroke=["\']url\(#logoMaterialPattern\)["\'][^>]*)>/i', $svg_content);
+        
+        if ($logo_paths_with_stroke > 0) {
+            // Logo paths already have material outline - preserve as-is
+            error_log("APD Download SVG - Order #$order_id: ✅ Logo material outline already applied ($logo_paths_with_stroke paths with logoMaterialPattern stroke)");
+            return $svg_content;
+        }
+
+        // Logo paths don't have material outline - need to apply it
+        // Find logo paths (paths, polygons, etc. that might be logo elements)
+        // Strategy: Apply logoMaterialPattern stroke to paths that don't have pattern strokes yet
+        // This is a fallback to ensure material outline is preserved
+        
+        $logo_paths_found = preg_match_all('/<(path|polygon|rect|circle|ellipse|line|polyline)([^>]*)>/i', $svg_content, $matches, PREG_SET_ORDER);
+        
+        if ($logo_paths_found === 0) {
+            error_log("APD Download SVG - Order #$order_id: ⚠️ No logo paths found to apply material outline");
+            return $svg_content;
+        }
+
+        // Apply logoMaterialPattern stroke to logo paths that don't have pattern strokes
+        $paths_modified = 0;
+        $svg_content = preg_replace_callback(
+            '/<(path|polygon|rect|circle|ellipse|line|polyline)([^>]*)>/i',
+            function($match) use (&$paths_modified, $order_id) {
+                $tag = $match[1];
+                $attrs = $match[2];
+                
+                // Skip if already has pattern stroke (any pattern)
+                if (preg_match('/stroke=["\']url\(#[^)]+\)["\']/i', $attrs)) {
+                    return $match[0];
+                }
+                
+                // Skip if has fill with pattern (might be logo fill, not outline)
+                if (preg_match('/fill=["\']url\(#logoMaterialPattern\)["\']/i', $attrs)) {
+                    return $match[0];
+                }
+                
+                // Apply logoMaterialPattern stroke for material outline
+                $new_attrs = $attrs;
+                
+                // Set fill to none (outline layer)
+                if (!preg_match('/fill=/i', $attrs)) {
+                    $new_attrs .= ' fill="none"';
+                } else {
+                    $new_attrs = preg_replace('/fill=["\'][^"\']*["\']/', 'fill="none"', $new_attrs);
+                }
+                
+                // Add pattern stroke
+                $new_attrs .= ' stroke="url(#logoMaterialPattern)"';
+                
+                // Add stroke attributes (default width if not present)
+                if (!preg_match('/stroke-width=/i', $attrs)) {
+                    $new_attrs .= ' stroke-width="6"'; // Default stroke width
+                }
+                if (!preg_match('/stroke-linejoin=/i', $attrs)) {
+                    $new_attrs .= ' stroke-linejoin="round"';
+                }
+                if (!preg_match('/stroke-linecap=/i', $attrs)) {
+                    $new_attrs .= ' stroke-linecap="round"';
+                }
+                if (!preg_match('/paint-order=/i', $attrs)) {
+                    $new_attrs .= ' paint-order="stroke fill"';
+                }
+                
+                $paths_modified++;
+                
+                return '<' . $tag . $new_attrs . '>';
+            },
+            $svg_content,
+            50 // Limit to avoid over-applying
+        );
+        
+        if ($paths_modified > 0) {
+            error_log("APD Download SVG - Order #$order_id: ✅ Applied logoMaterialPattern stroke to $paths_modified logo paths (material outline preserved)");
+        } else {
+            error_log("APD Download SVG - Order #$order_id: ⚠️ No logo paths modified - material outline may already be applied or paths have other patterns");
+        }
+        
+        return $svg_content;
     }
 }

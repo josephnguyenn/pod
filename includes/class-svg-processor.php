@@ -2972,6 +2972,19 @@ class APD_SVG_Processor
             return $svg_content;
         }
         
+        // STEP 0.5: Check and preserve embedded fonts for font shape preservation
+        // Embedded fonts (@font-face with base64 data) allow Inkscape to preserve font shape when converting text to paths
+        $has_embedded_fonts = preg_match('/@font-face[^}]*src:\s*url\(data:application\/[^)]+;base64/i', $svg_content);
+        if ($has_embedded_fonts) {
+            error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Found embedded fonts in SVG - font shape will be preserved during conversion");
+            // Count embedded fonts
+            $font_count = preg_match_all('/@font-face[^}]*src:\s*url\(data:application\/[^)]+;base64/i', $svg_content);
+            error_log("APD Convert All to Curves NEW - Order #$order_id: Found $font_count embedded font(s)");
+        } else {
+            error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ No embedded fonts found - text will be converted to generic paths (font shape may be lost)");
+            error_log("APD Convert All to Curves NEW - Order #$order_id: 💡 Tip: Embed fonts in SVG to preserve font shape when converting to curves");
+        }
+        
         // STEP 1: Track custom text elements TRƯỚC conversion
         error_log("APD Convert All to Curves NEW - Order #$order_id: Tracking custom text elements...");
         $custom_text_elements = $this->track_custom_text_elements($svg_content, $order_id);
@@ -3030,16 +3043,18 @@ class APD_SVG_Processor
         file_put_contents($temp_svg_input, $svg_content);
         
         // STEP 4: Use Inkscape to convert ALL elements to paths (text, shapes, etc.)
-        // Command: Convert all text elements AND shapes to paths
-        // Using --actions to convert all objects to paths ensures everything becomes curves
+        // CRITICAL: Convert text first with object-to-path (Inkscape will use embedded fonts if available)
+        // Then convert shapes (circles, rects, etc.) to paths
+        // This preserves font shape when fonts are embedded in SVG
+        // Note: If fonts are embedded, Inkscape will use them to convert text to paths, preserving font shape
         $command = escapeshellarg($inkscape_path) . 
-                   ' --actions="select-all;object-to-path"' .
+                   ' --actions="select-all:text;object-to-path;select-all;object-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
                    ' --export-type=svg' .
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
-        error_log("APD Convert All to Curves NEW - Order #$order_id: Running Inkscape command to convert ALL elements to paths: " . $command);
+        error_log("APD Convert All to Curves NEW - Order #$order_id: Running Inkscape command to convert text and shapes to paths: " . $command);
         
         $output = shell_exec($command);
         $return_code = 0;
