@@ -2071,12 +2071,33 @@ class APD_Order_Admin_Handler
                     }
                     
                     try {
-                        // Get bounding box
-                        const tempElement = element.cloneNode(true);
-                        tempElement.setAttribute('stroke', 'none');
-                        tempSvg.appendChild(tempElement);
-                        const bbox = tempElement.getBBox();
-                        tempSvg.removeChild(tempElement);
+                        // Get bounding box - ensure accurate calculation
+                        // Method 1: Try getBBox from element directly (if in DOM)
+                        let bbox;
+                        try {
+                            // Remove stroke temporarily for accurate bbox
+                            const originalStroke = element.getAttribute('stroke');
+                            element.setAttribute('stroke', 'none');
+                            bbox = element.getBBox();
+                            // Restore stroke
+                            if (originalStroke) {
+                                element.setAttribute('stroke', originalStroke);
+                            } else {
+                                element.removeAttribute('stroke');
+                            }
+                        } catch (e) {
+                            // Fallback: Use temp element in tempSvg
+                            const tempElement = element.cloneNode(true);
+                            tempElement.setAttribute('stroke', 'none');
+                            // Preserve transform if exists
+                            const elementTransform = element.getAttribute('transform');
+                            if (elementTransform) {
+                                tempElement.setAttribute('transform', elementTransform);
+                            }
+                            tempSvg.appendChild(tempElement);
+                            bbox = tempElement.getBBox();
+                            tempSvg.removeChild(tempElement);
+                        }
                         
                         if (bbox.width === 0 || bbox.height === 0) {
                             console.warn('🎨 Logo element #' + index + ' has invalid bbox - skipping');
