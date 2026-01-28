@@ -2050,14 +2050,14 @@ class APD_Order_Admin_Handler
             
             console.log('🎨 ✅ Created rasterized pattern:', rasterPatternId);
             
-            // === FULL MATERIAL FILL FOR EACH LOGO ELEMENT ===
-            // Thay vì tạo ring bằng filter/mask, chúng ta fill luôn toàn bộ shape logo
-            // bằng material rasterized. Điều này đảm bảo không còn phần \"rỗng\" ở giữa.
+            // === FULL MATERIAL FILL + OUTER MATERIAL STROKE FOR EACH LOGO ELEMENT ===
+            // 1) Fill toàn bộ shape logo bằng material rasterized (giống background).
+            // 2) Thêm một stroke bên ngoài cũng dùng cùng material để tạo viền ngoài.
             let processedCount = 0;
             let skippedCount = 0;
             
             logoElements.forEach((element, index) => {
-                console.log('🎨 Processing logo element #' + index + ' for FULL material fill');
+                console.log('🎨 Processing logo element #' + index + ' for FULL material fill + OUTER stroke');
                 
                 try {
                     // Lấy path data (ưu tiên d, nếu không có thì convert shape → path)
@@ -2075,6 +2075,13 @@ class APD_Order_Admin_Handler
                     
                     const elementTransform = element.getAttribute('transform');
                     
+                    // Xác định độ dày viền ngoài: lấy stroke-width gốc nếu có, hoặc dùng min 48 (giống custom text)
+                    const originalStrokeWidthAttr = element.getAttribute('stroke-width');
+                    let outlineStrokeWidth = parseFloat(originalStrokeWidthAttr || '0');
+                    if (!outlineStrokeWidth || outlineStrokeWidth < 48) {
+                        outlineStrokeWidth = 48;
+                    }
+                    
                     // Path mới: fill toàn bộ diện tích element bằng material rasterized
                     const fillPath = document.createElementNS(namespace, 'path');
                     fillPath.setAttribute('d', pathData);
@@ -2089,13 +2096,30 @@ class APD_Order_Admin_Handler
                         element.parentNode.insertBefore(fillPath, element);
                     }
                     
+                    // Path viền ngoài: stroke dùng cùng material rasterized
+                    const outlinePath = document.createElementNS(namespace, 'path');
+                    outlinePath.setAttribute('d', pathData);
+                    outlinePath.setAttribute('fill', 'none');
+                    outlinePath.setAttribute('stroke', 'url(#' + rasterPatternId + ')');
+                    outlinePath.setAttribute('stroke-width', String(outlineStrokeWidth));
+                    outlinePath.setAttribute('stroke-linejoin', 'round');
+                    outlinePath.setAttribute('stroke-linecap', 'round');
+                    if (elementTransform) {
+                        outlinePath.setAttribute('transform', elementTransform);
+                    }
+                    
+                    // Cho outline nằm trên fillPath (insert sau fillPath, trước element gốc)
+                    if (element.parentNode) {
+                        element.parentNode.insertBefore(outlinePath, element);
+                    }
+                    
                     // Clear fill/stroke gốc để tránh màu cũ che material
                     element.setAttribute('fill', 'none');
                     element.removeAttribute('stroke');
                     element.removeAttribute('stroke-width');
                     
                     processedCount++;
-                    console.log('🎨 ✅ Logo element #' + index + ' processed - FULL material fill');
+                    console.log('🎨 ✅ Logo element #' + index + ' processed - FULL material fill + OUTER material stroke');
                     
                 } catch (error) {
                     console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
