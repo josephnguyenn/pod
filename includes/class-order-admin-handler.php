@@ -2131,12 +2131,15 @@ class APD_Order_Admin_Handler
                         maskBg.setAttribute('fill', 'white');
                         mask.appendChild(maskBg);
                         
-                        // Black element (cut out center)
-                        const maskElement = element.cloneNode(true);
-                        maskElement.setAttribute('fill', 'black');
-                        maskElement.setAttribute('stroke', 'none');
-                        maskElement.removeAttribute('transform');
-                        mask.appendChild(maskElement);
+                        // Black path (cut out center - original element shape)
+                        // Create mask path from pathData (not clone element) to avoid transform issues
+                        // Same approach as custom text: use path data directly, not element clone
+                        const maskPath = document.createElementNS(namespace, 'path');
+                        maskPath.setAttribute('d', pathData);
+                        maskPath.setAttribute('fill', 'black');
+                        maskPath.setAttribute('stroke', 'none');
+                        // No transform - path data is already in correct coordinates
+                        mask.appendChild(maskPath);
                         
                         defs.appendChild(mask);
                         
