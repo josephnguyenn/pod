@@ -97,8 +97,15 @@ class APD_SVG_Processor
         $svg_content = '';
         $source = '';
         
+        // Debug: Check all meta fields
+        $preview_svg_meta = get_post_meta($order_id, 'preview_image_svg', true);
+        $cart_items_raw = get_post_meta($order_id, 'cart_items', true);
+        
+        error_log("APD Get Order SVG - Order #$order_id: DEBUG - preview_image_svg meta value: " . substr($preview_svg_meta, 0, 200));
+        error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items type: " . gettype($cart_items_raw));
+        
         // Try 1: Direct meta field
-        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+        $svg_content = $preview_svg_meta;
         if (!empty($svg_content)) {
             $source = 'preview_image_svg meta';
         }
@@ -121,7 +128,7 @@ class APD_SVG_Processor
             }
         }
         
-        // Try 4: Cart items
+        // Try 4: Cart items - check customization_data thoroughly
         if (empty($svg_content)) {
             $cart_items = get_post_meta($order_id, 'cart_items', true);
             if (is_string($cart_items)) {
@@ -129,27 +136,75 @@ class APD_SVG_Processor
             }
             if (!empty($cart_items) && is_array($cart_items)) {
                 $first_item = $cart_items[0];
-                if (!empty($first_item['preview_image_svg'])) {
-                    $svg_content = $first_item['preview_image_svg'];
-                    $source = 'cart_items[0].preview_image_svg';
-                } elseif (!empty($first_item['customization_data'])) {
+                
+                // Debug: Log cart item structure
+                error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items[0] keys: " . implode(', ', array_keys($first_item)));
+                
+                // Try customization_data first (most likely location)
+                if (!empty($first_item['customization_data'])) {
                     $cd = is_array($first_item['customization_data']) ? $first_item['customization_data'] : json_decode($first_item['customization_data'], true);
-                    if (is_array($cd) && !empty($cd['preview_image_svg'])) {
-                        $svg_content = $cd['preview_image_svg'];
-                        $source = 'cart_items[0].customization_data.preview_image_svg';
+                    
+                    if (is_array($cd)) {
+                        error_log("APD Get Order SVG - Order #$order_id: DEBUG - customization_data keys: " . implode(', ', array_keys($cd)));
+                        
+                        // Try preview_image_svg
+                        if (!empty($cd['preview_image_svg'])) {
+                            $svg_val = $cd['preview_image_svg'];
+                            error_log("APD Get Order SVG - Order #$order_id: DEBUG - customization_data.preview_image_svg length: " . strlen($svg_val));
+                            error_log("APD Get Order SVG - Order #$order_id: DEBUG - First 100 chars: " . substr($svg_val, 0, 100));
+                            
+                            $svg_content = $svg_val;
+                            $source = 'cart_items[0].customization_data.preview_image_svg';
+                        }
+                        // Try svgContent
+                        elseif (!empty($cd['svgContent'])) {
+                            $svg_content = $cd['svgContent'];
+                            $source = 'cart_items[0].customization_data.svgContent';
+                        }
+                        // Try svg_content
+                        elseif (!empty($cd['svg_content'])) {
+                            $svg_content = $cd['svg_content'];
+                            $source = 'cart_items[0].customization_data.svg_content';
+                        }
                     }
+                }
+                
+                // Fallback to item level
+                if (empty($svg_content) && !empty($first_item['preview_image_svg'])) {
+                    $svg_val = $first_item['preview_image_svg'];
+                    error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items[0].preview_image_svg length: " . strlen($svg_val));
+                    error_log("APD Get Order SVG - Order #$order_id: DEBUG - First 100 chars: " . substr($svg_val, 0, 100));
+                    
+                    $svg_content = $svg_val;
+                    $source = 'cart_items[0].preview_image_svg';
                 }
             }
         }
         
-        // Try 5: Fetch from URL if it's a file URL
-        if (empty($svg_content)) {
-            $preview_svg = get_post_meta($order_id, 'preview_image_svg', true);
-            if (!empty($preview_svg) && filter_var($preview_svg, FILTER_VALIDATE_URL)) {
-                $response = wp_remote_get($preview_svg);
+        // Try 5: Fetch from URL if it's a file URL (e.g., PNG file that might contain SVG)
+        if (empty($svg_content) || (strlen($svg_content) < 200 && filter_var($svg_content, FILTER_VALIDATE_URL))) {
+            $url_to_fetch = $svg_content;
+            
+            // If $svg_content is empty, try getting URL from meta
+            if (empty($url_to_fetch)) {
+                $url_to_fetch = get_post_meta($order_id, 'preview_image_svg', true);
+            }
+            
+            if (!empty($url_to_fetch) && filter_var($url_to_fetch, FILTER_VALIDATE_URL)) {
+                error_log("APD Get Order SVG - Order #$order_id: Attempting to fetch from URL: $url_to_fetch");
+                
+                $response = wp_remote_get($url_to_fetch);
                 if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                    $svg_content = wp_remote_retrieve_body($response);
-                    $source = 'preview_image_svg URL (fetched)';
+                    $fetched_content = wp_remote_retrieve_body($response);
+                    
+                    // Check if it's actually SVG content
+                    if (strpos($fetched_content, '<svg') !== false) {
+                        $svg_content = $fetched_content;
+                        $source = 'Fetched from URL: ' . $url_to_fetch;
+                        error_log("APD Get Order SVG - Order #$order_id: ✅ Fetched SVG from URL");
+                    } else {
+                        error_log("APD Get Order SVG - Order #$order_id: ⚠️ URL content is not SVG (might be PNG)");
+                    }
                 }
             }
         }
