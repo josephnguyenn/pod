@@ -1,3 +1,37 @@
+## Verifying Vector PDFs in CorelDRAW
+
+- **Preferred export path (vector)**:
+  - Use the customizer’s `Export PDF` button.
+  - When the server-side Inkscape pipeline is working, the PDF is generated on the server and downloaded directly.
+  - This PDF should contain vector paths for logos and text, plus embedded material patterns, and is the **approved path for production**.
+
+- **How to check if the PDF is vector in CorelDRAW**:
+  - **Zoom test**: Open the PDF in CorelDRAW and zoom in very close (e.g. 1600%+).
+    - **Vector**: Edges stay crisp with no pixelation.
+    - **Raster/PNG**: Edges become blurry/pixelated.
+  - **Selection test**:
+    - Use the pick tool and click on letters/shapes.
+    - **Vector**: Individual letters/shapes can be selected and nodes appear when you switch to the Shape tool.
+    - **Raster/PNG**: The entire sign is a single bitmap object with no editable nodes.
+  - **Object properties**:
+    - Check the object properties / status bar.
+    - **Vector**: Shows curves/objects.
+    - **Raster**: Shows a bitmap (e.g. RGB bitmap, PNG).
+
+- **When you see a PNG-like PDF**:
+  - This usually means the system fell back to **client-side PDF generation** (browser using jsPDF and possibly svg2pdf.js), or to a raster-based server fallback.
+  - The customizer now shows a warning when this happens:
+    - Treat these PDFs as **proof-only** and **do not use them for final production**.
+    - Ask your admin/team to:
+      - Ensure Inkscape is installed and reachable on the server.
+      - Configure the `apd_inkscape_path` option or `INKSCAPE_PATH` environment variable if needed.
+      - Optionally enable the setting that disables client-side PDF fallback so issues are caught early.
+
+- **Recommended workflow for production**:
+  - Always export from the customizer with the server-side Inkscape pipeline working (no browser-fallback warning).
+  - Open the resulting PDF in CorelDRAW and run the zoom + selection tests before cutting.
+  - If the PDF fails these checks, do **not** use it for cutting; instead, fix the server-side vector export and re-export.
+
 # Material Outline Pattern - PDF Compatibility Analysis
 
 ## Material Outline Pattern Format

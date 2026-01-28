@@ -501,16 +501,32 @@ class APD_SVG_Processor
             
             // Check if client-side fallback is needed
             if (isset($error_data['use_client_side']) && $error_data['use_client_side']) {
+                // Optional safety: allow disabling client-side fallbacks entirely for production
+                $disable_client_fallback = get_option('apd_disable_client_side_pdf_fallback', false);
+                
+                if ($disable_client_fallback) {
+                    error_log("APD PDF from SVG: Client-side fallback requested but disabled via settings. Returning hard error.");
+                    wp_send_json_error(array(
+                        'message' => __('Server-side PDF generation failed and client-side fallback is disabled. Please check Inkscape/ImageMagick configuration.', 'freight-signs'),
+                        'code'    => 'pdf_client_fallback_disabled'
+                    ));
+                    return;
+                }
+                
                 error_log("APD PDF from SVG: Returning client-side fallback flag");
                 wp_send_json_success(array(
                     'use_client_side' => true,
-                    'svg_content' => $processed_svg
+                    'svg_content'     => $processed_svg,
+                    'message'         => $pdf_result->get_error_message(),
                 ));
                 return;
             }
             
             error_log("APD PDF from SVG: Sending error response");
-            wp_send_json_error(array('message' => $pdf_result->get_error_message()));
+            wp_send_json_error(array(
+                'message' => $pdf_result->get_error_message(),
+                'code'    => 'pdf_generation_failed'
+            ));
             return;
         }
         
@@ -2388,19 +2404,52 @@ class APD_SVG_Processor
      */
     private function find_inkscape()
     {
+        // 1) Allow explicit override via WP option (most reliable for production)
+        $option_path = get_option('apd_inkscape_path');
+        if (!empty($option_path)) {
+            $option_path = trim($option_path);
+            if (is_executable($option_path)) {
+                return $option_path;
+            }
+        }
+
+        // 2) Allow override via environment variable (e.g. INKSCAPE_PATH)
+        $env_path = getenv('INKSCAPE_PATH');
+        if (!empty($env_path)) {
+            $env_path = trim($env_path);
+            if (is_executable($env_path)) {
+                return $env_path;
+            }
+        }
+
+        // 3) Common install locations + PATH lookup
         $possible_paths = array(
             '/usr/bin/inkscape',
             '/usr/local/bin/inkscape',
-            '/opt/homebrew/bin/inkscape',
-            'inkscape', // In PATH
+            '/opt/homebrew/bin/inkscape',    // macOS Homebrew
+            '/opt/local/bin/inkscape',       // MacPorts
+            'inkscape',                      // In PATH (resolved via `which`)
         );
         
         foreach ($possible_paths as $path) {
-            if (is_executable($path) || shell_exec("which $path 2>/dev/null")) {
+            // Direct executable path
+            if ($path[0] === '/' && is_executable($path)) {
                 return $path;
+            }
+
+            // Fall back to PATH lookup for non-absolute entries
+            if ($path[0] !== '/') {
+                $which = @shell_exec('which ' . escapeshellarg($path) . ' 2>/dev/null');
+                if (!empty($which)) {
+                    $which = trim($which);
+                    if (is_executable($which)) {
+                        return $which;
+                    }
+                }
             }
         }
         
+        error_log('APD SVG to PDF NEW: Inkscape executable not found. Set "apd_inkscape_path" option or INKSCAPE_PATH env var.');
         return false;
     }
 

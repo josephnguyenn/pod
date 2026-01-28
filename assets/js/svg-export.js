@@ -618,7 +618,7 @@
                 console.log('📄 Server response:', result);
                 
                 if (result.success) {
-                    // Download the PDF
+                    // Download the PDF when server-side export succeeded
                     if (result.data.pdf_url) {
                         const link = document.createElement('a');
                         link.href = result.data.pdf_url;
@@ -626,11 +626,18 @@
                         document.body.appendChild(link);
                         link.click();
                         document.body.removeChild(link);
-                        console.log('✅ PDF exported:', filename);
+                        console.log('✅ PDF exported (server-side vector via Inkscape):', filename);
                         return true;
                     } else if (result.data.use_client_side) {
                         // Fallback to client-side generation
-                        console.log('⚠️ Using client-side PDF generation fallback');
+                        const serverMessage = result.data.message || 'Server-side PDF generation failed, falling back to browser.';
+                        console.warn('⚠️ Using client-side PDF generation fallback:', serverMessage);
+                        alert(
+                            'Warning: The PDF will be generated in your browser instead of the server.\n' +
+                            'This fallback PDF may contain a PNG image inside the PDF (not full vector) and\n' +
+                            'might not be ideal for production/CorelDRAW. Please only use this for proofing\n' +
+                            'and contact support to fix the server-side Inkscape export.'
+                        );
                         return await this._generateClientSidePDF(svgContent, filename);
                     }
                 } else {
@@ -641,6 +648,11 @@
                 console.error('❌ PDF export failed:', error);
                 // Fallback to client-side generation
                 try {
+                    alert(
+                        'Warning: Server-side PDF export failed. The system will now try to\n' +
+                        'generate the PDF in your browser. This PDF may be rasterized (like a PNG)\n' +
+                        'and may not be suitable for production/CorelDRAW.'
+                    );
                     const svgContent = await this.exportDesign({
                         dpi: 300,
                         convertTextToPaths: false,
@@ -697,15 +709,17 @@
                     compress: true
                 });
                 
-                // Try to use svg2pdf if available
+                // Try to use svg2pdf if available (preferred: keeps SVG vectors where possible)
                 if (typeof window.svg2pdf !== 'undefined' && window.svg2pdf.svg2pdf) {
+                    console.log('📄 Using svg2pdf.js for client-side vector PDF (fallback mode).');
                     await window.svg2pdf.svg2pdf(svgElement, doc, {
                         xOffset: 0,
                         yOffset: 0,
                         scale: 1
                     });
                 } else {
-                    // Fallback: Convert SVG to image
+                    // Fallback: Convert SVG to image (raster inside PDF)
+                    console.warn('📄 svg2pdf.js not available; falling back to PNG-in-PDF raster export.');
                     const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
                     const svgUrl = URL.createObjectURL(svgBlob);
                     const img = new Image();
