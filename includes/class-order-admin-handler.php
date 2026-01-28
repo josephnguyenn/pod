@@ -1961,8 +1961,8 @@ class APD_Order_Admin_Handler
                                     }
                                 }
                                 
-                                // Fix 1: Preserve logo fill khi remove stroke
-                                // Only remove stroke if element has fill
+                                // Fix 1: Ensure logo has fill for visibility when rasterizing
+                                // Logo elements with only stroke need fill to be visible in rasterized image
                                 const originalFill = element.getAttribute('fill');
                                 const originalStroke = element.getAttribute('stroke');
                                 
@@ -1973,10 +1973,18 @@ class APD_Order_Admin_Handler
                                         console.log('🎨 Logo element #' + index + ' has fill - removed stroke (outline is separate)');
                                     }
                                 } else {
-                                    // Element has no fill - keep stroke for visibility
-                                    // Don't remove stroke, just ensure outline path is behind
+                                    // Element has no fill - need to add fill for visibility
+                                    // For logo elements, use black fill (or inherit from parent if available)
+                                    // This ensures logo shape is visible in rasterized image
+                                    const parentFill = element.parentNode ? element.parentNode.getAttribute('fill') : null;
+                                    const fillColor = parentFill && parentFill !== 'none' ? parentFill : '#000000'; // Default to black
+                                    
+                                    element.setAttribute('fill', fillColor);
+                                    element.setAttribute('stroke', 'none'); // Remove stroke (outline is separate)
+                                    
                                     if (patternId === 'logoMaterialPattern') {
-                                        console.log('🎨 Logo element #' + index + ' has no fill - keeping stroke for visibility');
+                                        console.log('🎨 Logo element #' + index + ' has no fill - added fill (' + fillColor + ') for visibility');
+                                        console.log('🎨 Logo element #' + index + ' - removed stroke (outline is separate expanded path)');
                                     }
                                 }
                                 
