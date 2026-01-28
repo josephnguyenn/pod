@@ -2112,51 +2112,49 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // Calculate expansion for logo elements
-                        // Each logo element gets its own outline scaled from its own center
-                        const OUTLINE_EXPANSION_RATIO = 0.5; // Same base ratio as custom text
-                        const centerX = bbox.x + bbox.width / 2;
-                        const centerY = bbox.y + bbox.height / 2;
-                        const avgSize = (bbox.width + bbox.height) / 2;
-                        const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                        // Use HIGHER multiplier (4.0 instead of 1.7) for logo because logo elements are larger
-                        // Custom text chars are small (~30px avgSize) so 1.7 multiplier gives thick outline
-                        // Logo paths are large (~200px avgSize) so need 4.0 multiplier for same visual thickness
-                        // Also add minimum scaleFactor floor (1.08) to ensure visible outline for very large elements
-                        const rawScaleFactor = 1 + (expansionAmount * 4.0) / avgSize;
-                        const scaleFactor = Math.max(rawScaleFactor, 1.08); // Minimum 8% expansion for visibility
+                        // === CONSTANT WIDTH OUTLINE (NO SCALE) ===
+                        // Scaling from center will always \"nở nhiều\" theo chiều rộng của shape
+                        // (ví dụ chữ dài sẽ nở mạnh 2 bên). Để outline \"dính sát từng nét\" và
+                        // dày đều, ta dùng SVG filter feMorphology (dilate) để offset theo độ dày cố định.
+                        //
+                        // Vì output cuối là raster baked-in, dùng filter là cách ổn định nhất.
+                        const OUTLINE_EXPANSION_RATIO = 0.5;
+                        const outlineRadius = Math.max(1, Math.round(strokeWidth * OUTLINE_EXPANSION_RATIO));
                         
-                        // Path data already extracted above (before bbox calculation)
+                        // Create/reuse a dilate filter for this radius
+                        const filterId = 'logo-outline-dilate-' + outlineRadius;
+                        let dilateFilter = defs.querySelector('#' + filterId);
+                        if (!dilateFilter) {
+                            dilateFilter = document.createElementNS(namespace, 'filter');
+                            dilateFilter.setAttribute('id', filterId);
+                            // Use user space so radius matches SVG units
+                            dilateFilter.setAttribute('filterUnits', 'userSpaceOnUse');
+                            // Big region to avoid clipping
+                            dilateFilter.setAttribute('x', String(bbox.x - outlineRadius * 6));
+                            dilateFilter.setAttribute('y', String(bbox.y - outlineRadius * 6));
+                            dilateFilter.setAttribute('width', String(bbox.width + outlineRadius * 12));
+                            dilateFilter.setAttribute('height', String(bbox.height + outlineRadius * 12));
+                            
+                            const morph = document.createElementNS(namespace, 'feMorphology');
+                            morph.setAttribute('operator', 'dilate');
+                            morph.setAttribute('radius', String(outlineRadius));
+                            dilateFilter.appendChild(morph);
+                            
+                            defs.appendChild(dilateFilter);
+                        }
                         
-                        // Create expanded path for outline
-                        // CRITICAL FIX: Use ONLY element's own transform + scale (same as custom text)
-                        // Parent transforms are inherited automatically from element.parentNode
-                        const expandedPath = document.createElementNS(namespace, 'path');
-                        expandedPath.setAttribute('d', pathData);
-                        // Use rasterized pattern instead of original pattern
-                        // Rasterized PNG patterns work in browser canvas.drawImage() with masks
-                        expandedPath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
-                        expandedPath.setAttribute('stroke', 'none');
-                        console.log('🎨 Using rasterized pattern fill for logo element #' + index);
+                        // Outline path = same curves + same elementTransform, but dilated by filter
+                        const outlinePath = document.createElementNS(namespace, 'path');
+                        outlinePath.setAttribute('d', pathData);
+                        outlinePath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
+                        outlinePath.setAttribute('stroke', 'none');
+                        outlinePath.setAttribute('filter', 'url(#' + filterId + ')');
+                        if (elementTransform) {
+                            outlinePath.setAttribute('transform', elementTransform);
+                        }
                         
-                        // SIMPLIFIED APPROACH: No mask, just z-order
-                        // expandedPath goes BEHIND element, element's fill covers the center
-                        // This guarantees outline touches curves because they share same pathData
-                        
-                        // Transform: scale from visual center
-                        // CRITICAL: bbox was computed WITH elementTransform applied (line 2102)
-                        // So centerX/centerY are already in VISUAL (transformed) space
-                        // We must NOT append elementTransform again - that would apply it TWICE!
-                        const expandedTransform = 
-                            'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
-                            'scale(' + scaleFactor.toFixed(4) + ') ' +
-                            'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')';
-                        // Do NOT append elementTransform - it's already baked into centerX/centerY
-                        expandedPath.setAttribute('transform', expandedTransform);
-                        
-                        // Insert expanded path BEFORE original element (z-order: behind)
-                        // Original element will cover the center naturally with its fill
-                        element.parentNode.insertBefore(expandedPath, element);
+                        // Put outline behind original element (z-order)
+                        element.parentNode.insertBefore(outlinePath, element);
                         
                         // Preserve original element fill, remove stroke
                         const originalFill = element.getAttribute('fill');
@@ -2166,7 +2164,7 @@ class APD_Order_Admin_Handler
                         element.removeAttribute('stroke');
                         element.removeAttribute('stroke-width');
                         
-                        console.log('🎨 ✅ Logo element #' + index + ' processed - mask created in SVG DOM');
+                        console.log('🎨 ✅ Logo element #' + index + ' processed - constant-width outline (feMorphology)');
                         
                     } catch (error) {
                         console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
