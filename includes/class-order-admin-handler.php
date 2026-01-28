@@ -2085,42 +2085,22 @@ class APD_Order_Admin_Handler
                             return;
                         }
                         
-                        // === BBOX CALCULATION (LOGO) ===
-                        // Instead of relying on element.getBBox() (which can return 0,0 for elements
-                        // living in a detached SVG document), we compute the bbox from a temporary
-                        // path that lives in a real <svg> appended to document.body.
+                        // === BBOX CALCULATION (LOGO) - FIXED ===
+                        // Use ONLY element's own transform for bbox calculation (NOT parent transforms)
+                        // This matches custom text approach where opentype.js gives us local coordinates
                         // 
-                        // We apply the FULL transform chain (all parent <g> transforms + element's own
-                        // transform) onto this temp path so that its geometry is in the same absolute
-                        // coordinate space as the rendered logo.
-                        //
-                        // This mimics the "absolute bbox" behavior we get from opentype.js for custom
-                        // text, but for arbitrary logo paths.
-                        let parentGroup = element.parentNode;
-                        let parentTransform = '';
-                        while (parentGroup && parentGroup.tagName && parentGroup.tagName.toLowerCase() !== 'svg') {
-                            const transform = parentGroup.getAttribute('transform');
-                            if (transform) {
-                                // Prepend so that outermost transforms come first
-                                parentTransform = transform + ' ' + parentTransform;
-                            }
-                            parentGroup = parentGroup.parentNode;
-                        }
-                        
-                        // Include element's own transform (if any) AFTER parent transforms
+                        // Parent transforms are applied AUTOMATICALLY when we insert expandedPath
+                        // into element.parentNode, so we must NOT include them in the transform attribute
+                        // to avoid double-application of transforms.
                         const elementTransform = element.getAttribute('transform');
-                        let combinedTransform = parentTransform.trim();
-                        if (elementTransform) {
-                            combinedTransform = (combinedTransform ? combinedTransform + ' ' : '') + elementTransform;
-                        }
                         
-                        // Create temp path with pathData AND full transform chain
+                        // Create temp path with pathData and ONLY element's own transform
                         const tempPath = document.createElementNS(namespace, 'path');
                         tempPath.setAttribute('d', pathData);
                         tempPath.setAttribute('stroke', 'none');
                         tempPath.setAttribute('fill', 'none');
-                        if (combinedTransform) {
-                            tempPath.setAttribute('transform', combinedTransform);
+                        if (elementTransform) {
+                            tempPath.setAttribute('transform', elementTransform);
                         }
                         tempSvg.appendChild(tempPath);
                         const bbox = tempPath.getBBox();
@@ -2146,8 +2126,8 @@ class APD_Order_Admin_Handler
                         // Path data already extracted above (before bbox calculation)
                         
                         // Create expanded path for outline
-                        // CRITICAL: Apply combinedTransform FIRST, then scale from center
-                        // This ensures expanded path is in the same coordinate space as the rendered element
+                        // CRITICAL FIX: Use ONLY element's own transform + scale (same as custom text)
+                        // Parent transforms are inherited automatically from element.parentNode
                         const expandedPath = document.createElementNS(namespace, 'path');
                         expandedPath.setAttribute('d', pathData);
                         // Use rasterized pattern instead of original pattern
@@ -2156,11 +2136,11 @@ class APD_Order_Admin_Handler
                         expandedPath.setAttribute('stroke', 'none');
                         console.log('🎨 Using rasterized pattern fill for logo element #' + index);
                         
-                        // Build transform: combinedTransform (parent + element) THEN scale from center
-                        // This matches the coordinate space of the rendered element
+                        // Build transform: ONLY element's own transform + scale from center
+                        // Same approach as custom text (lines 1526-1530) - NO parent transforms
                         let expandedTransform = '';
-                        if (combinedTransform) {
-                            expandedTransform = combinedTransform + ' ';
+                        if (elementTransform) {
+                            expandedTransform = elementTransform + ' ';
                         }
                         expandedTransform += 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
@@ -2183,15 +2163,15 @@ class APD_Order_Admin_Handler
                         mask.appendChild(maskBg);
                         
                         // Black path (cut out center - original element shape)
-                        // CRITICAL: Apply SAME combinedTransform to mask path so it aligns with expanded path
-                        // Both expanded path and mask path must be in the same coordinate space
+                        // CRITICAL FIX: Use ONLY element's own transform (same as custom text)
+                        // Custom text uses fillPath.cloneNode(true) which has NO transform
                         const maskPath = document.createElementNS(namespace, 'path');
                         maskPath.setAttribute('d', pathData);
                         maskPath.setAttribute('fill', 'black');
                         maskPath.setAttribute('stroke', 'none');
-                        // Apply combinedTransform so mask path aligns with expanded path (before scale)
-                        if (combinedTransform) {
-                            maskPath.setAttribute('transform', combinedTransform);
+                        // Apply ONLY element's own transform (if any) - NO parent transforms
+                        if (elementTransform) {
+                            maskPath.setAttribute('transform', elementTransform);
                         }
                         mask.appendChild(maskPath);
                         
