@@ -1775,8 +1775,8 @@ class APD_Order_Admin_Handler
             const pathsWithPatternStrokes = svgClone.querySelectorAll('[stroke*="url(#"]');
             let pathsProcessed = 0;
             
-            pathsWithPatternStrokes.forEach((path, index) => {
-                const stroke = path.getAttribute('stroke');
+            pathsWithPatternStrokes.forEach((element, index) => {
+                const stroke = element.getAttribute('stroke');
                 if (stroke && stroke.startsWith('url(#')) {
                     // Get pattern ID
                     const patternMatch = stroke.match(/url\(#([^)]+)\)/);
@@ -1788,23 +1788,17 @@ class APD_Order_Admin_Handler
                         if (pattern) {
                             try {
                                 // Get stroke attributes
-                                const strokeWidth = parseFloat(path.getAttribute('stroke-width') || '6');
-                                const strokeLinejoin = path.getAttribute('stroke-linejoin') || 'round';
-                                const strokeLinecap = path.getAttribute('stroke-linecap') || 'round';
-                                
-                                // Get path data
-                                const pathData = path.getAttribute('d');
-                                if (!pathData) {
-                                    console.warn('🎨 Path #' + index + ' has no path data, skipping');
-                                    return;
-                                }
+                                const strokeWidth = parseFloat(element.getAttribute('stroke-width') || '6');
+                                const strokeLinejoin = element.getAttribute('stroke-linejoin') || 'round';
+                                const strokeLinecap = element.getAttribute('stroke-linecap') || 'round';
                                 
                                 // Get bounding box by temporarily appending to temp SVG
-                                const tempPath = path.cloneNode(true);
-                                tempPath.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
-                                tempSvg.appendChild(tempPath);
-                                const bbox = tempPath.getBBox();
-                                tempSvg.removeChild(tempPath);
+                                // This works for ALL SVG shape elements (path, polygon, rect, circle, ellipse, line, polyline)
+                                const tempElement = element.cloneNode(true);
+                                tempElement.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
+                                tempSvg.appendChild(tempElement);
+                                const bbox = tempElement.getBBox();
+                                tempSvg.removeChild(tempElement);
                                 
                                 // Calculate center and scale factor
                                 const centerX = bbox.x + bbox.width / 2;
@@ -1812,6 +1806,74 @@ class APD_Order_Admin_Handler
                                 const avgSize = (bbox.width + bbox.height) / 2;
                                 const expansionAmount = strokeWidth * 1.7; // Same as text approach
                                 const scaleFactor = 1 + expansionAmount / avgSize;
+                                
+                                // Get path data - convert element to path if needed
+                                let pathData = element.getAttribute('d');
+                                
+                                // If element is not a path, convert it to path data
+                                if (!pathData) {
+                                    const tagName = element.tagName.toLowerCase();
+                                    
+                                    // Convert different shape types to path data
+                                    if (tagName === 'rect') {
+                                        const x = parseFloat(element.getAttribute('x') || '0');
+                                        const y = parseFloat(element.getAttribute('y') || '0');
+                                        const w = parseFloat(element.getAttribute('width') || '0');
+                                        const h = parseFloat(element.getAttribute('height') || '0');
+                                        const rx = parseFloat(element.getAttribute('rx') || '0');
+                                        const ry = parseFloat(element.getAttribute('ry') || rx || '0');
+                                        
+                                        if (rx > 0 || ry > 0) {
+                                            // Rounded rect
+                                            pathData = `M ${x + rx},${y} L ${x + w - rx},${y} Q ${x + w},${y} ${x + w},${y + ry} L ${x + w},${y + h - ry} Q ${x + w},${y + h} ${x + w - rx},${y + h} L ${x + rx},${y + h} Q ${x},${y + h} ${x},${y + h - ry} L ${x},${y + ry} Q ${x},${y} ${x + rx},${y} Z`;
+                                        } else {
+                                            // Simple rect
+                                            pathData = `M ${x},${y} L ${x + w},${y} L ${x + w},${y + h} L ${x},${y + h} Z`;
+                                        }
+                                    } else if (tagName === 'circle') {
+                                        const cx = parseFloat(element.getAttribute('cx') || '0');
+                                        const cy = parseFloat(element.getAttribute('cy') || '0');
+                                        const r = parseFloat(element.getAttribute('r') || '0');
+                                        pathData = `M ${cx},${cy - r} A ${r},${r} 0 1,1 ${cx},${cy + r} A ${r},${r} 0 1,1 ${cx},${cy - r} Z`;
+                                    } else if (tagName === 'ellipse') {
+                                        const cx = parseFloat(element.getAttribute('cx') || '0');
+                                        const cy = parseFloat(element.getAttribute('cy') || '0');
+                                        const rx = parseFloat(element.getAttribute('rx') || '0');
+                                        const ry = parseFloat(element.getAttribute('ry') || '0');
+                                        pathData = `M ${cx},${cy - ry} A ${rx},${ry} 0 1,1 ${cx},${cy + ry} A ${rx},${ry} 0 1,1 ${cx},${cy - ry} Z`;
+                                    } else if (tagName === 'polygon') {
+                                        const points = element.getAttribute('points') || '';
+                                        const coords = points.trim().split(/[\s,]+/).map(parseFloat);
+                                        if (coords.length >= 2) {
+                                            pathData = 'M ' + coords[0] + ',' + coords[1];
+                                            for (let i = 2; i < coords.length; i += 2) {
+                                                pathData += ' L ' + coords[i] + ',' + coords[i + 1];
+                                            }
+                                            pathData += ' Z';
+                                        }
+                                    } else if (tagName === 'polyline') {
+                                        const points = element.getAttribute('points') || '';
+                                        const coords = points.trim().split(/[\s,]+/).map(parseFloat);
+                                        if (coords.length >= 2) {
+                                            pathData = 'M ' + coords[0] + ',' + coords[1];
+                                            for (let i = 2; i < coords.length; i += 2) {
+                                                pathData += ' L ' + coords[i] + ',' + coords[i + 1];
+                                            }
+                                        }
+                                    } else if (tagName === 'line') {
+                                        const x1 = parseFloat(element.getAttribute('x1') || '0');
+                                        const y1 = parseFloat(element.getAttribute('y1') || '0');
+                                        const x2 = parseFloat(element.getAttribute('x2') || '0');
+                                        const y2 = parseFloat(element.getAttribute('y2') || '0');
+                                        pathData = `M ${x1},${y1} L ${x2},${y2}`;
+                                    }
+                                    
+                                    // If still no path data, skip this element
+                                    if (!pathData) {
+                                        console.warn('🎨 Element #' + index + ' (' + tagName + ') cannot be converted to path, skipping');
+                                        return;
+                                    }
+                                }
                                 
                                 // Create expanded path (scale from center)
                                 const expandedPath = document.createElementNS(namespace, 'path');
@@ -1826,7 +1888,7 @@ class APD_Order_Admin_Handler
                                     'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
                                 );
                                 
-                                // Create mask to cut out center (original path shape)
+                                // Create mask to cut out center (original element shape)
                                 const maskId = 'raster-outline-mask-' + index + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
                                 const mask = document.createElementNS(namespace, 'mask');
                                 mask.setAttribute('id', maskId);
@@ -1840,32 +1902,33 @@ class APD_Order_Admin_Handler
                                 maskBg.setAttribute('fill', 'white');
                                 mask.appendChild(maskBg);
                                 
-                                // Black path (cut out center - original shape)
-                                const maskPath = path.cloneNode(true);
-                                maskPath.setAttribute('fill', 'black');
-                                maskPath.setAttribute('stroke', 'none');
-                                mask.appendChild(maskPath);
+                                // Black element (cut out center - original shape)
+                                const maskElement = element.cloneNode(true);
+                                maskElement.setAttribute('fill', 'black');
+                                maskElement.setAttribute('stroke', 'none');
+                                mask.appendChild(maskElement);
                                 
                                 defs.appendChild(mask);
                                 
                                 // Apply mask to expanded path
                                 expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
                                 
-                                // Replace original path with expanded path
-                                path.parentNode.replaceChild(expandedPath, path);
+                                // Replace original element with expanded path
+                                element.parentNode.replaceChild(expandedPath, element);
                                 
                                 pathsProcessed++;
                                 
                                 if (pathsProcessed === 1) {
                                     console.log('🎨 ✅ Using mask approach for material outline (expanded paths with pattern fills)');
-                                    console.log('🎨 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per path');
-                                    console.log('🎨 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per path');
+                                    console.log('🎨 ✅ Supports all SVG shapes: path, polygon, rect, circle, ellipse, line, polyline');
+                                    console.log('🎨 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per element');
+                                    console.log('🎨 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per element');
                                 }
                             } catch (error) {
-                                console.warn('🎨 ⚠️ Error processing path #' + index + ':', error);
+                                console.warn('🎨 ⚠️ Error processing element #' + index + ':', error);
                                 // Fallback: just convert stroke to fill
-                                path.setAttribute('fill', stroke);
-                                path.setAttribute('stroke', 'none');
+                                element.setAttribute('fill', stroke);
+                                element.setAttribute('stroke', 'none');
                             }
                         }
                     }
