@@ -2076,11 +2076,11 @@ class APD_Order_Admin_Handler
                     const elementTransform = element.getAttribute('transform');
                     
                     // Xác định độ dày viền ngoài: lấy stroke-width gốc nếu có,
-                    // hoặc dùng min 16 (mỏng hơn nữa, sát custom text hơn)
+                    // hoặc dùng min 12 (mỏng thêm một xíu, rất sát custom text)
                     const originalStrokeWidthAttr = element.getAttribute('stroke-width');
                     let outlineStrokeWidth = parseFloat(originalStrokeWidthAttr || '0');
-                    if (!outlineStrokeWidth || outlineStrokeWidth < 16) {
-                        outlineStrokeWidth = 16;
+                    if (!outlineStrokeWidth || outlineStrokeWidth < 12) {
+                        outlineStrokeWidth = 12;
                     }
                     
                     // Path mới: fill toàn bộ diện tích element bằng material rasterized
