@@ -2567,13 +2567,34 @@ class APD_SVG_Processor
         
         // CRITICAL: Add pattern STROKES to custom text paths if they only have fills
         // This ensures custom text paths can be converted via stroke-to-path like logo
+        // CRITICAL: Preserve stroke-width từ original text để material outline đúng thickness
         if ($custom_text_pattern_fills_before > 0 && $custom_text_pattern_strokes_before === 0) {
             error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Custom text paths have fills but no strokes - adding strokes for stroke-to-path conversion...");
+            
+            // Try to extract stroke-width from original SVG (before conversion)
+            // This preserves material outline thickness từ viền ngoài đã chọn
+            $original_stroke_width = null;
+            if (preg_match_all('/<text([^>]*stroke=["\']url\(#apdTextPattern\)["\'][^>]*)>/i', $original_svg_for_fallback, $original_text_matches, PREG_SET_ORDER)) {
+                foreach ($original_text_matches as $match) {
+                    $attrs = $match[1];
+                    if (preg_match('/stroke-width=["\']([^"\']+)["\']/', $attrs, $sw_match)) {
+                        $original_stroke_width = $sw_match[1];
+                        error_log("APD PDF Compatible NEW - Order #$order_id: Found stroke-width from original text: $original_stroke_width");
+                        break; // Use first found stroke-width
+                    }
+                }
+            }
+            
+            // Fallback to default if not found
+            if (!$original_stroke_width) {
+                $original_stroke_width = '48'; // Default fallback
+                error_log("APD PDF Compatible NEW - Order #$order_id: Using default stroke-width: $original_stroke_width");
+            }
             
             $paths_with_strokes_added = 0;
             $svg_content = preg_replace_callback(
                 '/<path([^>]*fill=["\']url\(#apdTextPattern\)["\'][^>]*)>/i',
-                function($matches) use (&$paths_with_strokes_added, $order_id) {
+                function($matches) use (&$paths_with_strokes_added, $original_stroke_width, $order_id) {
                     $attrs = $matches[1];
                     
                     // Skip if already has pattern stroke
@@ -2585,11 +2606,13 @@ class APD_SVG_Processor
                     $new_attrs = $attrs;
                     $new_attrs .= ' stroke="url(#apdTextPattern)"';
                     
-                    // Add stroke attributes if not present
-                    // Use larger stroke-width for more visible outline in CorelDraw
+                    // CRITICAL: Preserve stroke-width từ original text để material outline đúng thickness
+                    // Material outline từ viền ngoài được lấy từ stroke-width đã chọn trong original text
                     if (!preg_match('/stroke-width=/i', $attrs)) {
-                        $new_attrs .= ' stroke-width="48"'; // Increased from 24 to 48 for more visible outline
+                        $new_attrs .= ' stroke-width="' . htmlspecialchars($original_stroke_width, ENT_QUOTES) . '"';
                     }
+                    
+                    // Add stroke attributes for proper stroke-to-path conversion
                     if (!preg_match('/stroke-linejoin=/i', $attrs)) {
                         $new_attrs .= ' stroke-linejoin="round"';
                     }
@@ -2601,7 +2624,7 @@ class APD_SVG_Processor
                     }
                     
                     $paths_with_strokes_added++;
-                    error_log("APD PDF Compatible NEW - Order #$order_id: Added pattern stroke to custom text path #$paths_with_strokes_added");
+                    error_log("APD PDF Compatible NEW - Order #$order_id: Added pattern stroke with stroke-width=$original_stroke_width to custom text path #$paths_with_strokes_added");
                     
                     return '<path' . $new_attrs . '>';
                 },
@@ -4224,10 +4247,18 @@ class APD_SVG_Processor
         $paths_modified = 0;
         $pattern_applied_count = 0;
         
+        // Get stroke-width from first custom text element (usually all have same stroke-width)
+        $default_stroke_width = '48'; // Default fallback
+        if (!empty($custom_text_elements) && isset($custom_text_elements[0]['stroke_width'])) {
+            $default_stroke_width = $custom_text_elements[0]['stroke_width'];
+            error_log("APD Apply Custom Text Pattern - Order #$order_id: Using stroke-width from original text: $default_stroke_width");
+        }
+        
         // For each custom text element, try to find corresponding paths
         foreach ($custom_text_elements as $text_info) {
             $pattern_id = $text_info['pattern'];
             $text_content = $text_info['text'];
+            $stroke_width = isset($text_info['stroke_width']) ? $text_info['stroke_width'] : $default_stroke_width;
             
             // Find paths in groups or near the text position
             // Since Inkscape converts text to paths, we need to find paths that:
@@ -4238,7 +4269,7 @@ class APD_SVG_Processor
             // This is safer than trying to match positions exactly
             $svg_content = preg_replace_callback(
                 '/<path([^>]*)>/i',
-                function($matches) use ($pattern_id, &$paths_modified, &$pattern_applied_count, $order_id) {
+                function($matches) use ($pattern_id, $stroke_width, &$paths_modified, &$pattern_applied_count, $order_id) {
                     $attrs = $matches[1];
                     
                     // Skip if already has pattern fill
@@ -4255,13 +4286,32 @@ class APD_SVG_Processor
                     $new_attrs = $attrs;
                     $new_attrs .= ' fill="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
                     
-                    // Also add stroke for compatibility
+                    // CRITICAL: Also add stroke with stroke-width từ original text để stroke-to-path hoạt động đúng
+                    // Material outline từ viền ngoài được lấy từ stroke-width đã chọn trong original text
                     if (!preg_match('/stroke=["\']url\(/i', $attrs)) {
                         $new_attrs .= ' stroke="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
                     }
                     
+                    // Apply stroke-width từ original text (preserve material outline thickness)
+                    if (!preg_match('/stroke-width=/i', $attrs)) {
+                        $new_attrs .= ' stroke-width="' . htmlspecialchars($stroke_width, ENT_QUOTES) . '"';
+                    }
+                    
+                    // Add stroke attributes for proper stroke-to-path conversion
+                    if (!preg_match('/stroke-linejoin=/i', $attrs)) {
+                        $new_attrs .= ' stroke-linejoin="round"';
+                    }
+                    if (!preg_match('/stroke-linecap=/i', $attrs)) {
+                        $new_attrs .= ' stroke-linecap="round"';
+                    }
+                    if (!preg_match('/paint-order=/i', $attrs)) {
+                        $new_attrs .= ' paint-order="stroke fill"';
+                    }
+                    
                     $paths_modified++;
                     $pattern_applied_count++;
+                    
+                    error_log("APD Apply Custom Text Pattern - Order #$order_id: Applied pattern with stroke-width=$stroke_width to path #$paths_modified");
                     
                     return '<path' . $new_attrs . '>';
                 },
