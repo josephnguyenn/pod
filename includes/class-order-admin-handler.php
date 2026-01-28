@@ -2139,16 +2139,21 @@ class APD_Order_Admin_Handler
                         expandedPath.setAttribute('stroke', 'none');
                         console.log('🎨 Using rasterized pattern fill for logo element #' + index);
                         
-                        // Build transform: ONLY element's own transform + scale from center
-                        // Same approach as custom text (lines 1526-1530) - NO parent transforms
-                        let expandedTransform = '';
-                        if (elementTransform) {
-                            expandedTransform = elementTransform + ' ';
-                        }
-                        expandedTransform += 
+                        // Build transform: scale from center THEN element's transform
+                        // SVG applies transforms right-to-left to points:
+                        // So "translate(C) scale(s) translate(-C) elementTransform" means:
+                        // 1. Apply elementTransform to raw shape -> visual shape
+                        // 2. Translate by -C (in visual space where C was calculated)
+                        // 3. Scale
+                        // 4. Translate by +C
+                        // This correctly scales from the VISUAL center!
+                        let expandedTransform = 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                             'scale(' + scaleFactor.toFixed(4) + ') ' +
                             'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')';
+                        if (elementTransform) {
+                            expandedTransform += ' ' + elementTransform; // elementTransform at END (applied FIRST to points)
+                        }
                         expandedPath.setAttribute('transform', expandedTransform);
                         
                         // Create mask to cut out center
