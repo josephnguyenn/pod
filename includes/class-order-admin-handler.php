@@ -2071,36 +2071,33 @@ class APD_Order_Admin_Handler
                     }
                     
                     try {
-                        // Get bounding box - ensure accurate calculation
-                        // Method 1: Try getBBox from element directly (if in DOM)
-                        let bbox;
-                        try {
-                            // Remove stroke temporarily for accurate bbox
-                            const originalStroke = element.getAttribute('stroke');
-                            element.setAttribute('stroke', 'none');
-                            bbox = element.getBBox();
-                            // Restore stroke
-                            if (originalStroke) {
-                                element.setAttribute('stroke', originalStroke);
-                            } else {
-                                element.removeAttribute('stroke');
-                            }
-                        } catch (e) {
-                            // Fallback: Use temp element in tempSvg
-                            const tempElement = element.cloneNode(true);
-                            tempElement.setAttribute('stroke', 'none');
-                            // Preserve transform if exists
-                            const elementTransform = element.getAttribute('transform');
-                            if (elementTransform) {
-                                tempElement.setAttribute('transform', elementTransform);
-                            }
-                            tempSvg.appendChild(tempElement);
-                            bbox = tempElement.getBBox();
-                            tempSvg.removeChild(tempElement);
+                        // Get path data FIRST (before bbox calculation)
+                        // This ensures we work with path data directly, not element transforms
+                        let pathData = element.getAttribute('d');
+                        
+                        // Convert non-path elements to path
+                        if (!pathData) {
+                            pathData = convertShapeToPath(element);
                         }
                         
-                        if (bbox.width === 0 || bbox.height === 0) {
-                            console.warn('🎨 Logo element #' + index + ' has invalid bbox - skipping');
+                        if (!pathData) {
+                            console.warn('🎨 Logo element #' + index + ' cannot be converted to path - skipping');
+                            return;
+                        }
+                        
+                        // Get bounding box from path data (not element) - avoids transform issues
+                        // Create temp path element with pathData to get accurate bbox
+                        const tempPath = document.createElementNS(namespace, 'path');
+                        tempPath.setAttribute('d', pathData);
+                        tempPath.setAttribute('stroke', 'none');
+                        tempPath.setAttribute('fill', 'none');
+                        // NO transform - path data is already in correct coordinates
+                        tempSvg.appendChild(tempPath);
+                        const bbox = tempPath.getBBox();
+                        tempSvg.removeChild(tempPath);
+                        
+                        if (bbox.width === 0 || bbox.height === 0 || !isFinite(bbox.width) || !isFinite(bbox.height)) {
+                            console.warn('🎨 Logo element #' + index + ' has invalid bbox (width=' + bbox.width + ', height=' + bbox.height + ') - skipping');
                             return;
                         }
                         
@@ -2116,18 +2113,7 @@ class APD_Order_Admin_Handler
                         // Note: Using 1.7 multiplier (same as text) for consistent outline thickness
                         const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
                         
-                        // Get path data
-                        let pathData = element.getAttribute('d');
-                        
-                        // Convert non-path elements to path
-                        if (!pathData) {
-                            pathData = convertShapeToPath(element);
-                        }
-                        
-                        if (!pathData) {
-                            console.warn('🎨 Logo element #' + index + ' cannot be converted to path - skipping');
-                            return;
-                        }
+                        // Path data already extracted above (before bbox calculation)
                         
                         // Create expanded path for outline
                         const expandedPath = document.createElementNS(namespace, 'path');
