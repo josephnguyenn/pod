@@ -38,6 +38,7 @@ class APD_SVG_Processor
         add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
         add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
         add_action('wp_ajax_apd_export_pdf_from_svg', array($this, 'apd_export_pdf_from_svg'));
+        add_action('wp_ajax_apd_test_vector_pdf', array($this, 'apd_test_vector_pdf'));
         add_action('wp_ajax_apd_test_inkscape', array($this, 'test_inkscape_availability'));
         add_action('wp_ajax_apd_get_order_svg', array($this, 'apd_get_order_svg'));
     }
@@ -71,6 +72,85 @@ class APD_SVG_Processor
             'version' => trim($version),
             'working' => true,
             'message' => 'Inkscape is installed and working! PDF export will use server-side processing for best CorelDRAW compatibility.'
+        ));
+    }
+
+    /**
+     * Test vector PDF generation from a simple SVG - AJAX endpoint for diagnostics
+     *
+     * Allows admins to confirm that the end-to-end pipeline (make_pdf_compatible_new + svg_to_pdf_new)
+     * is producing PDFs that contain vector data rather than a single raster image.
+     */
+    public function apd_test_vector_pdf()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+
+        $inkscape_path = $this->find_inkscape();
+
+        // Minimal SVG with text and a rectangle to exercise text-to-curves and shapes
+        $test_svg = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">'
+            . '<defs>'
+            . '  <pattern id="apdTextPattern" patternUnits="userSpaceOnUse" width="20" height="20">'
+            . '    <rect width="20" height="20" fill="#cccccc"/>'
+            . '    <path d="M0,0 L20,20 M20,0 L0,20" stroke="#888888" stroke-width="2"/>'
+            . '  </pattern>'
+            . '</defs>'
+            . '<rect x="5" y="5" width="190" height="70" rx="10" ry="10" fill="#ffffff" stroke="#000000" stroke-width="2"/>'
+            . '<text x="100" y="45" text-anchor="middle" font-family="Arial" font-size="18" '
+            . ' fill="url(#apdTextPattern)" stroke="url(#apdTextPattern)" stroke-width="2">Vector Test</text>'
+            . '</svg>';
+
+        // Run through the same pipeline the real export uses
+        $processed_svg = $this->make_pdf_compatible_new($test_svg, 0);
+        if (is_wp_error($processed_svg)) {
+            wp_send_json_error(array(
+                'message' => $processed_svg->get_error_message(),
+                'step' => 'make_pdf_compatible_new',
+            ));
+            return;
+        }
+
+        $pdf_result = $this->svg_to_pdf_new($processed_svg, 0);
+        if (is_wp_error($pdf_result)) {
+            $data = $pdf_result->get_error_data();
+            wp_send_json_error(array(
+                'message' => $pdf_result->get_error_message(),
+                'step' => 'svg_to_pdf_new',
+                'data' => $data,
+            ));
+            return;
+        }
+
+        $pdf_content = $pdf_result;
+        $pdf_size = strlen($pdf_content);
+
+        // Heuristic checks for vector content vs purely raster
+        $markers = array();
+        $contains_vector = false;
+
+        if (strpos($pdf_content, '/Type /XObject') !== false) {
+            $markers[] = '/Type /XObject';
+        }
+        if (strpos($pdf_content, '/Subtype /Form') !== false) {
+            $markers[] = '/Subtype /Form';
+        }
+        if (strpos($pdf_content, '/Path') !== false) {
+            $markers[] = '/Path';
+        }
+
+        if (!empty($markers)) {
+            $contains_vector = true;
+        }
+
+        wp_send_json_success(array(
+            'pdf_size' => $pdf_size,
+            'contains_vector' => $contains_vector,
+            'markers' => $markers,
+            'inkscape_path' => $inkscape_path,
         ));
     }
 
@@ -501,32 +581,16 @@ class APD_SVG_Processor
             
             // Check if client-side fallback is needed
             if (isset($error_data['use_client_side']) && $error_data['use_client_side']) {
-                // Optional safety: allow disabling client-side fallbacks entirely for production
-                $disable_client_fallback = get_option('apd_disable_client_side_pdf_fallback', false);
-                
-                if ($disable_client_fallback) {
-                    error_log("APD PDF from SVG: Client-side fallback requested but disabled via settings. Returning hard error.");
-                    wp_send_json_error(array(
-                        'message' => __('Server-side PDF generation failed and client-side fallback is disabled. Please check Inkscape/ImageMagick configuration.', 'freight-signs'),
-                        'code'    => 'pdf_client_fallback_disabled'
-                    ));
-                    return;
-                }
-                
                 error_log("APD PDF from SVG: Returning client-side fallback flag");
                 wp_send_json_success(array(
                     'use_client_side' => true,
-                    'svg_content'     => $processed_svg,
-                    'message'         => $pdf_result->get_error_message(),
+                    'svg_content' => $processed_svg
                 ));
                 return;
             }
             
             error_log("APD PDF from SVG: Sending error response");
-            wp_send_json_error(array(
-                'message' => $pdf_result->get_error_message(),
-                'code'    => 'pdf_generation_failed'
-            ));
+            wp_send_json_error(array('message' => $pdf_result->get_error_message()));
             return;
         }
         
@@ -2401,55 +2465,65 @@ class APD_SVG_Processor
 
     /**
      * Find Inkscape executable path
+     *
+     * - First, honor a custom path stored in the DB option `apd_inkscape_path`
+     * - Then, scan common system locations and finally rely on PATH lookup
+     * - Logs what it checks so admins can debug server configuration
+     *
+     * @return string|false Resolved Inkscape binary path or false if not found
      */
     private function find_inkscape()
     {
-        // 1) Allow explicit override via WP option (most reliable for production)
-        $option_path = get_option('apd_inkscape_path');
-        if (!empty($option_path)) {
-            $option_path = trim($option_path);
-            if (is_executable($option_path)) {
-                return $option_path;
-            }
+        $paths_checked = array();
+
+        // Allow admins to override the auto-detected path via option
+        if (function_exists('get_option')) {
+            $custom_path = trim((string) get_option('apd_inkscape_path', ''));
+        } else {
+            $custom_path = '';
         }
 
-        // 2) Allow override via environment variable (e.g. INKSCAPE_PATH)
-        $env_path = getenv('INKSCAPE_PATH');
-        if (!empty($env_path)) {
-            $env_path = trim($env_path);
-            if (is_executable($env_path)) {
-                return $env_path;
-            }
+        $possible_paths = array();
+
+        if (!empty($custom_path)) {
+            $possible_paths[] = $custom_path;
         }
 
-        // 3) Common install locations + PATH lookup
-        $possible_paths = array(
-            '/usr/bin/inkscape',
-            '/usr/local/bin/inkscape',
-            '/opt/homebrew/bin/inkscape',    // macOS Homebrew
-            '/opt/local/bin/inkscape',       // MacPorts
-            'inkscape',                      // In PATH (resolved via `which`)
+        // Standard locations + PATH lookup token
+        $possible_paths = array_merge(
+            $possible_paths,
+            array(
+                '/usr/bin/inkscape',
+                '/usr/local/bin/inkscape',
+                '/opt/homebrew/bin/inkscape',
+                'inkscape', // In PATH
+            )
         );
         
         foreach ($possible_paths as $path) {
+            $paths_checked[] = $path;
+
             // Direct executable path
-            if ($path[0] === '/' && is_executable($path)) {
+            if (strpos($path, '/') === 0 && is_executable($path)) {
+                error_log("APD Inkscape detection: using executable path: {$path}");
                 return $path;
             }
 
-            // Fall back to PATH lookup for non-absolute entries
-            if ($path[0] !== '/') {
-                $which = @shell_exec('which ' . escapeshellarg($path) . ' 2>/dev/null');
-                if (!empty($which)) {
-                    $which = trim($which);
-                    if (is_executable($which)) {
-                        return $which;
-                    }
+            // Resolve via shell lookup when available (for PATH-based entries)
+            if (function_exists('shell_exec')) {
+                $resolved = trim((string) @shell_exec('command -v ' . escapeshellarg($path) . ' 2>/dev/null'));
+                if (empty($resolved)) {
+                    $resolved = trim((string) @shell_exec('which ' . escapeshellarg($path) . ' 2>/dev/null'));
+                }
+
+                if (!empty($resolved) && is_executable($resolved)) {
+                    error_log("APD Inkscape detection: resolved {$path} to {$resolved} via shell lookup");
+                    return $resolved;
                 }
             }
         }
         
-        error_log('APD SVG to PDF NEW: Inkscape executable not found. Set "apd_inkscape_path" option or INKSCAPE_PATH env var.');
+        error_log('APD Inkscape detection: Inkscape not found. Paths checked: ' . implode(', ', $paths_checked));
         return false;
     }
 

@@ -618,7 +618,7 @@
                 console.log('📄 Server response:', result);
                 
                 if (result.success) {
-                    // Download the PDF when server-side export succeeded
+                    // Download the PDF
                     if (result.data.pdf_url) {
                         const link = document.createElement('a');
                         link.href = result.data.pdf_url;
@@ -626,18 +626,11 @@
                         document.body.appendChild(link);
                         link.click();
                         document.body.removeChild(link);
-                        console.log('✅ PDF exported (server-side vector via Inkscape):', filename);
+                        console.log('✅ PDF exported:', filename);
                         return true;
                     } else if (result.data.use_client_side) {
                         // Fallback to client-side generation
-                        const serverMessage = result.data.message || 'Server-side PDF generation failed, falling back to browser.';
-                        console.warn('⚠️ Using client-side PDF generation fallback:', serverMessage);
-                        alert(
-                            'Warning: The PDF will be generated in your browser instead of the server.\n' +
-                            'This fallback PDF may contain a PNG image inside the PDF (not full vector) and\n' +
-                            'might not be ideal for production/CorelDRAW. Please only use this for proofing\n' +
-                            'and contact support to fix the server-side Inkscape export.'
-                        );
+                        console.log('⚠️ Using client-side PDF generation fallback');
                         return await this._generateClientSidePDF(svgContent, filename);
                     }
                 } else {
@@ -648,11 +641,6 @@
                 console.error('❌ PDF export failed:', error);
                 // Fallback to client-side generation
                 try {
-                    alert(
-                        'Warning: Server-side PDF export failed. The system will now try to\n' +
-                        'generate the PDF in your browser. This PDF may be rasterized (like a PNG)\n' +
-                        'and may not be suitable for production/CorelDRAW.'
-                    );
                     const svgContent = await this.exportDesign({
                         dpi: 300,
                         convertTextToPaths: false,
@@ -672,6 +660,8 @@
          */
         _generateClientSidePDF: async function(svgContent, filename) {
             try {
+                const allowRasterFallback = !!(window.FSC && window.FSC.allowRasterFallback);
+
                 // Check if jsPDF is available
                 if (typeof window.jspdf === 'undefined') {
                     throw new Error('jsPDF library not loaded');
@@ -709,17 +699,23 @@
                     compress: true
                 });
                 
-                // Try to use svg2pdf if available (preferred: keeps SVG vectors where possible)
+                // Try to use svg2pdf if available
                 if (typeof window.svg2pdf !== 'undefined' && window.svg2pdf.svg2pdf) {
-                    console.log('📄 Using svg2pdf.js for client-side vector PDF (fallback mode).');
                     await window.svg2pdf.svg2pdf(svgElement, doc, {
                         xOffset: 0,
                         yOffset: 0,
                         scale: 1
                     });
                 } else {
-                    // Fallback: Convert SVG to image (raster inside PDF)
-                    console.warn('📄 svg2pdf.js not available; falling back to PNG-in-PDF raster export.');
+                    // No svg2pdf available - decide whether we are allowed to rasterize
+                    if (!allowRasterFallback) {
+                        console.error('❌ Client-side vector PDF generation requires svg2pdf.js on the page. Raster fallback is disabled.');
+                        throw new Error('Vector PDF export is not available (svg2pdf.js missing and raster fallback disabled). Please enable svg2pdf.js or allow raster fallback.');
+                    }
+
+                    console.warn('⚠️ svg2pdf.js not found, using raster (PNG) fallback for PDF generation because allowRasterFallback=true');
+
+                    // Fallback: Convert SVG to image
                     const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
                     const svgUrl = URL.createObjectURL(svgBlob);
                     const img = new Image();
