@@ -2064,7 +2064,11 @@ class APD_Order_Admin_Handler
                     console.log('🎨 Processing logo element #' + index);
                     
                     const stroke = element.getAttribute('stroke');
-                    const strokeWidth = parseFloat(element.getAttribute('stroke-width') || '6');
+                    // Use same default strokeWidth as custom text (48) for consistent outline thickness
+                    let strokeWidth = parseFloat(element.getAttribute('stroke-width') || '0');
+                    if (strokeWidth === 0 || !strokeWidth) {
+                        strokeWidth = 48; // Same as custom text (line 1311) - larger stroke width for more visible outline
+                    }
                     
                     try {
                         // Get bounding box
@@ -2088,6 +2092,7 @@ class APD_Order_Admin_Handler
                         const avgSize = (bbox.width + bbox.height) / 2;
                         const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
                         // Same formula as text (line 1500) - uniform scaling with multiplier 1.7
+                        // Note: Using 1.7 multiplier (same as text) for consistent outline thickness
                         const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
                         
                         // Get path data
