@@ -1791,84 +1791,108 @@ class APD_Order_Admin_Handler
             const button = event.target.closest('button');
             const originalText = button.innerHTML;
             button.disabled = true;
-            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Preparing for export...';
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Loading SVG...';
 
-            // Step 1: Get SVG preview element
-            const svgPreviewContainer = document.getElementById('svg-preview-' + orderId);
-            if (!svgPreviewContainer) {
-                console.error('📄 ❌ SVG preview container not found');
-                button.disabled = false;
-                button.innerHTML = originalText;
-                alert('Error: SVG preview not found');
-                return;
-            }
-
-            const svgElement = svgPreviewContainer.querySelector('svg');
-            if (!svgElement) {
-                console.error('📄 ❌ SVG element not found');
-                button.disabled = false;
-                button.innerHTML = originalText;
-                alert('Error: SVG element not found');
-                return;
-            }
-
-            // Step 2: Check if SVG has material outline patterns
-            const hasMaterialOutline = svgElement.querySelector('[stroke*="MaterialPattern"]') !== null ||
-                                      svgElement.querySelector('[fill*="MaterialPattern"]') !== null;
+            // Step 1: Get SVG content from server first (admin order page doesn't have SVG rendered)
+            // We need to fetch SVG content via AJAX to parse and rasterize it
+            console.log('📄 Fetching SVG content from server...');
             
-            console.log('📄 Material outline detected:', hasMaterialOutline);
-
-            let svgDataToSend = null;
-
-            // Step 3: Rasterize if material outline exists (Option A)
-            if (hasMaterialOutline) {
-                console.log('🎨 Material outline detected - applying OPTION A: Full Rasterization');
-                console.log('🎨 This ensures 100% CorelDraw compatibility');
+            try {
+                // Fetch SVG content via AJAX
+                const svgResponse = await jQuery.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_get_order_svg',
+                        order_id: orderId,
+                        _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                    }
+                });
                 
-                button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
+                if (!svgResponse.success || !svgResponse.data.svg_content) {
+                    console.error('📄 ❌ Failed to fetch SVG content:', svgResponse);
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                    alert('Error: Could not load SVG content - ' + (svgResponse.data ? svgResponse.data.message : 'Unknown error'));
+                    return;
+                }
                 
-                try {
-                    // Rasterize the design
-                    const rasterData = await rasterizeDesignWithMaterial(svgElement);
+                console.log('📄 ✅ SVG content fetched from server');
+                const svgContentString = svgResponse.data.svg_content;
+                
+                // Step 2: Parse SVG string to DOM element
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgContentString, 'image/svg+xml');
+                const svgElement = svgDoc.documentElement;
+                
+                if (svgElement.nodeName !== 'svg') {
+                    console.error('📄 ❌ Invalid SVG content');
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                    alert('Error: Invalid SVG content');
+                    return;
+                }
+                
+                console.log('📄 ✅ SVG parsed successfully');
+
+                // Step 3: Check if SVG has material outline patterns
+                const hasMaterialOutline = svgElement.querySelector('[stroke*="MaterialPattern"]') !== null ||
+                                          svgElement.querySelector('[fill*="MaterialPattern"]') !== null;
+                
+                console.log('📄 Material outline detected:', hasMaterialOutline);
+
+                let svgDataToSend = null;
+
+                // Step 4: Rasterize if material outline exists (Option A)
+                if (hasMaterialOutline) {
+                    console.log('🎨 Material outline detected - applying OPTION A: Full Rasterization');
+                    console.log('🎨 This ensures 100% CorelDraw compatibility');
                     
-                    // Create SVG with embedded raster
-                    const rasterizedSVG = createRasterizedSVG(rasterData);
+                    button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
                     
-                    svgDataToSend = rasterizedSVG;
-                    
-                    console.log('✅ Rasterization complete - using rasterized SVG for PDF export');
-                    console.log('   - Material outline is now BAKED IN (hardcoded)');
-                    console.log('   - CorelDraw will display perfectly');
-                } catch (error) {
-                    console.error('❌ Rasterization failed:', error);
-                    console.log('⚠️ Falling back to original SVG (material outline may not display in CorelDraw)');
-                    // Fallback to original SVG
+                    try {
+                        // Rasterize the design
+                        const rasterData = await rasterizeDesignWithMaterial(svgElement);
+                        
+                        // Create SVG with embedded raster
+                        const rasterizedSVG = createRasterizedSVG(rasterData);
+                        
+                        svgDataToSend = rasterizedSVG;
+                        
+                        console.log('✅ Rasterization complete - using rasterized SVG for PDF export');
+                        console.log('   - Material outline is now BAKED IN (hardcoded)');
+                        console.log('   - CorelDraw will display perfectly');
+                    } catch (error) {
+                        console.error('❌ Rasterization failed:', error);
+                        console.log('⚠️ Falling back to original SVG (material outline may not display in CorelDraw)');
+                        // Fallback to original SVG
+                        svgDataToSend = new XMLSerializer().serializeToString(svgElement);
+                    }
+                } else {
+                    console.log('ℹ️ No material outline - using original vector SVG');
                     svgDataToSend = new XMLSerializer().serializeToString(svgElement);
                 }
-            } else {
-                console.log('ℹ️ No material outline - using original vector SVG');
-                svgDataToSend = new XMLSerializer().serializeToString(svgElement);
-            }
 
-            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
+                button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
 
-            console.log('📄 Sending request to server for PDF generation...');
-            console.log('📄 Action: apd_export_pdf');
-            console.log('📄 URL:', ajaxurl);
-            console.log('📄 Using:', hasMaterialOutline ? 'RASTERIZED SVG' : 'VECTOR SVG');
+                console.log('📄 Sending request to server for PDF generation...');
+                console.log('📄 Action: apd_export_pdf');
+                console.log('📄 URL:', ajaxurl);
+                console.log('📄 Using:', hasMaterialOutline ? 'RASTERIZED SVG' : 'VECTOR SVG');
 
-            jQuery.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'apd_export_pdf',
-                    order_id: orderId,
-                    svg_override: svgDataToSend, // Send rasterized or original SVG
-                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
-                },
-                success: function(response) {
-                    console.log('📄 Server response received:', response);
-                    if (response.success) {
+                // Step 5: Send to server for PDF generation
+                jQuery.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'apd_export_pdf',
+                        order_id: orderId,
+                        svg_override: svgDataToSend, // Send rasterized or original SVG
+                        _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        console.log('📄 Server response received:', response);
+                        if (response.success) {
                         console.log('📄 ✅ Server response: SUCCESS');
                         
                         // Check if we need to generate PDF client-side
@@ -1969,16 +1993,24 @@ class APD_Order_Admin_Handler
                     console.error('📄 XHR:', xhr);
                     alert('Network error occurred while generating PDF: ' + error);
                 },
-                complete: function() {
-                    if (exportVectorPDF._clientSide) {
-                        exportVectorPDF._clientSide = false;
-                        return;
+                    complete: function() {
+                        if (exportVectorPDF._clientSide) {
+                            exportVectorPDF._clientSide = false;
+                            return;
+                        }
+                        button.disabled = false;
+                        button.innerHTML = originalText;
                     }
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                }
-            });
-        }
+                });
+                
+            } catch (error) {
+                // Catch error from SVG fetch
+                console.error('📄 ❌ Error fetching SVG:', error);
+                button.disabled = false;
+                button.innerHTML = originalText;
+                alert('Error loading SVG content: ' + error.message);
+            }
+        };
 
         function runClientSidePDF(svgContent, orderId, button, originalText) {
             if (typeof generateClientSidePDF !== 'function') {

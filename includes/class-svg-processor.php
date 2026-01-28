@@ -39,6 +39,7 @@ class APD_SVG_Processor
         add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
         add_action('wp_ajax_apd_export_pdf_from_svg', array($this, 'apd_export_pdf_from_svg'));
         add_action('wp_ajax_apd_test_inkscape', array($this, 'test_inkscape_availability'));
+        add_action('wp_ajax_apd_get_order_svg', array($this, 'apd_get_order_svg'));
     }
     
     /**
@@ -70,6 +71,115 @@ class APD_SVG_Processor
             'version' => trim($version),
             'working' => true,
             'message' => 'Inkscape is installed and working! PDF export will use server-side processing for best CorelDRAW compatibility.'
+        ));
+    }
+
+    /**
+     * Get order SVG content - AJAX endpoint for client-side rasterization
+     */
+    public function apd_get_order_svg()
+    {
+        // Verify admin access
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+
+        $order_id = intval(isset($_POST['order_id']) ? $_POST['order_id'] : 0);
+        if (!$order_id) {
+            wp_send_json_error('Invalid order ID');
+            return;
+        }
+
+        error_log("APD Get Order SVG - Order #$order_id: Fetching SVG content for rasterization");
+
+        // Get SVG content - use same logic as cut-ready SVG
+        $svg_content = '';
+        $source = '';
+        
+        // Try 1: Direct meta field
+        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+        if (!empty($svg_content)) {
+            $source = 'preview_image_svg meta';
+        }
+        
+        // Try 2: PNG meta (might be base64 SVG)
+        if (empty($svg_content)) {
+            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
+            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
+                $svg_content = $preview_png;
+                $source = 'preview_image_png meta (contains SVG)';
+            }
+        }
+        
+        // Try 3: URL meta
+        if (empty($svg_content)) {
+            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
+            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
+                $svg_content = $preview_url;
+                $source = 'preview_image_url meta (contains SVG)';
+            }
+        }
+        
+        // Try 4: Cart items
+        if (empty($svg_content)) {
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first_item = $cart_items[0];
+                if (!empty($first_item['preview_image_svg'])) {
+                    $svg_content = $first_item['preview_image_svg'];
+                    $source = 'cart_items[0].preview_image_svg';
+                } elseif (!empty($first_item['customization_data'])) {
+                    $cd = is_array($first_item['customization_data']) ? $first_item['customization_data'] : json_decode($first_item['customization_data'], true);
+                    if (is_array($cd) && !empty($cd['preview_image_svg'])) {
+                        $svg_content = $cd['preview_image_svg'];
+                        $source = 'cart_items[0].customization_data.preview_image_svg';
+                    }
+                }
+            }
+        }
+        
+        // Try 5: Fetch from URL if it's a file URL
+        if (empty($svg_content)) {
+            $preview_svg = get_post_meta($order_id, 'preview_image_svg', true);
+            if (!empty($preview_svg) && filter_var($preview_svg, FILTER_VALIDATE_URL)) {
+                $response = wp_remote_get($preview_svg);
+                if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                    $svg_content = wp_remote_retrieve_body($response);
+                    $source = 'preview_image_svg URL (fetched)';
+                }
+            }
+        }
+
+        if (empty($svg_content)) {
+            error_log("APD Get Order SVG - Order #$order_id: ❌ No SVG content found");
+            wp_send_json_error(array(
+                'message' => 'No SVG content found for this order',
+                'order_id' => $order_id
+            ));
+            return;
+        }
+
+        // Decode if it's a data URL
+        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
+            if (strpos($svg_content, 'base64,') !== false) {
+                $svg_content = base64_decode(substr($svg_content, strpos($svg_content, 'base64,') + 7));
+            } else {
+                $svg_content = urldecode(substr($svg_content, strpos($svg_content, ',') + 1));
+            }
+            $source .= ' (decoded from data URL)';
+        }
+
+        error_log("APD Get Order SVG - Order #$order_id: ✅ SVG content found from: $source");
+        error_log("APD Get Order SVG - Order #$order_id: SVG size: " . strlen($svg_content) . " bytes");
+
+        wp_send_json_success(array(
+            'svg_content' => $svg_content,
+            'source' => $source,
+            'order_id' => $order_id
         ));
     }
 
