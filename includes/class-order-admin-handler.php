@@ -1772,8 +1772,25 @@ class APD_Order_Admin_Handler
             tempSvg.setAttribute('viewBox', svgClone.getAttribute('viewBox') || `0 0 ${width} ${height}`);
             document.body.appendChild(tempSvg);
             
+            // Find all elements with pattern strokes (including nested in groups)
             const pathsWithPatternStrokes = svgClone.querySelectorAll('[stroke*="url(#"]');
+            console.log('🎨 Found ' + pathsWithPatternStrokes.length + ' element(s) with pattern strokes');
+            
+            // Debug: Log pattern IDs found
+            const patternIds = new Set();
+            pathsWithPatternStrokes.forEach((el) => {
+                const stroke = el.getAttribute('stroke');
+                if (stroke) {
+                    const match = stroke.match(/url\(#([^)]+)\)/);
+                    if (match) {
+                        patternIds.add(match[1]);
+                    }
+                }
+            });
+            console.log('🎨 Pattern IDs found:', Array.from(patternIds));
+            
             let pathsProcessed = 0;
+            let pathsSkipped = 0;
             
             pathsWithPatternStrokes.forEach((element, index) => {
                 const stroke = element.getAttribute('stroke');
@@ -1871,8 +1888,11 @@ class APD_Order_Admin_Handler
                                     // If still no path data, skip this element
                                     if (!pathData) {
                                         console.warn('🎨 Element #' + index + ' (' + tagName + ') cannot be converted to path, skipping');
+                                        pathsSkipped++;
                                         return;
                                     }
+                                    
+                                    console.log('🎨 Converted ' + tagName + ' #' + index + ' to path data (length: ' + pathData.length + ')');
                                 }
                                 
                                 // Create expanded path (scale from center)
@@ -1939,9 +1959,13 @@ class APD_Order_Admin_Handler
             document.body.removeChild(tempSvg);
             
             if (pathsProcessed > 0) {
-                console.log('🎨 ✅ Processed ' + pathsProcessed + ' path(s) with expanded outline (mask approach)');
+                console.log('🎨 ✅ Processed ' + pathsProcessed + ' element(s) with expanded outline (mask approach)');
+                if (pathsSkipped > 0) {
+                    console.log('🎨 ⚠️ Skipped ' + pathsSkipped + ' element(s) (could not convert to path)');
+                }
             } else {
-                console.log('🎨 ⚠️ No paths with pattern strokes found to process');
+                console.log('🎨 ⚠️ No elements with pattern strokes found to process');
+                console.log('🎨 ⚠️ This may indicate logo elements are not detected or have different structure');
             }
             
             // Serialize modified SVG to string
