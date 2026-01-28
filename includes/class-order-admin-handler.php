@@ -2132,21 +2132,22 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // Calculate expansion - MUCH THICKER for logo visibility
+                        // Calculate expansion - SAME as custom text for consistency
                         // Each logo element gets its own outline scaled from its own center
-                        // Use larger expansion ratio and multiplier for thick, clear outline
-                        const OUTLINE_EXPANSION_RATIO = 0.8; // Increased for much thicker outline
+                        // Use SAME expansion ratio and multiplier as custom text (0.5 and 1.7)
+                        const OUTLINE_EXPANSION_RATIO = 0.5; // SAME as custom text (line 1113)
                         const centerX = bbox.x + bbox.width / 2;
                         const centerY = bbox.y + bbox.height / 2;
                         const avgSize = (bbox.width + bbox.height) / 2;
                         const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                        // Use multiplier 2.5 for much thicker, more visible outline
-                        // Each element scaled from its own center - no parent group transform
-                        const scaleFactor = 1 + (expansionAmount * 2.5) / avgSize;
+                        // Use SAME multiplier as custom text (1.7) for consistent outline thickness
+                        const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize; // SAME as custom text (line 1500)
                         
                         // Path data already extracted above (before bbox calculation)
                         
                         // Create expanded path for outline
+                        // CRITICAL: Apply combinedTransform FIRST, then scale from center
+                        // This ensures expanded path is in the same coordinate space as the rendered element
                         const expandedPath = document.createElementNS(namespace, 'path');
                         expandedPath.setAttribute('d', pathData);
                         // Use rasterized pattern instead of original pattern
@@ -2154,11 +2155,18 @@ class APD_Order_Admin_Handler
                         expandedPath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
                         expandedPath.setAttribute('stroke', 'none');
                         console.log('🎨 Using rasterized pattern fill for logo element #' + index);
-                        expandedPath.setAttribute('transform', 
+                        
+                        // Build transform: combinedTransform (parent + element) THEN scale from center
+                        // This matches the coordinate space of the rendered element
+                        let expandedTransform = '';
+                        if (combinedTransform) {
+                            expandedTransform = combinedTransform + ' ';
+                        }
+                        expandedTransform += 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                             'scale(' + scaleFactor.toFixed(4) + ') ' +
-                            'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
-                        );
+                            'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')';
+                        expandedPath.setAttribute('transform', expandedTransform);
                         
                         // Create mask to cut out center
                         const maskId = 'logo-outline-mask-' + index + '-' + Date.now();
@@ -2175,13 +2183,16 @@ class APD_Order_Admin_Handler
                         mask.appendChild(maskBg);
                         
                         // Black path (cut out center - original element shape)
-                        // Create mask path from pathData (not clone element) to avoid transform issues
-                        // Same approach as custom text: use path data directly, not element clone
+                        // CRITICAL: Apply SAME combinedTransform to mask path so it aligns with expanded path
+                        // Both expanded path and mask path must be in the same coordinate space
                         const maskPath = document.createElementNS(namespace, 'path');
                         maskPath.setAttribute('d', pathData);
                         maskPath.setAttribute('fill', 'black');
                         maskPath.setAttribute('stroke', 'none');
-                        // No transform - path data is already in correct coordinates
+                        // Apply combinedTransform so mask path aligns with expanded path (before scale)
+                        if (combinedTransform) {
+                            maskPath.setAttribute('transform', combinedTransform);
+                        }
                         mask.appendChild(maskPath);
                         
                         defs.appendChild(mask);
