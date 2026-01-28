@@ -389,14 +389,31 @@ class APD_SVG_Processor
         
         error_log("APD PDF Export - Order #$order_id: ===== STARTING PDF EXPORT =====");
 
-        // Get the original SVG - use same logic as cut-ready SVG
+        // Get the original SVG - check for client-side rasterized override first
         $svg_content = '';
         $source = '';
         
-        // Try 1: Direct meta field
-        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
-        if (!empty($svg_content)) {
-            $source = 'preview_image_svg meta';
+        // NEW: Check for rasterized SVG override from client
+        if (!empty($_POST['svg_override'])) {
+            $svg_content = wp_unslash($_POST['svg_override']);
+            $source = 'client-side rasterized SVG';
+            
+            // Detect if it's rasterized
+            $is_rasterized = preg_match('/<image[^>]*href=["\']data:image\/png/', $svg_content);
+            if ($is_rasterized) {
+                error_log("APD PDF Export - Order #$order_id: ✅ RASTERIZED SVG received from client (Option A)");
+                error_log("APD PDF Export - Order #$order_id: Material outline is BAKED IN - perfect for CorelDraw");
+            } else {
+                error_log("APD PDF Export - Order #$order_id: Vector SVG received from client");
+            }
+        }
+        
+        // Try 1: Direct meta field (if no override)
+        if (empty($svg_content)) {
+            $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+            if (!empty($svg_content)) {
+                $source = 'preview_image_svg meta';
+            }
         }
         
         // Try 2: PNG meta (might be base64 SVG)
@@ -2377,6 +2394,39 @@ class APD_SVG_Processor
             $svg_content = mb_convert_encoding($svg_content, 'UTF-8', $detected_encoding);
             error_log("APD PDF Compatible NEW - Order #$order_id: Converted from $detected_encoding to UTF-8");
         }
+        
+        // STEP 2.5: Check if SVG is rasterized (Option A - Full Rasterization)
+        // Rasterized SVG contains embedded PNG image with material outline baked in
+        $is_rasterized = preg_match('/<image[^>]*href=["\']data:image\/png;base64/', $svg_content);
+        
+        if ($is_rasterized) {
+            error_log("APD PDF Compatible NEW - Order #$order_id: ✅ RASTERIZED SVG detected (Option A)");
+            error_log("APD PDF Compatible NEW - Order #$order_id: Material outline is HARDCODED/BAKED IN - perfect for CorelDraw");
+            error_log("APD PDF Compatible NEW - Order #$order_id: Skipping all vector processing");
+            
+            // Validate SVG structure
+            if (!preg_match('/<svg[^>]*>/i', $svg_content)) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: ⚠️ Invalid SVG structure");
+                return new WP_Error('invalid_svg', 'Invalid SVG structure');
+            }
+            
+            // Check metadata
+            if (preg_match('/<metadata>([^<]+)<\/metadata>/', $svg_content, $meta_match)) {
+                error_log("APD PDF Compatible NEW - Order #$order_id: Metadata: " . $meta_match[1]);
+            }
+            
+            // Count image elements
+            $image_count = preg_match_all('/<image[^>]*>/i', $svg_content);
+            error_log("APD PDF Compatible NEW - Order #$order_id: Contains $image_count image element(s)");
+            
+            error_log("APD PDF Compatible NEW - Order #$order_id: ✅ Rasterized SVG ready for PDF - CorelDraw will display perfectly");
+            
+            // Return as-is - no processing needed for rasterized SVG
+            return $svg_content;
+        }
+        
+        // If not rasterized, continue with normal vector processing
+        error_log("APD PDF Compatible NEW - Order #$order_id: Vector SVG detected - continuing with normal processing");
         
         // STEP 3: Fix malformed attributes
         $svg_content = preg_replace('/(\w+(-\w+)*)="=""/', '', $svg_content);

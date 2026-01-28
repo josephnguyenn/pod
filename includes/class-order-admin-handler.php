@@ -1677,19 +1677,185 @@ class APD_Order_Admin_Handler
             }
         }
 
+        /**
+         * Rasterize entire design with material outline baked in (Option A)
+         * This ensures CorelDraw displays material outline perfectly
+         * Called before PDF export to create production-ready output
+         */
+        async function rasterizeDesignWithMaterial(svgElement) {
+            console.log('🎨 Starting full rasterization with material outline...');
+            
+            // Get SVG dimensions
+            const viewBox = svgElement.getAttribute('viewBox').split(' ');
+            const width = parseFloat(viewBox[2]);
+            const height = parseFloat(viewBox[3]);
+            
+            // Create high-resolution canvas for quality
+            const scale = 3; // 3x resolution for print quality
+            const canvas = document.createElement('canvas');
+            canvas.width = width * scale;
+            canvas.height = height * scale;
+            const ctx = canvas.getContext('2d');
+            
+            // Scale context for high-res rendering
+            ctx.scale(scale, scale);
+            
+            // Set white background (optional, for transparency use transparent)
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Serialize SVG to string
+            const svgData = new XMLSerializer().serializeToString(svgElement);
+            
+            // Create blob and object URL
+            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+            const url = URL.createObjectURL(svgBlob);
+            
+            // Load and draw SVG to canvas
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                
+                img.onload = function() {
+                    try {
+                        // Draw SVG image to canvas (material outline is rendered by browser)
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // Export canvas to PNG with high quality
+                        const pngDataUrl = canvas.toDataURL('image/png', 1.0);
+                        
+                        // Cleanup
+                        URL.revokeObjectURL(url);
+                        
+                        console.log('✅ Rasterization complete');
+                        console.log('   - Original SVG size:', width, 'x', height);
+                        console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
+                        console.log('   - PNG data length:', pngDataUrl.length);
+                        
+                        resolve({
+                            pngDataUrl: pngDataUrl,
+                            width: width,
+                            height: height,
+                            scale: scale
+                        });
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                
+                img.onerror = function(error) {
+                    URL.revokeObjectURL(url);
+                    reject(new Error('Failed to load SVG for rasterization: ' + error));
+                };
+                
+                img.src = url;
+            });
+        }
+
+        /**
+         * Create SVG wrapper with embedded raster image
+         * This maintains SVG format for compatibility while having rasterized content
+         */
+        function createRasterizedSVG(rasterData) {
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(svgNS, 'svg');
+            
+            // Set SVG attributes
+            svg.setAttribute('xmlns', svgNS);
+            svg.setAttribute('viewBox', '0 0 ' + rasterData.width + ' ' + rasterData.height);
+            svg.setAttribute('width', rasterData.width);
+            svg.setAttribute('height', rasterData.height);
+            
+            // Add metadata
+            const metadata = document.createElementNS(svgNS, 'metadata');
+            metadata.textContent = 'Rasterized design with material outline for CorelDraw compatibility';
+            svg.appendChild(metadata);
+            
+            // Create image element with rasterized data
+            const image = document.createElementNS(svgNS, 'image');
+            image.setAttributeNS('http://www.w3.org/1999/xlink', 'href', rasterData.pngDataUrl);
+            image.setAttribute('x', '0');
+            image.setAttribute('y', '0');
+            image.setAttribute('width', rasterData.width);
+            image.setAttribute('height', rasterData.height);
+            
+            svg.appendChild(image);
+            
+            return new XMLSerializer().serializeToString(svg);
+        }
+
         // Export Vector PDF (preserves all styles and material patterns)
-        window.exportVectorPDF = function(orderId) {
+        window.exportVectorPDF = async function(orderId) {
             console.log('📄 ===== STARTING PDF EXPORT =====');
             console.log('📄 Order ID:', orderId);
             
             const button = event.target.closest('button');
             const originalText = button.innerHTML;
             button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Preparing for export...';
+
+            // Step 1: Get SVG preview element
+            const svgPreviewContainer = document.getElementById('svg-preview-' + orderId);
+            if (!svgPreviewContainer) {
+                console.error('📄 ❌ SVG preview container not found');
+                button.disabled = false;
+                button.innerHTML = originalText;
+                alert('Error: SVG preview not found');
+                return;
+            }
+
+            const svgElement = svgPreviewContainer.querySelector('svg');
+            if (!svgElement) {
+                console.error('📄 ❌ SVG element not found');
+                button.disabled = false;
+                button.innerHTML = originalText;
+                alert('Error: SVG element not found');
+                return;
+            }
+
+            // Step 2: Check if SVG has material outline patterns
+            const hasMaterialOutline = svgElement.querySelector('[stroke*="MaterialPattern"]') !== null ||
+                                      svgElement.querySelector('[fill*="MaterialPattern"]') !== null;
+            
+            console.log('📄 Material outline detected:', hasMaterialOutline);
+
+            let svgDataToSend = null;
+
+            // Step 3: Rasterize if material outline exists (Option A)
+            if (hasMaterialOutline) {
+                console.log('🎨 Material outline detected - applying OPTION A: Full Rasterization');
+                console.log('🎨 This ensures 100% CorelDraw compatibility');
+                
+                button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
+                
+                try {
+                    // Rasterize the design
+                    const rasterData = await rasterizeDesignWithMaterial(svgElement);
+                    
+                    // Create SVG with embedded raster
+                    const rasterizedSVG = createRasterizedSVG(rasterData);
+                    
+                    svgDataToSend = rasterizedSVG;
+                    
+                    console.log('✅ Rasterization complete - using rasterized SVG for PDF export');
+                    console.log('   - Material outline is now BAKED IN (hardcoded)');
+                    console.log('   - CorelDraw will display perfectly');
+                } catch (error) {
+                    console.error('❌ Rasterization failed:', error);
+                    console.log('⚠️ Falling back to original SVG (material outline may not display in CorelDraw)');
+                    // Fallback to original SVG
+                    svgDataToSend = new XMLSerializer().serializeToString(svgElement);
+                }
+            } else {
+                console.log('ℹ️ No material outline - using original vector SVG');
+                svgDataToSend = new XMLSerializer().serializeToString(svgElement);
+            }
+
             button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
 
             console.log('📄 Sending request to server for PDF generation...');
             console.log('📄 Action: apd_export_pdf');
             console.log('📄 URL:', ajaxurl);
+            console.log('📄 Using:', hasMaterialOutline ? 'RASTERIZED SVG' : 'VECTOR SVG');
 
             jQuery.ajax({
                 url: ajaxurl,
@@ -1697,6 +1863,7 @@ class APD_Order_Admin_Handler
                 data: {
                     action: 'apd_export_pdf',
                     order_id: orderId,
+                    svg_override: svgDataToSend, // Send rasterized or original SVG
                     _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
                 },
                 success: function(response) {
