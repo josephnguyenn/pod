@@ -2139,56 +2139,23 @@ class APD_Order_Admin_Handler
                         expandedPath.setAttribute('stroke', 'none');
                         console.log('🎨 Using rasterized pattern fill for logo element #' + index);
                         
-                        // Build transform: scale from center THEN element's transform
-                        // SVG applies transforms right-to-left to points:
-                        // So "translate(C) scale(s) translate(-C) elementTransform" means:
-                        // 1. Apply elementTransform to raw shape -> visual shape
-                        // 2. Translate by -C (in visual space where C was calculated)
-                        // 3. Scale
-                        // 4. Translate by +C
-                        // This correctly scales from the VISUAL center!
+                        // SIMPLIFIED APPROACH: No mask, just z-order
+                        // expandedPath goes BEHIND element, element's fill covers the center
+                        // This guarantees outline touches curves because they share same pathData
+                        
+                        // Transform: scale from bbox center, with element's transform
+                        // The scale expands the shape outward from center
                         let expandedTransform = 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                             'scale(' + scaleFactor.toFixed(4) + ') ' +
                             'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')';
                         if (elementTransform) {
-                            expandedTransform += ' ' + elementTransform; // elementTransform at END (applied FIRST to points)
+                            expandedTransform += ' ' + elementTransform;
                         }
                         expandedPath.setAttribute('transform', expandedTransform);
                         
-                        // Create mask to cut out center
-                        const maskId = 'logo-outline-mask-' + index + '-' + Date.now();
-                        const mask = document.createElementNS(namespace, 'mask');
-                        mask.setAttribute('id', maskId);
-                        
-                        // White background (show all) - large enough to cover expanded path
-                        const maskBg = document.createElementNS(namespace, 'rect');
-                        maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
-                        maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
-                        maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
-                        maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
-                        maskBg.setAttribute('fill', 'white');
-                        mask.appendChild(maskBg);
-                        
-                        // Black path (cut out center - original element shape)
-                        // CRITICAL FIX: Use ONLY element's own transform (same as custom text)
-                        // Custom text uses fillPath.cloneNode(true) which has NO transform
-                        const maskPath = document.createElementNS(namespace, 'path');
-                        maskPath.setAttribute('d', pathData);
-                        maskPath.setAttribute('fill', 'black');
-                        maskPath.setAttribute('stroke', 'none');
-                        // Apply ONLY element's own transform (if any) - NO parent transforms
-                        if (elementTransform) {
-                            maskPath.setAttribute('transform', elementTransform);
-                        }
-                        mask.appendChild(maskPath);
-                        
-                        defs.appendChild(mask);
-                        
-                        // Apply mask to expanded path
-                        expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
-                        
-                        // Insert expanded path before original element
+                        // Insert expanded path BEFORE original element (z-order: behind)
+                        // Original element will cover the center naturally with its fill
                         element.parentNode.insertBefore(expandedPath, element);
                         
                         // Preserve original element fill, remove stroke
