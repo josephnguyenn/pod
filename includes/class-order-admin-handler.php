@@ -2111,7 +2111,11 @@ class APD_Order_Admin_Handler
                         const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
                         // Same formula as text (line 1500) - uniform scaling with multiplier 1.7
                         // Note: Using 1.7 multiplier (same as text) for consistent outline thickness
-                        const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
+                        // Ensure minimum scale factor for visible outline (especially for large elements)
+                        const baseScaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
+                        // For very large elements, ensure minimum expansion
+                        const minExpansion = expansionAmount * 0.5; // Minimum 50% of expansionAmount
+                        const scaleFactor = Math.max(baseScaleFactor, 1 + minExpansion / avgSize);
                         
                         // Path data already extracted above (before bbox calculation)
                         
