@@ -2972,14 +2972,52 @@ class APD_SVG_Processor
             return $svg_content;
         }
         
-        // STEP 0.5: Check and preserve embedded fonts for font shape preservation
+        // STEP 0.5: Extract and preserve embedded fonts for font shape preservation
         // Embedded fonts (@font-face with base64 data) allow Inkscape to preserve font shape when converting text to paths
-        $has_embedded_fonts = preg_match('/@font-face[^}]*src:\s*url\(data:application\/[^)]+;base64/i', $svg_content);
+        // CRITICAL: Extract and backup font definitions BEFORE any processing
+        $font_backup = array();
+        $has_embedded_fonts = false;
+        
+        // Extract @font-face definitions from <style> elements
+        if (preg_match_all('/<style[^>]*>(.*?)<\/style>/is', $svg_content, $style_matches, PREG_SET_ORDER)) {
+            foreach ($style_matches as $style_match) {
+                $style_content = $style_match[1];
+                // Check for @font-face with base64 data
+                if (preg_match_all('/@font-face\s*\{([^}]*src:\s*url\(data:application\/[^)]+;base64[^}]*)\}/is', $style_content, $font_matches, PREG_SET_ORDER)) {
+                    foreach ($font_matches as $font_match) {
+                        $font_face_full = '@font-face {' . $font_match[1] . '}';
+                        $font_backup[] = $font_face_full;
+                        $has_embedded_fonts = true;
+                    }
+                }
+            }
+        }
+        
+        // Also check for @font-face in CDATA sections
+        if (preg_match_all('/<!\[CDATA\[(.*?)\]\]>/is', $svg_content, $cdata_matches, PREG_SET_ORDER)) {
+            foreach ($cdata_matches as $cdata_match) {
+                $cdata_content = $cdata_match[1];
+                if (preg_match_all('/@font-face\s*\{([^}]*src:\s*url\(data:application\/[^)]+;base64[^}]*)\}/is', $cdata_content, $font_matches, PREG_SET_ORDER)) {
+                    foreach ($font_matches as $font_match) {
+                        $font_face_full = '@font-face {' . $font_match[1] . '}';
+                        if (!in_array($font_face_full, $font_backup)) {
+                            $font_backup[] = $font_face_full;
+                            $has_embedded_fonts = true;
+                        }
+                    }
+                }
+            }
+        }
+        
         if ($has_embedded_fonts) {
-            error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Found embedded fonts in SVG - font shape will be preserved during conversion");
-            // Count embedded fonts
-            $font_count = preg_match_all('/@font-face[^}]*src:\s*url\(data:application\/[^)]+;base64/i', $svg_content);
-            error_log("APD Convert All to Curves NEW - Order #$order_id: Found $font_count embedded font(s)");
+            error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Found " . count($font_backup) . " embedded font(s) - font shape will be preserved during conversion");
+            // Log font families if available
+            foreach ($font_backup as $idx => $font_def) {
+                if (preg_match('/font-family:\s*["\']?([^;"\']+)["\']?/i', $font_def, $family_match)) {
+                    $font_family = trim($family_match[1]);
+                    error_log("APD Convert All to Curves NEW - Order #$order_id: Font #" . ($idx + 1) . ": $font_family");
+                }
+            }
         } else {
             error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ No embedded fonts found - text will be converted to generic paths (font shape may be lost)");
             error_log("APD Convert All to Curves NEW - Order #$order_id: 💡 Tip: Embed fonts in SVG to preserve font shape when converting to curves");
@@ -3035,6 +3073,45 @@ class APD_SVG_Processor
             $original_viewBox = $m[1];
         }
         
+        // STEP 3: Ensure fonts are preserved in temp SVG file
+        // CRITICAL: Ensure @font-face definitions with base64 data are in <style> element within <defs>
+        // This allows Inkscape to access fonts when converting text to paths
+        if (!empty($font_backup)) {
+            // Ensure <defs> exists
+            if (!preg_match('/<defs[^>]*>/i', $svg_content)) {
+                // Insert <defs> after <svg> tag
+                $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
+            }
+            
+            // Check if <style> element exists in <defs>
+            $style_in_defs = preg_match('/<defs[^>]*>.*?<style[^>]*>/is', $svg_content);
+            
+            if (!$style_in_defs) {
+                // Create <style> element in <defs> with font definitions
+                $fonts_css = implode("\n", $font_backup);
+                $style_element = "<style type=\"text/css\"><![CDATA[\n" . $fonts_css . "\n]]></style>";
+                $svg_content = preg_replace('/(<defs[^>]*>)/i', '$1' . "\n  " . $style_element . "\n", $svg_content, 1);
+                error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Added " . count($font_backup) . " font definition(s) to <defs><style> for Inkscape");
+            } else {
+                // Append fonts to existing <style> element
+                $fonts_css = implode("\n", $font_backup);
+                $svg_content = preg_replace_callback(
+                    '/(<defs[^>]*>.*?<style[^>]*>)(.*?)(<\/style>)/is',
+                    function($matches) use ($fonts_css) {
+                        $existing_content = $matches[2];
+                        // Check if fonts already in style
+                        if (strpos($existing_content, '@font-face') === false) {
+                            return $matches[1] . $existing_content . "\n" . $fonts_css . "\n" . $matches[3];
+                        }
+                        return $matches[0]; // Already has fonts
+                    },
+                    $svg_content,
+                    1
+                );
+                error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Ensured " . count($font_backup) . " font definition(s) are in <defs><style> for Inkscape");
+            }
+        }
+        
         // STEP 3: Save SVG temporarily
         $upload_dir = wp_upload_dir();
         $temp_svg_input = $upload_dir['path'] . '/temp-curves-' . $order_id . '-' . time() . '.svg';
@@ -3070,6 +3147,49 @@ class APD_SVG_Processor
             if (!empty($pattern_backup)) {
                 $converted_content = $this->restore_custom_text_material_outline($converted_content, $pattern_backup, $order_id);
                 file_put_contents($temp_svg_output, $converted_content);
+            }
+            
+            // Restore lost fonts if they were removed during Inkscape conversion
+            if (!empty($font_backup)) {
+                $fonts_after_conversion = preg_match_all('/@font-face[^}]*src:\s*url\(data:application\/[^)]+;base64/i', $converted_content);
+                if ($fonts_after_conversion < count($font_backup)) {
+                    error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ Fonts lost during conversion ($fonts_after_conversion/" . count($font_backup) . ") - restoring...");
+                    
+                    // Ensure <defs> exists
+                    if (!preg_match('/<defs[^>]*>/i', $converted_content)) {
+                        $converted_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $converted_content, 1);
+                    }
+                    
+                    // Add fonts to <defs><style>
+                    $fonts_css = implode("\n", $font_backup);
+                    $style_element = "<style type=\"text/css\"><![CDATA[\n" . $fonts_css . "\n]]></style>";
+                    
+                    if (preg_match('/<defs[^>]*>/i', $converted_content)) {
+                        // Check if style already exists
+                        if (!preg_match('/<defs[^>]*>.*?<style[^>]*>/is', $converted_content)) {
+                            $converted_content = preg_replace('/(<defs[^>]*>)/i', '$1' . "\n  " . $style_element . "\n", $converted_content, 1);
+                        } else {
+                            // Append to existing style
+                            $converted_content = preg_replace_callback(
+                                '/(<defs[^>]*>.*?<style[^>]*>)(.*?)(<\/style>)/is',
+                                function($matches) use ($fonts_css) {
+                                    $existing_content = $matches[2];
+                                    if (strpos($existing_content, '@font-face') === false) {
+                                        return $matches[1] . $existing_content . "\n" . $fonts_css . "\n" . $matches[3];
+                                    }
+                                    return $matches[0];
+                                },
+                                $converted_content,
+                                1
+                            );
+                        }
+                        error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Restored " . count($font_backup) . " font definition(s)");
+                    }
+                    
+                    file_put_contents($temp_svg_output, $converted_content);
+                } else {
+                    error_log("APD Convert All to Curves NEW - Order #$order_id: ✅ Fonts preserved during conversion ($fonts_after_conversion/" . count($font_backup) . ")");
+                }
             }
             
             // Restore viewBox
@@ -3308,22 +3428,39 @@ class APD_SVG_Processor
         $paths_before_stroke_to_path = preg_match_all('/<path[^>]*>/i', $svg_content);
         error_log("APD Apply Material Outline NEW - Order #$order_id: Paths before stroke-to-path: $paths_before_stroke_to_path");
         
+        // Verify paths have proper stroke attributes before stroke-to-path
+        // Inkscape stroke-to-path requires paths to have stroke-width > 0
+        $paths_with_stroke_width = preg_match_all('/<path[^>]*stroke-width=["\']([^"\']+)["\'][^>]*>/i', $svg_content);
+        $paths_with_stroke = preg_match_all('/<path[^>]*stroke=["\']url\(#[^)]+\)["\'][^>]*>/i', $svg_content);
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Paths with stroke: $paths_with_stroke, paths with stroke-width: $paths_with_stroke_width");
+        
+        if ($paths_with_stroke > 0 && $paths_with_stroke_width === 0) {
+            error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - Paths have strokes but no stroke-width - stroke-to-path may fail");
+        }
+        
         file_put_contents($temp_svg_input, $svg_content);
         
         // Command: Convert strokes to paths (this creates expanded paths with pattern fills)
-        // CRITICAL: Use --actions to ensure all strokes are converted, including custom text
+        // CRITICAL: Try different approaches to ensure stroke-to-path works
+        // Strategy 1: Select only paths with strokes, then stroke-to-path
+        // Strategy 2: Use --actions with explicit path selection
         $command = escapeshellarg($inkscape_path) . 
-                   ' --actions="select-all;stroke-to-path"' .
+                   ' --actions="select-all:path;stroke-to-path"' .
                    ' --export-filename=' . escapeshellarg($temp_svg_output) .
                    ' --export-type=svg' .
                    ' ' . escapeshellarg($temp_svg_input) . 
                    ' 2>&1';
         
-        error_log("APD Apply Material Outline NEW - Order #$order_id: Running stroke-to-path command");
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Running stroke-to-path command (select-all:path;stroke-to-path): " . $command);
         
         $output = shell_exec($command);
         $return_code = 0;
         exec($command . '; echo $?', $output_array, $return_code);
+        
+        error_log("APD Apply Material Outline NEW - Order #$order_id: Inkscape stroke-to-path return code: $return_code");
+        if ($output) {
+            error_log("APD Apply Material Outline NEW - Order #$order_id: Inkscape output: " . substr($output, 0, 500));
+        }
         
         // STEP 3: Check if conversion was successful
         if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
@@ -3332,17 +3469,80 @@ class APD_SVG_Processor
             // Count paths after stroke-to-path to verify expansion
             $paths_after_stroke_to_path = preg_match_all('/<path[^>]*>/i', $converted_content);
             $paths_added = $paths_after_stroke_to_path - $paths_before_stroke_to_path;
+            
+            // Also check for pattern fills (stroke-to-path should convert strokes to fills)
+            $pattern_fills_after_stroke_to_path = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            $pattern_strokes_after_stroke_to_path = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            
             error_log("APD Apply Material Outline NEW - Order #$order_id: Paths after stroke-to-path: $paths_after_stroke_to_path (added $paths_added paths)");
+            error_log("APD Apply Material Outline NEW - Order #$order_id: Pattern fills after stroke-to-path: $pattern_fills_after_stroke_to_path (was $pattern_fills)");
+            error_log("APD Apply Material Outline NEW - Order #$order_id: Pattern strokes after stroke-to-path: $pattern_strokes_after_stroke_to_path (was $pattern_strokes)");
+            
+            // Verification: Check if stroke-to-path actually worked
+            $stroke_to_path_success = false;
             
             if ($paths_added > 0) {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Stroke-to-path created $paths_added expanded outline paths");
+                $stroke_to_path_success = true;
+            } else if ($pattern_fills_after_stroke_to_path > $pattern_fills && $pattern_strokes_after_stroke_to_path < $pattern_strokes) {
+                // Pattern fills increased and strokes decreased - stroke-to-path worked but didn't create new paths
+                // This can happen if Inkscape merged expanded paths with original paths
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Stroke-to-path worked (pattern fills increased, strokes decreased) - paths may have been merged");
+                $stroke_to_path_success = true;
             } else {
                 error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ WARNING - No additional paths created (stroke-to-path may not have expanded paths)");
+                error_log("APD Apply Material Outline NEW - Order #$order_id: Trying alternative stroke-to-path approach...");
+                
+                // Try alternative: Use different command format
+                $command_alt = escapeshellarg($inkscape_path) . 
+                               ' --actions="select-all;path-stroke-to-path"' .
+                               ' --export-filename=' . escapeshellarg($temp_svg_output) .
+                               ' --export-type=svg' .
+                               ' ' . escapeshellarg($temp_svg_input) . 
+                               ' 2>&1';
+                
+                error_log("APD Apply Material Outline NEW - Order #$order_id: Trying alternative command: " . $command_alt);
+                
+                $output_alt = shell_exec($command_alt);
+                $return_code_alt = 0;
+                exec($command_alt . '; echo $?', $output_array_alt, $return_code_alt);
+                
+                if (file_exists($temp_svg_output) && filesize($temp_svg_output) > 0) {
+                    $converted_content_alt = file_get_contents($temp_svg_output);
+                    $paths_after_alt = preg_match_all('/<path[^>]*>/i', $converted_content_alt);
+                    $paths_added_alt = $paths_after_alt - $paths_before_stroke_to_path;
+                    $pattern_fills_after_alt = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content_alt);
+                    $pattern_strokes_after_alt = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content_alt);
+                    
+                    if ($paths_added_alt > 0 || ($pattern_fills_after_alt > $pattern_fills && $pattern_strokes_after_alt < $pattern_strokes)) {
+                        error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Alternative command worked - created $paths_added_alt expanded paths, fills: $pattern_fills_after_alt, strokes: $pattern_strokes_after_alt");
+                        $converted_content = $converted_content_alt;
+                        $paths_after_stroke_to_path = $paths_after_alt;
+                        $paths_added = $paths_added_alt;
+                        $pattern_fills_after_stroke_to_path = $pattern_fills_after_alt;
+                        $pattern_strokes_after_stroke_to_path = $pattern_strokes_after_alt;
+                        $stroke_to_path_success = true;
+                    } else {
+                        error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Alternative command also failed - will use manual expansion fallback");
+                    }
+                }
             }
             
-            // Verify material outline was applied
-            $pattern_fills_after = preg_match_all('/fill=["\']url\(#[^)]+\)["\']/i', $converted_content);
-            $pattern_strokes_after = preg_match_all('/stroke=["\']url\(#[^)]+\)["\']/i', $converted_content);
+            // Update pattern_fills_after and pattern_strokes_after for use in later code
+            $pattern_fills_after = $pattern_fills_after_stroke_to_path;
+            $pattern_strokes_after = $pattern_strokes_after_stroke_to_path;
+            
+            // If stroke-to-path failed, use manual expansion fallback
+            if (!$stroke_to_path_success && !empty($paths_with_strokes_before)) {
+                error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Stroke-to-path failed - using manual expansion fallback");
+                try {
+                    $converted_content = $this->apply_material_outline_manual_expansion($converted_content, $paths_with_strokes_before, $order_id);
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ✅ Manual expansion applied");
+                } catch (Exception $e) {
+                    error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Exception in manual expansion: " . $e->getMessage());
+                    // Continue with converted_content as-is
+                }
+            }
             
             // Verify custom text paths were converted
             $custom_text_fills_after = preg_match_all('/fill=["\']url\(#apdTextPattern\)["\']/i', $converted_content);
@@ -3553,6 +3753,119 @@ class APD_SVG_Processor
         } catch (Exception $e) {
             error_log("APD Apply Material Outline Manual - Order #$order_id: ⚠️ Exception in apply_pattern_mask_to_paths: " . $e->getMessage());
         }
+        
+        return $svg_content;
+    }
+
+    /**
+     * Manual expansion fallback for material outline
+     * Creates expanded outline paths using scale transform and masks (similar to client-side approach)
+     * Used when Inkscape stroke-to-path fails
+     * 
+     * @param string $svg_content SVG content after failed stroke-to-path
+     * @param array $paths_with_strokes_before Backed up paths with pattern strokes
+     * @param int $order_id Order ID for logging
+     * @return string SVG content with manually expanded outline paths
+     */
+    private function apply_material_outline_manual_expansion($svg_content, $paths_with_strokes_before, $order_id = 0)
+    {
+        error_log("APD Manual Expansion - Order #$order_id: Starting manual expansion for " . count($paths_with_strokes_before) . " paths");
+        
+        // Group paths by pattern_id
+        $paths_by_pattern = array();
+        foreach ($paths_with_strokes_before as $path_info) {
+            $pattern_id = $path_info['pattern_id'];
+            if (!isset($paths_by_pattern[$pattern_id])) {
+                $paths_by_pattern[$pattern_id] = array();
+            }
+            $paths_by_pattern[$pattern_id][] = $path_info;
+        }
+        
+        // Ensure <defs> exists for masks
+        if (!preg_match('/<defs[^>]*>/i', $svg_content)) {
+            $svg_content = preg_replace('/(<svg[^>]*>)/i', '$1' . "\n<defs></defs>", $svg_content, 1);
+        }
+        
+        $mask_counter = 0;
+        $paths_expanded = 0;
+        
+        // For each pattern, create expanded outline paths
+        foreach ($paths_by_pattern as $pattern_id => $paths) {
+            error_log("APD Manual Expansion - Order #$order_id: Processing $pattern_id with " . count($paths) . " paths");
+            
+            // Find paths in SVG that match backed-up paths
+            foreach ($paths as $path_info) {
+                $path_data = $path_info['path_data'];
+                $stroke_width = $path_info['stroke_width'];
+                
+                // Find matching path in SVG
+                $path_pattern = '/<path([^>]*d=["\']' . preg_quote($path_data, '/') . '["\'][^>]*)>/i';
+                if (preg_match($path_pattern, $svg_content, $path_match)) {
+                    $path_attrs = $path_match[1];
+                    
+                    // Skip if already has pattern fill and mask (already processed)
+                    if (preg_match('/fill=["\']url\(#' . preg_quote($pattern_id, '/') . '\)["\']/i', $path_attrs) && 
+                        preg_match('/mask=/i', $path_attrs)) {
+                        continue;
+                    }
+                    
+                    // Extract path attributes
+                    $fill = '';
+                    $transform = '';
+                    if (preg_match('/fill=["\']([^"\']+)["\']/', $path_attrs, $f_match)) {
+                        $fill = $f_match[1];
+                    }
+                    if (preg_match('/transform=["\']([^"\']+)["\']/', $path_attrs, $t_match)) {
+                        $transform = $t_match[1];
+                    }
+                    
+                    // Create expanded path with scale transform (similar to client-side per-character scaling)
+                    // Calculate scale factor from stroke-width (approximate)
+                    $scale_factor = 1.0 + ($stroke_width / 100.0); // Simple scaling based on stroke-width
+                    
+                    // Create expanded path element
+                    $mask_id = 'manual-outline-mask-' . $order_id . '-' . (++$mask_counter);
+                    
+                    // Create mask to cut out center (original path)
+                    $mask_element = '<mask id="' . htmlspecialchars($mask_id, ENT_QUOTES) . '">' . "\n";
+                    $mask_element .= '  <rect x="-1000" y="-1000" width="2000" height="2000" fill="white"/>' . "\n";
+                    $mask_element .= '  <path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '" fill="black"/>' . "\n";
+                    $mask_element .= '</mask>';
+                    
+                    // Insert mask into <defs>
+                    $svg_content = preg_replace('/(<defs[^>]*>)/i', '$1' . "\n  " . $mask_element . "\n", $svg_content, 1);
+                    
+                    // Create expanded path with pattern fill and mask
+                    $expanded_path = '<path d="' . htmlspecialchars($path_data, ENT_QUOTES) . '"';
+                    $expanded_path .= ' fill="url(#' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
+                    $expanded_path .= ' stroke="none"';
+                    $expanded_path .= ' mask="url(#' . htmlspecialchars($mask_id, ENT_QUOTES) . ')"';
+                    
+                    // Add scale transform to expand path
+                    // Calculate center point (approximate from path data)
+                    // For simplicity, use scale from origin (0,0) or calculate bounding box
+                    if ($transform) {
+                        $expanded_path .= ' transform="' . htmlspecialchars($transform, ENT_QUOTES) . ' scale(' . number_format($scale_factor, 4) . ')"';
+                    } else {
+                        $expanded_path .= ' transform="scale(' . number_format($scale_factor, 4) . ')"';
+                    }
+                    
+                    $expanded_path .= '/>';
+                    
+                    // Insert expanded path before original path
+                    $svg_content = preg_replace(
+                        '/(<path[^>]*d=["\']' . preg_quote($path_data, '/') . '["\'][^>]*>)/i',
+                        $expanded_path . "\n" . '$1',
+                        $svg_content,
+                        1
+                    );
+                    
+                    $paths_expanded++;
+                }
+            }
+        }
+        
+        error_log("APD Manual Expansion - Order #$order_id: ✅ Created $paths_expanded expanded outline paths with $mask_counter masks");
         
         return $svg_content;
     }
