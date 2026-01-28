@@ -2143,15 +2143,15 @@ class APD_Order_Admin_Handler
                         // expandedPath goes BEHIND element, element's fill covers the center
                         // This guarantees outline touches curves because they share same pathData
                         
-                        // Transform: scale from bbox center, with element's transform
-                        // The scale expands the shape outward from center
-                        let expandedTransform = 
+                        // Transform: scale from visual center
+                        // CRITICAL: bbox was computed WITH elementTransform applied (line 2102)
+                        // So centerX/centerY are already in VISUAL (transformed) space
+                        // We must NOT append elementTransform again - that would apply it TWICE!
+                        const expandedTransform = 
                             'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
                             'scale(' + scaleFactor.toFixed(4) + ') ' +
                             'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')';
-                        if (elementTransform) {
-                            expandedTransform += ' ' + elementTransform;
-                        }
+                        // Do NOT append elementTransform - it's already baked into centerX/centerY
                         expandedPath.setAttribute('transform', expandedTransform);
                         
                         // Insert expanded path BEFORE original element (z-order: behind)
