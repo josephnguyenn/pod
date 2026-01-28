@@ -2112,16 +2112,19 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // Calculate expansion - SAME as custom text for consistency
+                        // Calculate expansion for logo elements
                         // Each logo element gets its own outline scaled from its own center
-                        // Use SAME expansion ratio and multiplier as custom text (0.5 and 1.7)
-                        const OUTLINE_EXPANSION_RATIO = 0.5; // SAME as custom text (line 1113)
+                        const OUTLINE_EXPANSION_RATIO = 0.5; // Same base ratio as custom text
                         const centerX = bbox.x + bbox.width / 2;
                         const centerY = bbox.y + bbox.height / 2;
                         const avgSize = (bbox.width + bbox.height) / 2;
                         const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
-                        // Use SAME multiplier as custom text (1.7) for consistent outline thickness
-                        const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize; // SAME as custom text (line 1500)
+                        // Use HIGHER multiplier (4.0 instead of 1.7) for logo because logo elements are larger
+                        // Custom text chars are small (~30px avgSize) so 1.7 multiplier gives thick outline
+                        // Logo paths are large (~200px avgSize) so need 4.0 multiplier for same visual thickness
+                        // Also add minimum scaleFactor floor (1.08) to ensure visible outline for very large elements
+                        const rawScaleFactor = 1 + (expansionAmount * 4.0) / avgSize;
+                        const scaleFactor = Math.max(rawScaleFactor, 1.08); // Minimum 8% expansion for visibility
                         
                         // Path data already extracted above (before bbox calculation)
                         
