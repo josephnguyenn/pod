@@ -1511,8 +1511,7 @@ class APD_Order_Admin_Handler
                                         const expandedPath = document.createElementNS(namespace, 'path');
                                         expandedPath.setAttribute('d', charInfo.pathData); // Path data của character này
                                         
-                                        // Use rasterized pattern if available
-                                        const patternId = stroke.match(/url\(#([^)]+)\)/)[1];
+                                        // Use rasterized pattern if available (patternId already extracted above)
                                         if (patternId === 'apdTextPattern' && textPatternRasterized && rasterTextPatternId) {
                                             expandedPath.setAttribute('fill', 'url(#' + rasterTextPatternId + ')');
                                             if (charIdx === 0) { // Log once per text element
