@@ -2120,43 +2120,75 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // === CONSTANT WIDTH OUTLINE (NO SCALE) ===
-                        // Scaling from center will always \"nở nhiều\" theo chiều rộng của shape
-                        // (ví dụ chữ dài sẽ nở mạnh 2 bên). Để outline \"dính sát từng nét\" và
-                        // dày đều, ta dùng SVG filter feMorphology (dilate) để offset theo độ dày cố định.
+                        // === CONSTANT WIDTH RING OUTLINE (NO BACKGROUND FILL) ===
+                        // Lỗi \"đổ nền khối vàng\" xảy ra vì dilate trực tiếp lên fill -> toàn bộ shape bị phủ pattern.
+                        // Giải pháp đúng: tạo \"vành\" (ring) bằng cách:
+                        // 1) Dilate(SourceAlpha)
+                        // 2) Ring = Dilated OUT SourceAlpha
+                        // 3) Dùng ring làm mask để pattern chỉ hiện trên vành viền.
                         //
-                        // Vì output cuối là raster baked-in, dùng filter là cách ổn định nhất.
+                        // Vì output cuối là raster baked-in, filter+mask là cách ổn định nhất trong browser.
                         const OUTLINE_EXPANSION_RATIO = 0.5;
                         const outlineRadius = Math.max(1, Math.round(strokeWidth * OUTLINE_EXPANSION_RATIO));
+                        const pad = outlineRadius * 6;
+                        const regionX = bbox.x - pad;
+                        const regionY = bbox.y - pad;
+                        const regionW = bbox.width + pad * 2;
+                        const regionH = bbox.height + pad * 2;
                         
-                        // Create/reuse a dilate filter for this radius
-                        const filterId = 'logo-outline-dilate-' + outlineRadius;
-                        let dilateFilter = defs.querySelector('#' + filterId);
-                        if (!dilateFilter) {
-                            dilateFilter = document.createElementNS(namespace, 'filter');
-                            dilateFilter.setAttribute('id', filterId);
-                            // Use user space so radius matches SVG units
-                            dilateFilter.setAttribute('filterUnits', 'userSpaceOnUse');
-                            // Big region to avoid clipping
-                            dilateFilter.setAttribute('x', String(bbox.x - outlineRadius * 6));
-                            dilateFilter.setAttribute('y', String(bbox.y - outlineRadius * 6));
-                            dilateFilter.setAttribute('width', String(bbox.width + outlineRadius * 12));
-                            dilateFilter.setAttribute('height', String(bbox.height + outlineRadius * 12));
-                            
-                            const morph = document.createElementNS(namespace, 'feMorphology');
-                            morph.setAttribute('operator', 'dilate');
-                            morph.setAttribute('radius', String(outlineRadius));
-                            dilateFilter.appendChild(morph);
-                            
-                            defs.appendChild(dilateFilter);
+                        // Per-element ring filter (unique id to avoid clipping issues)
+                        const ringFilterId = 'logo-outline-ring-filter-' + index + '-' + Date.now();
+                        const ringFilter = document.createElementNS(namespace, 'filter');
+                        ringFilter.setAttribute('id', ringFilterId);
+                        ringFilter.setAttribute('filterUnits', 'userSpaceOnUse');
+                        ringFilter.setAttribute('x', String(regionX));
+                        ringFilter.setAttribute('y', String(regionY));
+                        ringFilter.setAttribute('width', String(regionW));
+                        ringFilter.setAttribute('height', String(regionH));
+                        
+                        const morph = document.createElementNS(namespace, 'feMorphology');
+                        morph.setAttribute('in', 'SourceAlpha');
+                        morph.setAttribute('operator', 'dilate');
+                        morph.setAttribute('radius', String(outlineRadius));
+                        morph.setAttribute('result', 'dilated');
+                        ringFilter.appendChild(morph);
+                        
+                        const ring = document.createElementNS(namespace, 'feComposite');
+                        ring.setAttribute('in', 'dilated');
+                        ring.setAttribute('in2', 'SourceAlpha');
+                        ring.setAttribute('operator', 'out');
+                        ring.setAttribute('result', 'ringAlpha');
+                        ringFilter.appendChild(ring);
+                        
+                        defs.appendChild(ringFilter);
+                        
+                        // Mask: apply ring filter to a white path (so mask alpha becomes the ring)
+                        const maskId = 'logo-outline-ring-mask-' + index + '-' + Date.now();
+                        const mask = document.createElementNS(namespace, 'mask');
+                        mask.setAttribute('id', maskId);
+                        mask.setAttribute('maskUnits', 'userSpaceOnUse');
+                        mask.setAttribute('x', String(regionX));
+                        mask.setAttribute('y', String(regionY));
+                        mask.setAttribute('width', String(regionW));
+                        mask.setAttribute('height', String(regionH));
+                        
+                        const maskShape = document.createElementNS(namespace, 'path');
+                        maskShape.setAttribute('d', pathData);
+                        maskShape.setAttribute('fill', 'white');
+                        maskShape.setAttribute('stroke', 'none');
+                        maskShape.setAttribute('filter', 'url(#' + ringFilterId + ')');
+                        if (elementTransform) {
+                            maskShape.setAttribute('transform', elementTransform);
                         }
+                        mask.appendChild(maskShape);
+                        defs.appendChild(mask);
                         
-                        // Outline path = same curves + same elementTransform, but dilated by filter
+                        // Outline path: pattern fill, clipped by ring mask
                         const outlinePath = document.createElementNS(namespace, 'path');
                         outlinePath.setAttribute('d', pathData);
                         outlinePath.setAttribute('fill', 'url(#' + rasterPatternId + ')');
                         outlinePath.setAttribute('stroke', 'none');
-                        outlinePath.setAttribute('filter', 'url(#' + filterId + ')');
+                        outlinePath.setAttribute('mask', 'url(#' + maskId + ')');
                         if (elementTransform) {
                             outlinePath.setAttribute('transform', elementTransform);
                         }
@@ -2172,7 +2204,7 @@ class APD_Order_Admin_Handler
                         element.removeAttribute('stroke');
                         element.removeAttribute('stroke-width');
                         
-                        console.log('🎨 ✅ Logo element #' + index + ' processed - constant-width outline (feMorphology)');
+                        console.log('🎨 ✅ Logo element #' + index + ' processed - ring outline (no background fill)');
                         
                     } catch (error) {
                         console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
