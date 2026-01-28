@@ -1750,15 +1750,32 @@ class APD_Order_Admin_Handler
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, width, height);
             
-            // CRITICAL: Convert pattern strokes to fills before rasterization
+            // CRITICAL: Convert pattern strokes to expanded outline paths before rasterization
             // Browser canvas may not render pattern strokes correctly
-            // Solution: Convert strokes to fills to ensure material outline is visible
-            console.log('🎨 Converting pattern strokes to fills for better browser rendering...');
+            // Solution: Use mask approach (like text) to create expanded outline paths with pattern fills
+            console.log('🎨 Converting pattern strokes to expanded outline paths (mask approach)...');
             
             const svgClone = svgElement.cloneNode(true);
-            const pathsWithPatternStrokes = svgClone.querySelectorAll('[stroke*="url(#"]');
+            const namespace = 'http://www.w3.org/2000/svg';
             
-            pathsWithPatternStrokes.forEach((path) => {
+            // Ensure defs exists for masks
+            let defs = svgClone.querySelector('defs');
+            if (!defs) {
+                defs = document.createElementNS(namespace, 'defs');
+                svgClone.insertBefore(defs, svgClone.firstChild);
+            }
+            
+            // Create temporary SVG element to get bounding boxes
+            const tempSvg = document.createElementNS(namespace, 'svg');
+            tempSvg.setAttribute('width', width);
+            tempSvg.setAttribute('height', height);
+            tempSvg.setAttribute('viewBox', svgClone.getAttribute('viewBox') || `0 0 ${width} ${height}`);
+            document.body.appendChild(tempSvg);
+            
+            const pathsWithPatternStrokes = svgClone.querySelectorAll('[stroke*="url(#"]');
+            let pathsProcessed = 0;
+            
+            pathsWithPatternStrokes.forEach((path, index) => {
                 const stroke = path.getAttribute('stroke');
                 if (stroke && stroke.startsWith('url(#')) {
                     // Get pattern ID
@@ -1769,20 +1786,100 @@ class APD_Order_Admin_Handler
                         // Check if pattern exists
                         const pattern = svgClone.querySelector('pattern#' + patternId);
                         if (pattern) {
-                            // Convert stroke to fill
-                            const strokeWidth = parseFloat(path.getAttribute('stroke-width') || '6');
-                            
-                            // Set fill to pattern
-                            path.setAttribute('fill', stroke);
-                            path.setAttribute('stroke', 'none');
-                            
-                            // For outline effect, we need to create expanded path
-                            // But for simplicity, just use fill (material will be visible)
-                            console.log('🎨 Converted pattern stroke to fill for pattern:', patternId);
+                            try {
+                                // Get stroke attributes
+                                const strokeWidth = parseFloat(path.getAttribute('stroke-width') || '6');
+                                const strokeLinejoin = path.getAttribute('stroke-linejoin') || 'round';
+                                const strokeLinecap = path.getAttribute('stroke-linecap') || 'round';
+                                
+                                // Get path data
+                                const pathData = path.getAttribute('d');
+                                if (!pathData) {
+                                    console.warn('🎨 Path #' + index + ' has no path data, skipping');
+                                    return;
+                                }
+                                
+                                // Get bounding box by temporarily appending to temp SVG
+                                const tempPath = path.cloneNode(true);
+                                tempPath.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
+                                tempSvg.appendChild(tempPath);
+                                const bbox = tempPath.getBBox();
+                                tempSvg.removeChild(tempPath);
+                                
+                                // Calculate center and scale factor
+                                const centerX = bbox.x + bbox.width / 2;
+                                const centerY = bbox.y + bbox.height / 2;
+                                const avgSize = (bbox.width + bbox.height) / 2;
+                                const expansionAmount = strokeWidth * 1.7; // Same as text approach
+                                const scaleFactor = 1 + expansionAmount / avgSize;
+                                
+                                // Create expanded path (scale from center)
+                                const expandedPath = document.createElementNS(namespace, 'path');
+                                expandedPath.setAttribute('d', pathData);
+                                expandedPath.setAttribute('fill', stroke); // Pattern fill
+                                expandedPath.setAttribute('stroke', 'none');
+                                
+                                // Apply scale transform from center
+                                expandedPath.setAttribute('transform', 
+                                    'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
+                                    'scale(' + scaleFactor.toFixed(4) + ') ' +
+                                    'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
+                                );
+                                
+                                // Create mask to cut out center (original path shape)
+                                const maskId = 'raster-outline-mask-' + index + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                                const mask = document.createElementNS(namespace, 'mask');
+                                mask.setAttribute('id', maskId);
+                                
+                                // White background (show all) - large enough to cover expanded path
+                                const maskBg = document.createElementNS(namespace, 'rect');
+                                maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
+                                maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
+                                maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
+                                maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
+                                maskBg.setAttribute('fill', 'white');
+                                mask.appendChild(maskBg);
+                                
+                                // Black path (cut out center - original shape)
+                                const maskPath = path.cloneNode(true);
+                                maskPath.setAttribute('fill', 'black');
+                                maskPath.setAttribute('stroke', 'none');
+                                mask.appendChild(maskPath);
+                                
+                                defs.appendChild(mask);
+                                
+                                // Apply mask to expanded path
+                                expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
+                                
+                                // Replace original path with expanded path
+                                path.parentNode.replaceChild(expandedPath, path);
+                                
+                                pathsProcessed++;
+                                
+                                if (pathsProcessed === 1) {
+                                    console.log('🎨 ✅ Using mask approach for material outline (expanded paths with pattern fills)');
+                                    console.log('🎨 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per path');
+                                    console.log('🎨 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per path');
+                                }
+                            } catch (error) {
+                                console.warn('🎨 ⚠️ Error processing path #' + index + ':', error);
+                                // Fallback: just convert stroke to fill
+                                path.setAttribute('fill', stroke);
+                                path.setAttribute('stroke', 'none');
+                            }
                         }
                     }
                 }
             });
+            
+            // Cleanup temporary SVG
+            document.body.removeChild(tempSvg);
+            
+            if (pathsProcessed > 0) {
+                console.log('🎨 ✅ Processed ' + pathsProcessed + ' path(s) with expanded outline (mask approach)');
+            } else {
+                console.log('🎨 ⚠️ No paths with pattern strokes found to process');
+            }
             
             // Serialize modified SVG to string
             const svgData = new XMLSerializer().serializeToString(svgClone);
@@ -1813,7 +1910,8 @@ class APD_Order_Admin_Handler
                                 console.log('   - Original SVG size:', width, 'x', height);
                                 console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
                                 console.log('   - PNG data length:', pngDataUrl.length);
-                                console.log('   - Pattern strokes converted to fills for better rendering');
+                                console.log('   - Material outline: Expanded paths with pattern fills (mask approach)');
+                                console.log('   - Material outline is BAKED IN - perfect for CorelDraw');
                                 
                                 resolve({
                                     pngDataUrl: pngDataUrl,
