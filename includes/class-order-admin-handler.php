@@ -2080,15 +2080,15 @@ class APD_Order_Admin_Handler
                         }
                         
 
-                        // Calculate expansion - FIXED WIDTH for uniform thickness across all elements
-                        // Problem: scaleFactor based on avgSize causes uneven thickness
-                        // Solution: Use FIXED expansion amount (pixels) for all elements
-                        const FIXED_OUTLINE_WIDTH = 5; // Fixed 5px outline for all logo elements (uniform)
+                        // Calculate expansion - SAME AS CUSTOM TEXT for uniform thickness
+                        // Use OUTLINE_EXPANSION_RATIO (0.5) to match text outline thickness
+                        const OUTLINE_EXPANSION_RATIO = 0.5; // Same as custom text (line 1113)
                         const centerX = bbox.x + bbox.width / 2;
                         const centerY = bbox.y + bbox.height / 2;
                         const avgSize = (bbox.width + bbox.height) / 2;
-                        // Use fixed outline width instead of strokeWidth-based expansion
-                        const scaleFactor = 1 + FIXED_OUTLINE_WIDTH / avgSize; // Fixed width = uniform thickness
+                        const expansionAmount = strokeWidth * OUTLINE_EXPANSION_RATIO;
+                        // Same formula as text (line 1500) - uniform scaling with multiplier 1.7
+                        const scaleFactor = 1 + (expansionAmount * 1.7) / avgSize;
                         
                         // Get path data
                         let pathData = element.getAttribute('d');
@@ -2122,12 +2122,12 @@ class APD_Order_Admin_Handler
                         const mask = document.createElementNS(namespace, 'mask');
                         mask.setAttribute('id', maskId);
                         
-                        // White background (show all)
+                        // White background (show all) - large enough to cover expanded path
                         const maskBg = document.createElementNS(namespace, 'rect');
-                        maskBg.setAttribute('x', bbox.x - FIXED_OUTLINE_WIDTH * 2);
-                        maskBg.setAttribute('y', bbox.y - FIXED_OUTLINE_WIDTH * 2);
-                        maskBg.setAttribute('width', bbox.width + FIXED_OUTLINE_WIDTH * 4);
-                        maskBg.setAttribute('height', bbox.height + FIXED_OUTLINE_WIDTH * 4);
+                        maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
+                        maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
+                        maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
+                        maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
                         maskBg.setAttribute('fill', 'white');
                         mask.appendChild(maskBg);
                         
