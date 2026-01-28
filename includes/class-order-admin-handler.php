@@ -2064,10 +2064,18 @@ class APD_Order_Admin_Handler
                     console.log('🎨 Processing logo element #' + index);
                     
                     const stroke = element.getAttribute('stroke');
-                    // Use same default strokeWidth as custom text (48) for consistent outline thickness
-                    let strokeWidth = parseFloat(element.getAttribute('stroke-width') || '0');
-                    if (strokeWidth === 0 || !strokeWidth) {
-                        strokeWidth = 48; // Same as custom text (line 1311) - larger stroke width for more visible outline
+                    // Normalize strokeWidth so all logo elements have sufficiently thick outline
+                    // Many logo paths from source SVG have tiny stroke-width (1–2px) which makes dilation invisible.
+                    // We treat anything below 48 as \"thin\" and use 48 for outline generation.
+                    const originalStrokeWidthAttr = element.getAttribute('stroke-width');
+                    let strokeWidth = parseFloat(originalStrokeWidthAttr || '0');
+                    if (!strokeWidth || strokeWidth < 48) {
+                        strokeWidth = 48; // Same as custom text (line 1311)
+                    }
+                    // Debug: log effective strokeWidth for first few elements
+                    if (index < 5) {
+                        console.log('🎨 Logo element #' + index + ' stroke-width original=',
+                            originalStrokeWidthAttr, 'effective=', strokeWidth);
                     }
                     
                     try {
