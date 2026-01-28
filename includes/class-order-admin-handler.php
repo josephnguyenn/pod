@@ -1976,6 +1976,7 @@ class APD_Order_Admin_Handler
             }
             
             // Find all elements with logoMaterialPattern stroke
+            // Support both direct paths and paths inside groups
             const logoElementsRaw = Array.from(svgElement.querySelectorAll('[stroke*="url(#logoMaterialPattern)"]'));
             
             if (logoElementsRaw.length === 0) {
@@ -1983,20 +1984,28 @@ class APD_Order_Admin_Handler
                 return;
             }
             
+            console.log('🎨 Found ' + logoElementsRaw.length + ' element(s) with logoMaterialPattern stroke');
+            
             // Explode groups to individual paths - process each path separately from its own center
             // This ensures each logo element has outline scaled from its own center, not group center
             const logoElements = [];
             const strokeValue = 'url(#logoMaterialPattern)';
             
-            logoElementsRaw.forEach((el) => {
-                if (el.tagName.toLowerCase() === 'g') {
-                    // Group element - get all child paths/shapes
-                    console.log('🎨 Found group element with logoMaterialPattern - exploding to child paths');
+            logoElementsRaw.forEach((el, idx) => {
+                const tagName = el.tagName.toLowerCase();
+                console.log('🎨 Element #' + idx + ' is: <' + tagName + '>');
+                
+                if (tagName === 'g') {
+                    // Group element - get all child paths/shapes (including nested)
+                    console.log('🎨 Found group element - exploding to child paths');
                     const children = el.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line');
+                    console.log('🎨 Group has ' + children.length + ' child shape(s)');
+                    
                     children.forEach((child) => {
                         // Inherit stroke from parent group if child doesn't have it
-                        if (!child.getAttribute('stroke')) {
+                        if (!child.getAttribute('stroke') || child.getAttribute('stroke') === 'none') {
                             child.setAttribute('stroke', strokeValue);
+                            console.log('🎨 Inherited stroke from group to child');
                         }
                         // Inherit stroke-width from parent group if child doesn't have it
                         const parentStrokeWidth = el.getAttribute('stroke-width');
@@ -2007,11 +2016,12 @@ class APD_Order_Admin_Handler
                     });
                 } else {
                     // Individual path/shape element
+                    console.log('🎨 Individual element - processing directly');
                     logoElements.push(el);
                 }
             });
             
-            console.log('🎨 Found ' + logoElements.length + ' logo element(s) with material outline (after exploding groups)');
+            console.log('🎨 Total ' + logoElements.length + ' logo element(s) to process (after exploding groups)');
             
             // Create temporary SVG for bbox calculations
             const tempSvg = document.createElementNS(namespace, 'svg');
