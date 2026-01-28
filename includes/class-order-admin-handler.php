@@ -2085,46 +2085,46 @@ class APD_Order_Admin_Handler
                             return;
                         }
                         
-                        // Get bounding box from ELEMENT in DOM context (with parent transforms)
-                        // This ensures bbox includes parent group transforms, like custom text's absolute bbox
-                        // CRITICAL: element.getBBox() returns bbox in SVG coordinate space (absolute)
-                        // Includes all parent group transforms - same as custom text's absolute bbox from opentype.js
-                        let bbox;
-                        try {
-                            // Method 1: Try getBBox from element directly (if in DOM with parent transforms)
-                            const originalStroke = element.getAttribute('stroke');
-                            element.setAttribute('stroke', 'none');
-                            bbox = element.getBBox(); // Accurate bbox with parent transforms applied
-                            if (originalStroke) {
-                                element.setAttribute('stroke', originalStroke);
-                            } else {
-                                element.removeAttribute('stroke');
+                        // === BBOX CALCULATION (LOGO) ===
+                        // Instead of relying on element.getBBox() (which can return 0,0 for elements
+                        // living in a detached SVG document), we compute the bbox from a temporary
+                        // path that lives in a real <svg> appended to document.body.
+                        // 
+                        // We apply the FULL transform chain (all parent <g> transforms + element's own
+                        // transform) onto this temp path so that its geometry is in the same absolute
+                        // coordinate space as the rendered logo.
+                        //
+                        // This mimics the "absolute bbox" behavior we get from opentype.js for custom
+                        // text, but for arbitrary logo paths.
+                        let parentGroup = element.parentNode;
+                        let parentTransform = '';
+                        while (parentGroup && parentGroup.tagName && parentGroup.tagName.toLowerCase() !== 'svg') {
+                            const transform = parentGroup.getAttribute('transform');
+                            if (transform) {
+                                // Prepend so that outermost transforms come first
+                                parentTransform = transform + ' ' + parentTransform;
                             }
-                        } catch (e) {
-                            // Method 2: Fallback - create temp element with parent transform context
-                            // Get parent group transform if exists
-                            let parentGroup = element.parentNode;
-                            let parentTransform = '';
-                            while (parentGroup && parentGroup.tagName.toLowerCase() !== 'svg') {
-                                const transform = parentGroup.getAttribute('transform');
-                                if (transform) {
-                                    parentTransform = transform + ' ' + parentTransform;
-                                }
-                                parentGroup = parentGroup.parentNode;
-                            }
-                            
-                            // Create temp path with pathData AND parent transform
-                            const tempPath = document.createElementNS(namespace, 'path');
-                            tempPath.setAttribute('d', pathData);
-                            tempPath.setAttribute('stroke', 'none');
-                            tempPath.setAttribute('fill', 'none');
-                            if (parentTransform) {
-                                tempPath.setAttribute('transform', parentTransform);
-                            }
-                            tempSvg.appendChild(tempPath);
-                            bbox = tempPath.getBBox();
-                            tempSvg.removeChild(tempPath);
+                            parentGroup = parentGroup.parentNode;
                         }
+                        
+                        // Include element's own transform (if any) AFTER parent transforms
+                        const elementTransform = element.getAttribute('transform');
+                        let combinedTransform = parentTransform.trim();
+                        if (elementTransform) {
+                            combinedTransform = (combinedTransform ? combinedTransform + ' ' : '') + elementTransform;
+                        }
+                        
+                        // Create temp path with pathData AND full transform chain
+                        const tempPath = document.createElementNS(namespace, 'path');
+                        tempPath.setAttribute('d', pathData);
+                        tempPath.setAttribute('stroke', 'none');
+                        tempPath.setAttribute('fill', 'none');
+                        if (combinedTransform) {
+                            tempPath.setAttribute('transform', combinedTransform);
+                        }
+                        tempSvg.appendChild(tempPath);
+                        const bbox = tempPath.getBBox();
+                        tempSvg.removeChild(tempPath);
                         
                         if (bbox.width === 0 || bbox.height === 0 || !isFinite(bbox.width) || !isFinite(bbox.height)) {
                             console.warn('🎨 Logo element #' + index + ' has invalid bbox (width=' + bbox.width + ', height=' + bbox.height + ') - skipping');
