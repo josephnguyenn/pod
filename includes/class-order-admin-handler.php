@@ -1730,6 +1730,182 @@ class APD_Order_Admin_Handler
             } else {
                 console.log('🎨 No pattern images found to preload');
             }
+        }
+
+        /**
+         * Helper: Convert SVG shape to path data
+         */
+        function convertShapeToPath(element) {
+            const tagName = element.tagName.toLowerCase();
+            
+            if (tagName === 'rect') {
+                const x = parseFloat(element.getAttribute('x') || '0');
+                const y = parseFloat(element.getAttribute('y') || '0');
+                const w = parseFloat(element.getAttribute('width') || '0');
+                const h = parseFloat(element.getAttribute('height') || '0');
+                return `M ${x},${y} L ${x + w},${y} L ${x + w},${y + h} L ${x},${y + h} Z`;
+            } else if (tagName === 'circle') {
+                const cx = parseFloat(element.getAttribute('cx') || '0');
+                const cy = parseFloat(element.getAttribute('cy') || '0');
+                const r = parseFloat(element.getAttribute('r') || '0');
+                return `M ${cx - r},${cy} A ${r},${r} 0 1,0 ${cx + r},${cy} A ${r},${r} 0 1,0 ${cx - r},${cy} Z`;
+            } else if (tagName === 'ellipse') {
+                const cx = parseFloat(element.getAttribute('cx') || '0');
+                const cy = parseFloat(element.getAttribute('cy') || '0');
+                const rx = parseFloat(element.getAttribute('rx') || '0');
+                const ry = parseFloat(element.getAttribute('ry') || '0');
+                return `M ${cx - rx},${cy} A ${rx},${ry} 0 1,0 ${cx + rx},${cy} A ${rx},${ry} 0 1,0 ${cx - rx},${cy} Z`;
+            } else if (tagName === 'polygon' || tagName === 'polyline') {
+                const points = element.getAttribute('points');
+                if (!points) return null;
+                const pairs = points.trim().split(/\s+|,/).filter(p => p);
+                if (pairs.length < 2) return null;
+                let path = 'M ' + pairs[0] + ',' + pairs[1];
+                for (let i = 2; i < pairs.length; i += 2) {
+                    path += ' L ' + pairs[i] + ',' + pairs[i + 1];
+                }
+                if (tagName === 'polygon') path += ' Z';
+                return path;
+            }
+            
+            return null;
+        }
+
+        /**
+         * Convert logo pattern strokes to expanded outline paths with masks
+         * Same approach as convertTextToPathsWithMaterialOutline - pre-process before rasterization
+         * This ensures browser canvas can render the masks correctly
+         */
+        async function convertLogoToPathsWithMaterialOutline(svgDoc, svgElement) {
+            const namespace = 'http://www.w3.org/2000/svg';
+            
+            console.log('🎨 Pre-processing logo material outlines (before rasterization)...');
+            
+            // Ensure defs exists
+            let defs = svgElement.querySelector('defs');
+            if (!defs) {
+                defs = document.createElementNS(namespace, 'defs');
+                svgElement.insertBefore(defs, svgElement.firstChild);
+            }
+            
+            // Find all elements with logoMaterialPattern stroke
+            const logoElements = Array.from(svgElement.querySelectorAll('[stroke*="url(#logoMaterialPattern)"]'));
+            
+            if (logoElements.length === 0) {
+                console.log('🎨 No logo elements with material outline found');
+                return;
+            }
+            
+            console.log('🎨 Found ' + logoElements.length + ' logo element(s) with material outline');
+            
+            // Create temporary SVG for bbox calculations
+            const tempSvg = document.createElementNS(namespace, 'svg');
+            const viewBox = svgElement.getAttribute('viewBox');
+            if (viewBox) {
+                tempSvg.setAttribute('viewBox', viewBox);
+            }
+            document.body.appendChild(tempSvg);
+            
+            try {
+                logoElements.forEach((element, index) => {
+                    console.log('🎨 Processing logo element #' + index);
+                    
+                    const stroke = element.getAttribute('stroke');
+                    const strokeWidth = parseFloat(element.getAttribute('stroke-width') || '6');
+                    
+                    try {
+                        // Get bounding box
+                        const tempElement = element.cloneNode(true);
+                        tempElement.setAttribute('stroke', 'none');
+                        tempSvg.appendChild(tempElement);
+                        const bbox = tempElement.getBBox();
+                        tempSvg.removeChild(tempElement);
+                        
+                        if (bbox.width === 0 || bbox.height === 0) {
+                            console.warn('🎨 Logo element #' + index + ' has invalid bbox - skipping');
+                            return;
+                        }
+                        
+                        // Calculate expansion
+                        const centerX = bbox.x + bbox.width / 2;
+                        const centerY = bbox.y + bbox.height / 2;
+                        const avgSize = (bbox.width + bbox.height) / 2;
+                        const expansionAmount = strokeWidth * 1.7;
+                        const scaleFactor = 1 + expansionAmount / avgSize;
+                        
+                        // Get path data
+                        let pathData = element.getAttribute('d');
+                        
+                        // Convert non-path elements to path
+                        if (!pathData) {
+                            pathData = convertShapeToPath(element);
+                        }
+                        
+                        if (!pathData) {
+                            console.warn('🎨 Logo element #' + index + ' cannot be converted to path - skipping');
+                            return;
+                        }
+                        
+                        // Create expanded path for outline
+                        const expandedPath = document.createElementNS(namespace, 'path');
+                        expandedPath.setAttribute('d', pathData);
+                        expandedPath.setAttribute('fill', stroke); // Pattern fill
+                        expandedPath.setAttribute('stroke', 'none');
+                        expandedPath.setAttribute('transform', 
+                            'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
+                            'scale(' + scaleFactor.toFixed(4) + ') ' +
+                            'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
+                        );
+                        
+                        // Create mask to cut out center
+                        const maskId = 'logo-outline-mask-' + index + '-' + Date.now();
+                        const mask = document.createElementNS(namespace, 'mask');
+                        mask.setAttribute('id', maskId);
+                        
+                        // White background (show all)
+                        const maskBg = document.createElementNS(namespace, 'rect');
+                        maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
+                        maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
+                        maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
+                        maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
+                        maskBg.setAttribute('fill', 'white');
+                        mask.appendChild(maskBg);
+                        
+                        // Black element (cut out center)
+                        const maskElement = element.cloneNode(true);
+                        maskElement.setAttribute('fill', 'black');
+                        maskElement.setAttribute('stroke', 'none');
+                        maskElement.removeAttribute('transform');
+                        mask.appendChild(maskElement);
+                        
+                        defs.appendChild(mask);
+                        
+                        // Apply mask to expanded path
+                        expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
+                        
+                        // Insert expanded path before original element
+                        element.parentNode.insertBefore(expandedPath, element);
+                        
+                        // Preserve original element fill, remove stroke
+                        const originalFill = element.getAttribute('fill');
+                        if (!originalFill || originalFill === 'none') {
+                            element.setAttribute('fill', '#000000');
+                        }
+                        element.removeAttribute('stroke');
+                        element.removeAttribute('stroke-width');
+                        
+                        console.log('🎨 ✅ Logo element #' + index + ' processed - mask created in SVG DOM');
+                        
+                    } catch (error) {
+                        console.error('🎨 ❌ Error processing logo element #' + index + ':', error);
+                    }
+                });
+                
+                console.log('🎨 ✅ Logo material outline pre-processing complete');
+                
+            } finally {
+                document.body.removeChild(tempSvg);
+            }
             
             // Get SVG dimensions
             const viewBox = svgElement.getAttribute('viewBox').split(' ');
@@ -1750,279 +1926,12 @@ class APD_Order_Admin_Handler
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, width, height);
             
-            // CRITICAL: Convert pattern strokes to expanded outline paths before rasterization
-            // Browser canvas may not render pattern strokes correctly
-            // Solution: Use mask approach (like text) to create expanded outline paths with pattern fills
-            console.log('🎨 Converting pattern strokes to expanded outline paths (mask approach)...');
+            // Masks already pre-processed by convertLogoToPathsWithMaterialOutline()
+            // Just clone and serialize the SVG with pre-existing masks
+            console.log('🎨 Using pre-processed material outline masks...');
+            console.log('🎨 Logo masks created in SVG DOM before rasterization (same approach as custom text)');
             
             const svgClone = svgElement.cloneNode(true);
-            const namespace = 'http://www.w3.org/2000/svg';
-            
-            // Ensure defs exists for masks
-            let defs = svgClone.querySelector('defs');
-            if (!defs) {
-                defs = document.createElementNS(namespace, 'defs');
-                svgClone.insertBefore(defs, svgClone.firstChild);
-            }
-            
-            // Create temporary SVG element to get bounding boxes
-            const tempSvg = document.createElementNS(namespace, 'svg');
-            tempSvg.setAttribute('width', width);
-            tempSvg.setAttribute('height', height);
-            tempSvg.setAttribute('viewBox', svgClone.getAttribute('viewBox') || `0 0 ${width} ${height}`);
-            document.body.appendChild(tempSvg);
-            
-            const pathsWithPatternStrokes = svgClone.querySelectorAll('[stroke*="url(#"]');
-            let pathsProcessed = 0;
-            
-            pathsWithPatternStrokes.forEach((element, index) => {
-                const stroke = element.getAttribute('stroke');
-                if (stroke && stroke.startsWith('url(#')) {
-                    // Get pattern ID
-                    const patternMatch = stroke.match(/url\(#([^)]+)\)/);
-                    if (patternMatch) {
-                        const patternId = patternMatch[1];
-                        
-                        // Check if pattern exists
-                        const pattern = svgClone.querySelector('pattern#' + patternId);
-                        if (pattern) {
-                            // Fix 2: Add logging to track logo elements processing
-                            if (patternId === 'logoMaterialPattern') {
-                                console.log('🎨 Processing logo element #' + index + ' with logoMaterialPattern');
-                            }
-                            
-                            try {
-                                // Get stroke attributes
-                                const strokeWidth = parseFloat(element.getAttribute('stroke-width') || '6');
-                                const strokeLinejoin = element.getAttribute('stroke-linejoin') || 'round';
-                                const strokeLinecap = element.getAttribute('stroke-linecap') || 'round';
-                                
-                                // Fix 3: Improve error handling for bbox calculation
-                                // Get bounding box - handle errors gracefully
-                                let bbox;
-                                try {
-                                    const tempElement = element.cloneNode(true);
-                                    tempElement.setAttribute('stroke', 'none'); // Remove stroke for accurate bbox
-                                    tempSvg.appendChild(tempElement);
-                                    bbox = tempElement.getBBox();
-                                    tempSvg.removeChild(tempElement);
-                                    
-                                    // Check if bbox is valid
-                                    if (bbox.width === 0 || bbox.height === 0) {
-                                        console.warn('🎨 Element #' + index + ' has invalid bbox - using element bounds');
-                                        // Fallback: use element's own bounds
-                                        bbox = element.getBBox();
-                                    }
-                                } catch (error) {
-                                    console.warn('🎨 Element #' + index + ' bbox error:', error);
-                                    // Fallback: try element's own bbox
-                                    try {
-                                        bbox = element.getBBox();
-                                    } catch (e) {
-                                        console.warn('🎨 Element #' + index + ' cannot get bbox - skipping');
-                                        if (patternId === 'logoMaterialPattern') {
-                                            console.warn('🎨 ⚠️ Logo element #' + index + ' skipped due to bbox error');
-                                        }
-                                        return;
-                                    }
-                                }
-                                
-                                // Calculate center and scale factor
-                                const centerX = bbox.x + bbox.width / 2;
-                                const centerY = bbox.y + bbox.height / 2;
-                                const avgSize = (bbox.width + bbox.height) / 2;
-                                const expansionAmount = strokeWidth * 1.7; // Same as text approach
-                                const scaleFactor = 1 + expansionAmount / avgSize;
-                                
-                                // Get path data - convert element to path if needed
-                                let pathData = element.getAttribute('d');
-                                
-                                // If element is not a path, convert it to path data
-                                if (!pathData) {
-                                    const tagName = element.tagName.toLowerCase();
-                                    
-                                    // Convert different shape types to path data
-                                    if (tagName === 'rect') {
-                                        const x = parseFloat(element.getAttribute('x') || '0');
-                                        const y = parseFloat(element.getAttribute('y') || '0');
-                                        const w = parseFloat(element.getAttribute('width') || '0');
-                                        const h = parseFloat(element.getAttribute('height') || '0');
-                                        const rx = parseFloat(element.getAttribute('rx') || '0');
-                                        const ry = parseFloat(element.getAttribute('ry') || rx || '0');
-                                        
-                                        if (rx > 0 || ry > 0) {
-                                            // Rounded rect
-                                            pathData = `M ${x + rx},${y} L ${x + w - rx},${y} Q ${x + w},${y} ${x + w},${y + ry} L ${x + w},${y + h - ry} Q ${x + w},${y + h} ${x + w - rx},${y + h} L ${x + rx},${y + h} Q ${x},${y + h} ${x},${y + h - ry} L ${x},${y + ry} Q ${x},${y} ${x + rx},${y} Z`;
-                                        } else {
-                                            // Simple rect
-                                            pathData = `M ${x},${y} L ${x + w},${y} L ${x + w},${y + h} L ${x},${y + h} Z`;
-                                        }
-                                    } else if (tagName === 'circle') {
-                                        const cx = parseFloat(element.getAttribute('cx') || '0');
-                                        const cy = parseFloat(element.getAttribute('cy') || '0');
-                                        const r = parseFloat(element.getAttribute('r') || '0');
-                                        pathData = `M ${cx},${cy - r} A ${r},${r} 0 1,1 ${cx},${cy + r} A ${r},${r} 0 1,1 ${cx},${cy - r} Z`;
-                                    } else if (tagName === 'ellipse') {
-                                        const cx = parseFloat(element.getAttribute('cx') || '0');
-                                        const cy = parseFloat(element.getAttribute('cy') || '0');
-                                        const rx = parseFloat(element.getAttribute('rx') || '0');
-                                        const ry = parseFloat(element.getAttribute('ry') || '0');
-                                        pathData = `M ${cx},${cy - ry} A ${rx},${ry} 0 1,1 ${cx},${cy + ry} A ${rx},${ry} 0 1,1 ${cx},${cy - ry} Z`;
-                                    } else if (tagName === 'polygon') {
-                                        const points = element.getAttribute('points') || '';
-                                        const coords = points.trim().split(/[\s,]+/).map(parseFloat);
-                                        if (coords.length >= 2) {
-                                            pathData = 'M ' + coords[0] + ',' + coords[1];
-                                            for (let i = 2; i < coords.length; i += 2) {
-                                                pathData += ' L ' + coords[i] + ',' + coords[i + 1];
-                                            }
-                                            pathData += ' Z';
-                                        }
-                                    } else if (tagName === 'polyline') {
-                                        const points = element.getAttribute('points') || '';
-                                        const coords = points.trim().split(/[\s,]+/).map(parseFloat);
-                                        if (coords.length >= 2) {
-                                            pathData = 'M ' + coords[0] + ',' + coords[1];
-                                            for (let i = 2; i < coords.length; i += 2) {
-                                                pathData += ' L ' + coords[i] + ',' + coords[i + 1];
-                                            }
-                                        }
-                                    } else if (tagName === 'line') {
-                                        const x1 = parseFloat(element.getAttribute('x1') || '0');
-                                        const y1 = parseFloat(element.getAttribute('y1') || '0');
-                                        const x2 = parseFloat(element.getAttribute('x2') || '0');
-                                        const y2 = parseFloat(element.getAttribute('y2') || '0');
-                                        pathData = `M ${x1},${y1} L ${x2},${y2}`;
-                                    }
-                                    
-                                    // If still no path data, skip this element
-                                    if (!pathData) {
-                                        console.warn('🎨 Element #' + index + ' (' + tagName + ') cannot be converted to path, skipping');
-                                        return;
-                                    }
-                                }
-                                
-                                // Create expanded path (scale from center) for material outline
-                                // Mask approach: Same as custom text - mask cuts out center to create outline effect
-                                const expandedPath = document.createElementNS(namespace, 'path');
-                                expandedPath.setAttribute('d', pathData);
-                                expandedPath.setAttribute('fill', stroke); // Pattern fill (material outline)
-                                expandedPath.setAttribute('stroke', 'none');
-                                
-                                // Apply scale transform from center to expand path
-                                expandedPath.setAttribute('transform', 
-                                    'translate(' + centerX.toFixed(2) + ',' + centerY.toFixed(2) + ') ' +
-                                    'scale(' + scaleFactor.toFixed(4) + ') ' +
-                                    'translate(' + (-centerX).toFixed(2) + ',' + (-centerY).toFixed(2) + ')'
-                                );
-                                
-                                // Create mask to cut out center (original element shape) - SAME AS CUSTOM TEXT
-                                const maskId = 'raster-outline-mask-' + index + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-                                const mask = document.createElementNS(namespace, 'mask');
-                                mask.setAttribute('id', maskId);
-                                
-                                // White background (show all) - large enough to cover expanded path
-                                const maskBg = document.createElementNS(namespace, 'rect');
-                                maskBg.setAttribute('x', bbox.x - expansionAmount * 2);
-                                maskBg.setAttribute('y', bbox.y - expansionAmount * 2);
-                                maskBg.setAttribute('width', bbox.width + expansionAmount * 4);
-                                maskBg.setAttribute('height', bbox.height + expansionAmount * 4);
-                                maskBg.setAttribute('fill', 'white');
-                                mask.appendChild(maskBg);
-                                
-                                // Black element (cut out center - original shape) - SAME AS CUSTOM TEXT
-                                const maskElement = element.cloneNode(true);
-                                maskElement.setAttribute('fill', 'black');
-                                maskElement.setAttribute('stroke', 'none');
-                                // Remove any transforms from mask element to ensure accurate masking
-                                maskElement.removeAttribute('transform');
-                                mask.appendChild(maskElement);
-                                
-                                defs.appendChild(mask);
-                                
-                                // Apply mask to expanded path (creates outline effect) - SAME AS CUSTOM TEXT
-                                expandedPath.setAttribute('mask', 'url(#' + maskId + ')');
-                                
-                                // CRITICAL: Insert expanded outline path BEFORE original element
-                                // Mask approach: Mask cuts out center, creating outline effect
-                                // Order: expanded outline (behind) -> original element (in front)
-                                // Result: Material outline visible xung quanh original element (mask creates outline)
-                                element.parentNode.insertBefore(expandedPath, element);
-                                
-                                // Verify logo outline path được tạo (mask approach, same as custom text)
-                                if (patternId === 'logoMaterialPattern') {
-                                    // Verify expanded path was inserted
-                                    const insertedPath = element.previousSibling;
-                                    if (insertedPath && insertedPath.tagName === 'path' && insertedPath.getAttribute('fill') === stroke && insertedPath.getAttribute('mask')) {
-                                        console.log('🎨 ✅ Logo outline path verified - mask approach (same as custom text)');
-                                        console.log('🎨 ✅ Expanded path with pattern fill and mask inserted before element #' + index);
-                                    } else {
-                                        console.warn('🎨 ⚠️ Logo outline path not found or missing mask after insertion');
-                                    }
-                                }
-                                
-                                // Fix 1: Ensure logo has fill for visibility when rasterizing
-                                // Logo elements with only stroke need fill to be visible in rasterized image
-                                const originalFill = element.getAttribute('fill');
-                                const originalStroke = element.getAttribute('stroke');
-                                
-                                if (originalFill && originalFill !== 'none') {
-                                    // Element has fill - safe to remove stroke (outline is separate)
-                                    element.setAttribute('stroke', 'none');
-                                    if (patternId === 'logoMaterialPattern') {
-                                        console.log('🎨 Logo element #' + index + ' has fill - removed stroke (outline is separate)');
-                                    }
-                                } else {
-                                    // Element has no fill - need to add fill for visibility
-                                    // For logo elements, use black fill (or inherit from parent if available)
-                                    // This ensures logo shape is visible in rasterized image
-                                    const parentFill = element.parentNode ? element.parentNode.getAttribute('fill') : null;
-                                    const fillColor = parentFill && parentFill !== 'none' ? parentFill : '#000000'; // Default to black
-                                    
-                                    element.setAttribute('fill', fillColor);
-                                    element.setAttribute('stroke', 'none'); // Remove stroke (outline is separate)
-                                    
-                                    if (patternId === 'logoMaterialPattern') {
-                                        console.log('🎨 Logo element #' + index + ' has no fill - added fill (' + fillColor + ') for visibility');
-                                        console.log('🎨 Logo element #' + index + ' - removed stroke (outline is separate expanded path)');
-                                    }
-                                }
-                                
-                                pathsProcessed++;
-                                
-                                // Fix 2: Add logging after processing
-                                if (patternId === 'logoMaterialPattern') {
-                                    console.log('🎨 ✅ Logo element #' + index + ' processed - expanded outline path created');
-                                }
-                                
-                                if (pathsProcessed === 1) {
-                                    console.log('🎨 ✅ Using mask approach for material outline (same as custom text)');
-                                    console.log('🎨 ✅ Expanded paths with pattern fills + masks to cut out center');
-                                    console.log('🎨 ✅ Supports all SVG shapes: path, polygon, rect, circle, ellipse, line, polyline');
-                                    console.log('🎨 ✅ Scale factor: ' + scaleFactor.toFixed(4) + 'x per element');
-                                    console.log('🎨 ✅ Expand amount: ' + expansionAmount.toFixed(1) + 'px per element');
-                                    console.log('🎨 ✅ Masks create outline effect by cutting out center (same as custom text)');
-                                }
-                            } catch (error) {
-                                console.warn('🎨 ⚠️ Error processing element #' + index + ':', error);
-                                // Fallback: just convert stroke to fill
-                                element.setAttribute('fill', stroke);
-                                element.setAttribute('stroke', 'none');
-                            }
-                        }
-                    }
-                }
-            });
-            
-            // Cleanup temporary SVG
-            document.body.removeChild(tempSvg);
-            
-            if (pathsProcessed > 0) {
-                console.log('🎨 ✅ Processed ' + pathsProcessed + ' path(s) with expanded outline (mask approach, same as custom text)');
-                console.log('🎨 ✅ Material outline created using masks: expanded paths with pattern fills + masks to cut out center');
-            } else {
-                console.log('🎨 ⚠️ No paths with pattern strokes found to process');
-            }
             
             // Serialize modified SVG to string
             const svgData = new XMLSerializer().serializeToString(svgClone);
@@ -2053,7 +1962,7 @@ class APD_Order_Admin_Handler
                                 console.log('   - Original SVG size:', width, 'x', height);
                                 console.log('   - Rasterized size:', canvas.width, 'x', canvas.height);
                                 console.log('   - PNG data length:', pngDataUrl.length);
-                                console.log('   - Material outline: Mask approach (expanded paths with pattern fills + masks, same as custom text)');
+                                console.log('   - Material outline: Pre-processed masks (logo + text both use same mask approach)');
                                 console.log('   - Material outline is BAKED IN - perfect for CorelDraw');
                                 
                                 resolve({
@@ -2179,10 +2088,16 @@ class APD_Order_Admin_Handler
                     console.log('🎨 Material outline detected - applying OPTION A: Full Rasterization');
                     console.log('🎨 This ensures 100% CorelDraw compatibility');
                     
-                    button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
+                    button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Pre-processing material outlines...';
                     
                     try {
-                        // Rasterize the design
+                        // CRITICAL: Pre-process logo material outlines BEFORE rasterization
+                        // This creates masks in SVG DOM structure (like custom text) so browser canvas can render them
+                        await convertLogoToPathsWithMaterialOutline(svgDoc, svgElement);
+                        
+                        button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
+                        
+                        // Rasterize the design (with pre-processed masks)
                         const rasterData = await rasterizeDesignWithMaterial(svgElement);
                         
                         // Create SVG with embedded raster
