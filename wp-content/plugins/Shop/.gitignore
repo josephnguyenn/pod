@@ -1,0 +1,42 @@
+# WordPress
+*.log
+.htaccess
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/backup-db/
+wp-content/backups/
+wp-content/upgrade/
+
+# Plugin uploads (exclude user-uploaded files)
+uploads/material/*
+uploads/object/*
+uploads/object_1/*
+!uploads/material/.gitkeep
+!uploads/object/.gitkeep
+!uploads/object_1/.gitkeep
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Composer
+/vendor/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# OS Files
+Thumbs.db
+.DS_Store

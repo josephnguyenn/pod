@@ -1,0 +1,99 @@
+#fpd-get-started {
+	padding: 40px 0 0;
+	max-width: 80%;
+	margin: auto;
+
+	> h1 {
+		text-align: center;
+		margin: 20px 0 60px;
+	}
+
+	.cards {
+		.card {
+			min-width: auto;
+		}
+		.image {
+			padding: 20px 10px;
+		}
+
+		.content {
+			padding: 1.5em;
+			text-align: center;
+
+			.header {
+				font-size: 20px;
+			}
+
+			.description {
+				font-size: 16px;
+				padding-bottom: 10px;
+			}
+		}
+
+		.extra.content {
+			border-top: none !important;
+			padding-top: 0;
+		}
+	}
+
+	#fpd-genius-banner {
+		background: #fff;
+		padding: 30px;
+		position: relative;
+		margin: 100px auto 0;
+
+		.content {
+			p {
+				font-size: 14px;
+				margin-right: 200px;
+			}
+
+			.button {
+				margin-top: 10px;
+			}
+		}
+
+		.header {
+			font-size: 18px;
+			margin-bottom: 20px;
+		}
+
+		.icon {
+			position: absolute;
+			background: transparent;
+			right: 0;
+			left: auto;
+			top: 40%;
+			transform: translateY(-50%);
+			font-size: 80px;
+
+			&:after {
+				display: none;
+			}
+		}
+	}
+}
+
+#fpd-admin-get-started-banner {
+	margin: 80px auto 40px;
+	position: relative;
+
+	> .segment {
+		position: relative;
+		padding: 40px;
+	}
+
+	.column p {
+		font-size: 16px;
+	}
+
+	.button {
+	}
+}
+
+.toplevel_page_fancy_product_designer {
+	[data-uf-button="button-main"],
+	[data-uf-content="checklist"] {
+		display: none !important;
+	}
+}

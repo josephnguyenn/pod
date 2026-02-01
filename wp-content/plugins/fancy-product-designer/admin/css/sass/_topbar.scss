@@ -1,0 +1,39 @@
+#fpd-admin-topbar + .wrap,
+#fpd-admin-topbar + #fpd-react-root {
+	margin-top: 50px;
+}
+
+#fpd-admin-topbar {
+	position: absolute;
+	left: 0;
+	top: 0;
+	background-color: #fff;
+	min-height: 50px;
+	width: 100%;
+	display: flex;
+	justify-content: space-between;
+
+	> div {
+		display: flex;
+		align-items: center;
+		gap: 20px;
+		padding: 0 20px;
+
+		> a,
+		button {
+			color: #000;
+			text-decoration: none;
+			background: none !important;
+			border: none !important;
+			cursor: pointer;
+
+			&.current {
+				font-weight: 700;
+			}
+
+			&:hover {
+				text-decoration: underline;
+			}
+		}
+	}
+}

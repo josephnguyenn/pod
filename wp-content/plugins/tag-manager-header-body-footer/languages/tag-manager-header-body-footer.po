@@ -1,0 +1,97 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: English\n"
+"POT-Creation-Date: 2020-05-25 14:33+0300\n"
+"PO-Revision-Date: 2020-05-25 14:33+0300\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 2.1.1\n"
+"X-Poedit-Basepath: ..\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Poedit-KeywordsList: __;_e;esc_html__;esc_html_e\n"
+"X-Poedit-SearchPath-0: .\n"
+
+#: include/admin-output.php:59
+msgid "The data was inserted successfully"
+msgstr ""
+
+#: include/admin-output.php:70
+msgid "The data was updated successfully"
+msgstr ""
+
+#: include/admin-output.php:78
+msgid "Error: form nonce problem"
+msgstr ""
+
+#: include/admin-output.php:87
+msgid "Tag Manager - Add Header, Body and Footer Codes"
+msgstr ""
+
+#: include/admin-output.php:88
+msgid ""
+"Below you will be able to add header code, below the <body> code and footer "
+"code for tracking platforms like google analytics, facebook pixel and google "
+"tag manager."
+msgstr ""
+
+#: include/admin-output.php:127
+msgid "Insert <head> tags code"
+msgstr ""
+
+#: include/admin-output.php:128
+msgid ""
+"The code will be displayed between the opening <head> and the closing </"
+"head> tags"
+msgstr ""
+
+#: include/admin-output.php:133
+msgid "Insert tags after <body> opening tag"
+msgstr ""
+
+#: include/admin-output.php:134
+msgid "The code will be displayed below the opening <body> tag"
+msgstr ""
+
+#: include/admin-output.php:139
+msgid "Insert footer tags code"
+msgstr ""
+
+#: include/admin-output.php:140
+msgid "The code will be displayed right above the end </body> tag"
+msgstr ""
+
+#: include/admin-output.php:145
+msgid ""
+"Check this box if you want the plugin to show up under the settings menu "
+"instead of the main menu (require reopening the plugin page to see changes)"
+msgstr ""
+
+#: include/admin-output.php:150
+msgid ""
+"Check this if your theme supports <b>wp_body_open</b> action (make the way "
+"the body tag getting loaded faster)"
+msgstr ""
+
+#: include/admin-output.php:159
+msgid "Insert/Update Tags"
+msgstr ""
+
+#: include/admin-output.php:164
+msgid "This plugin was created by"
+msgstr ""
+
+#: include/admin-output.php:165
+msgid "If you liked it please give it a"
+msgstr ""
+
+#: include/admin-output.php:165
+msgid "5 stars review"
+msgstr ""
+
+#: index.php:61 index.php:71
+msgid "Tag Manager"
+msgstr ""

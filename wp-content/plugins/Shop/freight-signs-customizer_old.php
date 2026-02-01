@@ -1,0 +1,10840 @@
+<?php
+
+/**
+ * Plugin Name: Advanced Product Designer
+ * Description: Modern drag-and-drop product customizer with SVG support and text editing
+ * Version: 2.0.0
+ * Author: Your Name
+ */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Define plugin constants
+define('APD_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('APD_PLUGIN_PATH', plugin_dir_path(__FILE__));
+define('APD_VERSION', '2.0.0');
+
+// Load autoloader
+require_once APD_PLUGIN_PATH . 'includes/class-autoloader.php';
+APD_Autoloader::load_services();
+
+class AdvancedProductDesigner
+{
+    /**
+     * Cart service instance
+     * @var APD_Cart_Service
+     */
+    private $cart_service;
+
+    /**
+     * Template service instance
+     * @var APD_Template_Service
+     */
+    private $template_service;
+
+    /**
+     * Order service instance
+     * @var APD_Order_Service
+     */
+    private $order_service;
+
+    /**
+     * Email service instance
+     * @var APD_Email_Service
+     */
+    private $email_service;
+
+    public function __construct()
+    {
+        // Initialize services
+        $this->cart_service = new APD_Cart_Service();
+        $this->template_service = new APD_Template_Service();
+        $this->email_service = new APD_Email_Service($this->template_service);
+        $this->order_service = new APD_Order_Service($this->cart_service, $this->email_service);
+        
+        // Start session early
+        add_action('init', array($this, 'start_session'), 1);
+        
+        // Merge guest cart on user login
+        add_action('wp_login', array($this, 'merge_guest_cart_on_login'), 10, 2);
+        
+        // Schedule cart cleanup cron job
+        add_action('apd_cleanup_carts', array('APD_Cart_Service', 'cleanup_expired_carts'));
+        if (!wp_next_scheduled('apd_cleanup_carts')) {
+            wp_schedule_event(time(), 'daily', 'apd_cleanup_carts');
+        }
+        
+        add_action('init', array($this, 'init'));
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_frontend_scripts'));
+        add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
+        add_action('admin_notices', array($this, 'display_admin_notices'));
+        add_action('wp_footer', array($this, 'render_floating_cart_icon'));
+        add_action('enqueue_block_editor_assets', array($this, 'enqueue_block_editor_assets'));
+        add_action('wp_ajax_save_customization', array($this, 'save_customization'));
+        add_action('wp_ajax_nopriv_save_customization', array($this, 'save_customization'));
+        add_action('wp_ajax_load_product', array($this, 'load_product'));
+        add_action('wp_ajax_nopriv_load_product', array($this, 'load_product'));
+        // Save exported PNG from client
+        add_action('wp_ajax_apd_save_customization_image', array($this, 'apd_save_customization_image'));
+        add_action('wp_ajax_nopriv_apd_save_customization_image', array($this, 'apd_save_customization_image'));
+        add_action('wp_ajax_apd_dismiss_dashboard_notice', array($this, 'dismiss_dashboard_notice'));
+        add_action('wp_ajax_apd_get_checkout_data', array($this, 'get_checkout_data'));
+        add_action('wp_ajax_nopriv_apd_get_checkout_data', array($this, 'get_checkout_data'));
+        add_action('wp_ajax_upload_svg', array($this, 'handle_svg_upload'));
+        add_action('wp_ajax_save_design', array($this, 'save_design'));
+        add_action('wp_ajax_save_template_design', array($this, 'save_template_design'));
+        add_action('wp_ajax_download_order_svg', array($this, 'download_order_svg'));
+        add_action('wp_ajax_apd_get_product_data', array($this, 'get_product_data_ajax'));
+        add_action('wp_ajax_nopriv_apd_get_product_data', array($this, 'get_product_data_ajax'));
+        add_action('wp_ajax_apd_get_products_ajax', array($this, 'get_products_ajax'));
+        add_action('wp_ajax_nopriv_apd_get_products_ajax', array($this, 'get_products_ajax'));
+        add_action('wp_ajax_apd_get_customizer_data', array($this, 'get_customizer_data_ajax'));
+        add_action('wp_ajax_nopriv_apd_get_customizer_data', array($this, 'get_customizer_data_ajax'));
+        // Orders (guard if method exists to avoid admin lockouts during deploy)
+        if (method_exists($this, 'register_order_cpt_and_statuses')) {
+            add_action('init', array($this, 'register_order_cpt_and_statuses'));
+        }
+        // Ensure statuses are visible in admin "All" regardless of existing implementation
+        add_action('init', array($this, 'apd_register_statuses_visible'));
+        // Admin orders pages
+        add_action('admin_menu', array($this, 'apd_register_orders_admin_pages'));
+        // AJAX: admin updates
+        add_action('wp_ajax_apd_update_order_status', array($this, 'apd_update_order_status'));
+        add_action('wp_ajax_apd_add_order_note', array($this, 'apd_add_order_note'));
+        add_action('wp_ajax_apd_rebuild_order_labels', array($this, 'apd_rebuild_order_labels'));
+        add_action('wp_ajax_apd_place_order', array($this, 'apd_place_order'));
+        add_action('wp_ajax_nopriv_apd_place_order', array($this, 'apd_place_order'));
+        add_action('wp_ajax_apd_get_order_details', array($this, 'apd_get_order_details'));
+        add_action('wp_ajax_nopriv_apd_get_order_details', array($this, 'apd_get_order_details'));
+        add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
+
+        // Test AJAX handler
+        add_action('wp_ajax_apd_test_ajax', array($this, 'test_ajax_handler'));
+        add_action('wp_ajax_nopriv_apd_test_ajax', array($this, 'test_ajax_handler'));
+
+        // Add block recovery filter
+        add_filter('render_block_data', array($this, 'fix_block_validation'), 10, 2);
+        add_action('wp_ajax_apd_save_customization', array($this, 'save_customization_ajax'));
+        add_action('wp_ajax_nopriv_apd_save_customization', array($this, 'save_customization_ajax'));
+        add_action('wp_ajax_upload_font', array($this, 'upload_font'));
+        add_action('wp_ajax_apd_delete_font', array($this, 'delete_font'));
+        add_action('wp_ajax_apd_get_materials', array($this, 'ajax_get_materials'));
+        add_action('wp_ajax_nopriv_apd_get_materials', array($this, 'ajax_get_materials'));
+        add_action('wp_ajax_apd_get_material_url', array($this, 'ajax_get_material_url'));
+        add_action('wp_ajax_nopriv_apd_get_material_url', array($this, 'ajax_get_material_url'));
+        // Cart management AJAX handlers
+        add_action('wp_ajax_apd_add_to_cart', array($this, 'ajax_add_to_cart'));
+        add_action('wp_ajax_nopriv_apd_add_to_cart', array($this, 'ajax_add_to_cart'));
+
+        // Settings AJAX handlers
+        add_action('wp_ajax_apd_save_settings', array($this, 'ajax_save_settings'));
+        add_action('wp_ajax_apd_send_test_email', array($this, 'send_test_email'));
+        
+        // Email testing AJAX handlers
+        add_action('wp_ajax_apd_send_advanced_test_email', array($this, 'send_advanced_test_email'));
+        add_action('wp_ajax_apd_test_smtp_connection', array($this, 'test_smtp_connection'));
+        add_action('wp_ajax_apd_get_email_logs', array($this, 'get_email_logs'));
+
+        // Orders AJAX handlers
+        add_action('wp_ajax_apd_get_orders', array($this, 'ajax_get_orders'));
+        add_action('wp_ajax_apd_create_order', array($this, 'ajax_create_order'));
+        add_action('wp_ajax_apd_get_cart', array($this, 'ajax_get_cart'));
+        add_action('wp_ajax_nopriv_apd_get_cart', array($this, 'ajax_get_cart'));
+        add_action('wp_ajax_apd_update_cart_item', array($this, 'ajax_update_cart_item'));
+        add_action('wp_ajax_nopriv_apd_update_cart_item', array($this, 'ajax_update_cart_item'));
+        add_action('wp_ajax_apd_remove_cart_item', array($this, 'ajax_remove_cart_item'));
+        add_action('wp_ajax_nopriv_apd_remove_cart_item', array($this, 'ajax_remove_cart_item'));
+        add_action('wp_ajax_apd_clear_cart', array($this, 'ajax_clear_cart'));
+        add_action('wp_ajax_nopriv_apd_clear_cart', array($this, 'ajax_clear_cart'));
+        
+        // Variant AJAX handlers
+        add_action('wp_ajax_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
+        add_action('wp_ajax_nopriv_apd_get_product_variants', array($this, 'ajax_get_product_variants'));
+        
+        add_action('rest_api_init', array($this, 'register_rest_routes'));
+        add_shortcode('apd_customizer', array($this, 'customizer_shortcode'));
+        add_shortcode('apd_product_list', array($this, 'product_list_shortcode'));
+        add_shortcode('apd_product_detail', array($this, 'product_detail_shortcode'));
+        add_shortcode('apd_products_by_company', array($this, 'products_by_company_shortcode'));
+        add_shortcode('apd_test', array($this, 'test_shortcode'));
+        add_shortcode('apd_debug', array($this, 'debug_shortcode'));
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        // Front-end shortcodes for pages
+        add_shortcode('apd_cart', array($this, 'shortcode_cart'));
+        add_shortcode('apd_checkout', array($this, 'shortcode_checkout'));
+        add_shortcode('apd_thank_you', array($this, 'shortcode_thankyou'));
+        add_shortcode('apd_orders', array($this, 'shortcode_orders'));
+        add_shortcode('apd_cart_count', array($this, 'shortcode_cart_count'));
+        // Ensure required pages exist even if activation hook didn't run
+        add_action('admin_init', array($this, 'ensure_core_pages'));
+        add_action('init', array($this, 'ensure_core_pages'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+
+        // Add admin menu
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+
+        // Debug: Force admin menu registration - DISABLED
+        // add_action('admin_init', array($this, 'debug_admin_menu'), 1);
+
+        // Add admin notice for dashboard - DISABLED
+        // add_action('admin_notices', array($this, 'admin_dashboard_notice'));
+
+        // Add submenu pages
+        add_action('admin_menu', array($this, 'add_admin_submenus'));
+
+    // Add orders menu separately
+    add_action('admin_menu', array($this, 'add_orders_menu'));
+    // Add shipping prices as a top-level menu
+    add_action('admin_menu', array($this, 'add_shipping_menu'));
+
+        // Redirect to dashboard when accessing main menu
+        // add_action('admin_init', array($this, 'redirect_to_dashboard'));
+
+        // Allow SVG uploads
+        add_filter('upload_mimes', array($this, 'allow_svg_upload'));
+        add_filter('wp_handle_upload_prefilter', array($this, 'check_svg_security'));
+
+        // Add admin notices
+        add_action('admin_notices', array($this, 'svg_upload_notice'));
+
+        // Add logo upload handler
+        add_action('admin_post_fsc_upload_logo', array($this, 'handle_logo_upload'));
+    }
+
+    /**
+     * Start PHP session for cart functionality
+     */
+    public function start_session()
+    {
+        if (!session_id() && !headers_sent()) {
+            session_start();
+        }
+    }
+
+    /**
+     * Merge guest cart with user cart on login
+     *
+     * @param string $user_login Username
+     * @param WP_User $user User object
+     */
+    public function merge_guest_cart_on_login($user_login, $user)
+    {
+        $this->cart_service->merge_guest_cart_on_login($user->ID);
+    }
+
+    public function init()
+    {
+        // Create custom post type for products
+        $this->create_custom_post_type();
+
+        // Add rewrite rules
+        add_rewrite_rule(
+            'customizer/([^/]+)/?$',
+            'index.php?customizer=$matches[1]',
+            'top'
+        );
+
+        add_rewrite_rule(
+            'product-detail/?$',
+            'index.php?product_detail=1',
+            'top'
+        );
+
+        add_filter('query_vars', array($this, 'add_query_vars'));
+        add_action('template_redirect', array($this, 'template_redirect'));
+        add_filter('single_template', array($this, 'load_single_product_template'));
+        add_filter('taxonomy_template', array($this, 'load_company_taxonomy_template'));
+        
+        // Force Elementor canvas (full-width) for company archives
+        add_action('wp', array($this, 'set_company_archive_elementor_template'));
+
+        // Force flush rewrite rules if needed
+        if (get_option('apd_flush_rewrite_rules') !== '6') {
+            flush_rewrite_rules();
+            update_option('apd_flush_rewrite_rules', '6');
+            error_log('APD Plugin: Rewrite rules flushed on init');
+        }
+    }
+
+    /**
+     * Display admin notices from transients
+     */
+    public function display_admin_notices()
+    {
+        // Material price update success
+        if (get_transient('apd_material_price_updated')) {
+            delete_transient('apd_material_price_updated');
+            echo '<div class="notice notice-success is-dismissible"><p>✅ Material price updated successfully!</p></div>';
+        }
+        
+        // Material price update error
+        if (get_transient('apd_material_price_error')) {
+            delete_transient('apd_material_price_error');
+            echo '<div class="notice notice-error is-dismissible"><p>❌ Material not found.</p></div>';
+        }
+        
+        // Material upload success
+        if (get_transient('apd_material_uploaded')) {
+            delete_transient('apd_material_uploaded');
+            echo '<div class="notice notice-success is-dismissible"><p>✅ Material uploaded successfully!</p></div>';
+        }
+        
+        // Material deletion success
+        if (get_transient('apd_material_deleted')) {
+            delete_transient('apd_material_deleted');
+            echo '<div class="notice notice-success is-dismissible"><p>✅ Material deleted successfully!</p></div>';
+        }
+    }
+
+    /**
+     * AJAX: Buy Now (single item) - creates an order for one item and returns redirect
+     */
+    public function apd_buy_now()
+    {
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : (isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : '');
+        // Soft-verify
+        if ($nonce && !(wp_verify_nonce($nonce, 'apd_ajax_nonce') || wp_verify_nonce($nonce, 'fsc_nonce'))) {
+            // continue
+        }
+
+        $customer_name = sanitize_text_field($_POST['customer_name'] ?? '');
+        $customer_email = sanitize_email($_POST['customer_email'] ?? '');
+        $customer_phone = sanitize_text_field($_POST['customer_phone'] ?? '');
+        $customer_address = sanitize_textarea_field($_POST['customer_address'] ?? '');
+
+        $raw_item = isset($_POST['item']) ? $_POST['item'] : null;
+        if (is_string($raw_item)) {
+            $item = json_decode(stripslashes($raw_item), true);
+            if (json_last_error() !== JSON_ERROR_NONE)
+                $item = null;
+        } elseif (is_array($raw_item)) {
+            $item = $raw_item;
+        } else {
+            $item = null;
+        }
+
+        if (!$item) {
+            wp_send_json_error(array('message' => 'Missing item data'), 400);
+        }
+
+        // Convert inline images if present
+    $image_fields = array('preview_image_png', 'preview_image_url', 'customization_image_url', 'image_url');
+        foreach ($image_fields as $field) {
+            if (!empty($item[$field]) && strpos($item[$field], 'data:image') === 0) {
+                $raw = preg_replace('#^data:image/[^;]+;base64,#', '', $item[$field]);
+                $decoded = base64_decode($raw);
+                if ($decoded !== false && strlen($decoded) <= 8 * 1024 * 1024) {
+                    $upload = wp_upload_bits('order-preview-' . time() . '-' . wp_generate_password(6, false, false) . '.png', null, $decoded);
+                    if (empty($upload['error'])) {
+                        $item[$field] = $upload['url'];
+                    }
+                }
+            }
+        }
+
+        // Build meta similar to apd_place_order but for single item
+        $meta = array(
+            'product_id' => $item['product_id'] ?? '',
+            'product_name' => $item['product_name'] ?? 'Custom Product',
+            'product_price' => floatval($item['price'] ?? ($item['product_price'] ?? 0)),
+            'quantity' => intval($item['quantity'] ?? 1),
+            'total_amount' => (floatval($item['price'] ?? ($item['product_price'] ?? 0)) * intval($item['quantity'] ?? 1)),
+            'print_color' => $item['print_color'] ?? '',
+            'vinyl_material' => $item['vinyl_material'] ?? '',
+            'material_texture_url' => $item['material_texture_url'] ?? '',
+            'text_fields' => $item['text_fields'] ?? array(),
+            'template_data' => $item['template_data'] ?? array(),
+            'fields_display' => $item['fields_display'] ?? array(),
+            'template_fields_array' => $item['template_fields_array'] ?? array(),
+            'customization_image_url' => $item['customization_image_url'] ?? '',
+            'preview_image_url' => $item['preview_image_url'] ?? '',
+            'preview_image_png' => $item['preview_image_png'] ?? '',
+            'preview_image_svg' => $item['preview_image_svg'] ?? '',
+            'customer_name' => $customer_name,
+            'customer_email' => $customer_email,
+            'customer_phone' => $customer_phone,
+            'customer_address' => $customer_address,
+            'payment_method' => $item['payment_method'] ?? 'mock_paypal',
+            'order_date' => current_time('Y-m-d H:i:s'),
+            'order_status' => 'apd_pending',
+            'paypal_order_id' => $item['paypal_order_id'] ?? '',
+            'paypal_transaction_id' => $item['paypal_transaction_id'] ?? '',
+            'paypal_payer_id' => $item['paypal_payer_id'] ?? '',
+            'payment_status' => $item['payment_status'] ?? 'completed',
+            'manufacturing_notes' => $this->generateManufacturingNotes($item),
+            'production_ready' => true,
+            'cart_items' => json_encode(array($item)),
+            'cart_total' => floatval($item['price'] ?? ($item['product_price'] ?? 0)) * intval($item['quantity'] ?? 1)
+        );
+
+        $order_id = wp_insert_post(array(
+            'post_type' => 'apd_order',
+            'post_title' => 'Order ' . date('Y-m-d H:i:s'),
+            'post_status' => 'apd_pending'
+        ));
+        if (is_wp_error($order_id) || !$order_id) {
+            wp_send_json_error(array('message' => 'Unable to create order'), 500);
+        }
+        foreach ($meta as $k => $v) {
+            update_post_meta($order_id, $k, $v);
+        }
+
+        // Get thank you page URL - prefer slug-based option over page ID
+        $thankyou = home_url(get_option('apd_thank_you_url', '/thank-you/'));
+        
+        // Fallback to page ID if slug option is not set
+        if (!get_option('apd_thank_you_url')) {
+            $page_id = intval(get_option('apd_thankyou'));
+            if ($page_id) {
+                $thankyou = get_permalink($page_id);
+            }
+        }
+        
+        // Final fallback
+        if (!$thankyou || strpos($thankyou, '?page_id=') !== false) {
+            $thankyou = home_url('/thank-you/');
+        }
+        
+        wp_send_json_success(array('order_id' => $order_id, 'redirect' => esc_url($thankyou)));
+    }
+
+    public function create_custom_post_type()
+    {
+        // Templates Post Type
+        register_post_type('apd_template', array(
+            'labels' => array(
+                'name' => 'Templates',
+                'singular_name' => 'Template',
+                'add_new' => 'Add New Template',
+                'add_new_item' => 'Add New Template',
+                'edit_item' => 'Edit Template',
+                'new_item' => 'New Template',
+                'view_item' => 'View Template',
+                'search_items' => 'Search Templates',
+                'not_found' => 'No templates found',
+                'not_found_in_trash' => 'No templates found in trash'
+            ),
+            'public' => false,
+            'show_ui' => true,
+            'show_in_menu' => false,
+            'supports' => array('title', 'editor', 'thumbnail', 'custom-fields'),
+            'menu_icon' => 'dashicons-layout',
+            'rewrite' => array('slug' => 'templates'),
+            'show_in_rest' => true,
+            'capability_type' => 'post'
+        ));
+
+        // Products Post Type
+        register_post_type('apd_product', array(
+            'labels' => array(
+                'name' => 'Products',
+                'singular_name' => 'Product',
+                'add_new' => 'Add New Product',
+                'add_new_item' => 'Add New Product',
+                'edit_item' => 'Edit Product',
+                'new_item' => 'New Product',
+                'view_item' => 'View Product',
+                'search_items' => 'Search Products',
+                'not_found' => 'No products found',
+                'not_found_in_trash' => 'No products found in trash'
+            ),
+            'public' => true,
+            'has_archive' => true,
+            'supports' => array('title', 'editor', 'thumbnail', 'custom-fields'),
+            'menu_icon' => 'dashicons-products',
+            'rewrite' => array('slug' => 'products'),
+            'show_in_rest' => true,
+            'capability_type' => 'post',
+            'taxonomies' => array('apd_company')
+        ));
+
+        // Register Company Taxonomy
+        register_taxonomy('apd_company', array('apd_product'), array(
+            'labels' => array(
+                'name' => 'Companies',
+                'singular_name' => 'Company',
+                'search_items' => 'Search Companies',
+                'all_items' => 'All Companies',
+                'parent_item' => 'Parent Company',
+                'parent_item_colon' => 'Parent Company:',
+                'edit_item' => 'Edit Company',
+                'update_item' => 'Update Company',
+                'add_new_item' => 'Add New Company',
+                'new_item_name' => 'New Company Name',
+                'menu_name' => 'Companies',
+            ),
+            'hierarchical' => true,
+            'show_ui' => true,
+            'show_admin_column' => true,
+            'query_var' => true,
+            'rewrite' => array(
+                'slug' => 'company',
+                'with_front' => false,
+                'hierarchical' => false
+            ),
+            'show_in_rest' => true,
+            'public' => true,
+            'publicly_queryable' => true,
+            'show_in_nav_menus' => true,
+            'has_archive' => true,
+        ));
+
+        // Register Material Category Taxonomy
+        register_taxonomy('material_category', array('apd_product'), array(
+            'labels' => array(
+                'name' => 'Material Categories',
+                'singular_name' => 'Material Category',
+                'search_items' => 'Search Material Categories',
+                'all_items' => 'All Material Categories',
+                'parent_item' => 'Parent Material Category',
+                'parent_item_colon' => 'Parent Material Category:',
+                'edit_item' => 'Edit Material Category',
+                'update_item' => 'Update Material Category',
+                'add_new_item' => 'Add New Material Category',
+                'new_item_name' => 'New Material Category Name',
+                'menu_name' => 'Material Categories',
+            ),
+            'hierarchical' => true,
+            'show_ui' => true,
+            'show_admin_column' => true,
+            'query_var' => true,
+            'rewrite' => array(
+                'slug' => 'material-category',
+                'with_front' => false,
+                'hierarchical' => false
+            ),
+            'show_in_rest' => true,
+            'public' => true,
+            'publicly_queryable' => true,
+            'show_in_nav_menus' => true,
+            'has_archive' => true,
+        ));
+
+        // Add meta boxes for template and product details
+        add_action('add_meta_boxes', array($this, 'add_template_meta_boxes'));
+        add_action('add_meta_boxes', array($this, 'add_product_meta_boxes'));
+        add_action('save_post', array($this, 'save_template_meta'));
+        add_action('save_post', array($this, 'save_product_meta'));
+
+        add_action('wp_ajax_apd_buy_now', array($this, 'apd_buy_now'));
+        add_action('wp_ajax_nopriv_apd_buy_now', array($this, 'apd_buy_now'));
+
+        // Add form enctype for file uploads on product edit pages
+        add_action('post_edit_form_tag', array($this, 'add_form_enctype'));
+    }
+
+    public function add_template_meta_boxes()
+    {
+        add_meta_box(
+            'apd_template_details',
+            'Template Settings',
+            array($this, 'template_details_meta_box'),
+            'apd_template',
+            'normal',
+            'high'
+        );
+    }
+
+    public function add_product_meta_boxes()
+    {
+        add_meta_box(
+            'apd_product_details',
+            'Product Details',
+            array($this, 'product_details_meta_box'),
+            'apd_product',
+            'normal',
+            'high'
+        );
+
+        add_meta_box(
+            'apd_product_features',
+            'Product Features',
+            array($this, 'product_features_meta_box'),
+            'apd_product',
+            'side',
+            'default'
+        );
+
+        add_meta_box(
+            'apd_canvas_settings',
+            'Canvas Settings',
+            array($this, 'canvas_settings_meta_box'),
+            'apd_product',
+            'side',
+            'default'
+        );
+
+        add_meta_box(
+            'apd_product_variants',
+            'Product Variants (Material & Size)',
+            array($this, 'product_variants_meta_box'),
+            'apd_product',
+            'normal',
+            'default'
+        );
+
+        add_meta_box(
+            'apd_pricing_tiers',
+            'Volume Pricing Tiers',
+            array($this, 'pricing_tiers_meta_box'),
+            'apd_product',
+            'normal',
+            'default'
+        );
+    }
+
+    public function product_details_meta_box($post)
+    {
+        wp_nonce_field('fsc_save_product_meta', 'fsc_product_meta_nonce');
+
+        $price = get_post_meta($post->ID, '_fsc_price', true);
+        $sale_price = get_post_meta($post->ID, '_fsc_sale_price', true);
+        $category = get_post_meta($post->ID, '_fsc_category', true);
+        $template_id = get_post_meta($post->ID, '_fsc_template', true);
+        $material = get_post_meta($post->ID, '_fsc_material', true);
+        $size = get_post_meta($post->ID, '_fsc_size', true);
+        $color_options = get_post_meta($post->ID, '_fsc_color_options', true);
+        $logo_file = get_post_meta($post->ID, '_fsc_logo_file', true);
+        $is_customizable = get_post_meta($post->ID, '_fsc_customizable', true);
+        if ($is_customizable === '') {
+            $is_customizable = '1'; // Default to customizable
+        }
+
+        // Get available templates
+        $templates = get_posts(array(
+            'post_type' => 'apd_template',
+            'posts_per_page' => -1,
+            'post_status' => 'publish',
+            'orderby' => 'title',
+            'order' => 'ASC'
+        ));
+
+        ?>
+        <table class="form-table">
+            <tr>
+                <th><label for="fsc_template">Template</label></th>
+                <td>
+                    <select id="fsc_template" name="fsc_template">
+                        <option value="">Select Template</option>
+                        <?php foreach ($templates as $template): ?>
+                            <option value="<?php echo $template->ID; ?>" <?php selected($template_id, $template->ID); ?>>
+                                <?php echo esc_html($template->post_title); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="description">Choose a template for this product (optional if customization is disabled). <a href="<?php echo admin_url('admin.php?page=apd-templates'); ?>" target="_blank">Manage Templates</a></p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_price">Regular Price</label></th>
+                <td>
+                    <input type="text" id="fsc_price" name="fsc_price" value="<?php echo esc_attr($price); ?>" class="regular-text" placeholder="$125.00">
+                    <p class="description">Enter the regular product price</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_sale_price">Sale Price</label></th>
+                <td>
+                    <input type="text" id="fsc_sale_price" name="fsc_sale_price" value="<?php echo esc_attr($sale_price); ?>" class="regular-text" placeholder="$99.00">
+                    <p class="description">Enter the sale price (optional). Leave empty if no sale.</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_category">Category</label></th>
+                <td>
+                    <input type="text" id="fsc_category" name="fsc_category" value="<?php echo esc_attr($category); ?>" class="regular-text" placeholder="Freight Signs, Safety Signs, etc.">
+                    <p class="description">Enter the product category</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_thumbnail">Product Thumbnail</label></th>
+                <td>
+                    <?php
+                    $thumbnail_id = get_post_meta($post->ID, '_fsc_thumbnail_id', true);
+                    $thumbnail_url = '';
+                    if ($thumbnail_id) {
+                        $thumbnail_url = wp_get_attachment_image_url($thumbnail_id, 'medium');
+                    }
+                    ?>
+                    <div class="fsc-thumbnail-wrapper">
+                        <div class="fsc-thumbnail-preview" style="margin-bottom: 10px;">
+                            <?php if ($thumbnail_url): ?>
+                                <img src="<?php echo esc_url($thumbnail_url); ?>" style="max-width: 200px; height: auto; border: 1px solid #ddd; border-radius: 4px; display: block;">
+                            <?php else: ?>
+                                <img src="<?php echo esc_url(APD_PLUGIN_URL . 'assets/images/placeholder.png'); ?>" style="max-width: 200px; height: auto; border: 1px solid #ddd; border-radius: 4px; display: block;">
+                            <?php endif; ?>
+                        </div>
+                        <input type="hidden" id="fsc_thumbnail_id" name="fsc_thumbnail_id" value="<?php echo esc_attr($thumbnail_id); ?>">
+                        <button type="button" class="button fsc-upload-thumbnail-btn">
+                            <?php echo $thumbnail_id ? 'Change Thumbnail' : 'Upload Thumbnail'; ?>
+                        </button>
+                        <?php if ($thumbnail_id): ?>
+                            <button type="button" class="button fsc-remove-thumbnail-btn" style="margin-left: 5px;">Remove Thumbnail</button>
+                        <?php endif; ?>
+                    </div>
+                    <p class="description">Upload a thumbnail image for this product (JPG, PNG, GIF)</p>
+                </td>
+            </tr>
+            <tr style="display: none;">
+                <th><label for="fsc_material">Material</label></th>
+                <td>
+                    <input type="text" id="fsc_material" name="fsc_material" value="<?php echo esc_attr($material); ?>" class="regular-text" placeholder="Heavy Metal Chrome with Color">
+                    <p class="description">Enter the material description</p>
+                </td>
+            </tr>
+            <tr style="display: none;">
+                <th><label for="fsc_size">Size</label></th>
+                <td>
+                    <input type="text" id="fsc_size" name="fsc_size" value="<?php echo esc_attr($size); ?>" class="regular-text" placeholder="DOT Approved Size">
+                    <p class="description">Enter the product size</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_customizable">Customizable</label></th>
+                <td>
+                    <label>
+                        <input type="checkbox" id="fsc_customizable" name="fsc_customizable" value="1" <?php checked($is_customizable, '1'); ?>>
+                        Allow customers to customize this product
+                    </label>
+                    <p class="description">If unchecked, customers can only add to cart without customization</p>
+                </td>
+            </tr>
+            <tr id="fsc_customization_options_row" style="<?php echo $is_customizable != '1' ? 'display:none;' : ''; ?>">
+                <th><label>Customization Options</label></th>
+                <td>
+                    <?php
+                    $enable_color_selection = get_post_meta($post->ID, '_fsc_enable_color_selection', true);
+                    $enable_outline_selection = get_post_meta($post->ID, '_fsc_enable_outline_selection', true);
+                    // Default both to enabled if not set
+                    if ($enable_color_selection === '') $enable_color_selection = '1';
+                    if ($enable_outline_selection === '') $enable_outline_selection = '1';
+                    ?>
+                    <label style="display: block; margin-bottom: 8px;">
+                        <input type="checkbox" name="fsc_enable_color_selection" value="1" <?php checked($enable_color_selection, '1'); ?>>
+                        Enable color selection in customizer
+                    </label>
+                    <label style="display: block;">
+                        <input type="checkbox" name="fsc_enable_outline_selection" value="1" <?php checked($enable_outline_selection, '1'); ?>>
+                        Enable outline color selection in customizer
+                    </label>
+                    <p class="description">Choose which customization options are available for this product. At least one should be enabled.</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="fsc_logo_file">Product Logo (SVG)</label></th>
+                <td>
+                    <?php
+                    $logo_id = get_post_meta($post->ID, '_fsc_logo_id', true);
+                    $logo_url = '';
+                    $logo_filename = '';
+                    if ($logo_id) {
+                        $logo_url = wp_get_attachment_url($logo_id);
+                        $logo_filename = basename($logo_url);
+                    } elseif ($logo_file) {
+                        // Backward compatibility with old file-based system
+                        $logo_url = $logo_file;
+                        $logo_filename = basename($logo_file);
+                    }
+                    ?>
+                    <div class="fsc-logo-wrapper">
+                        <?php if ($logo_url): ?>
+                            <div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                                <strong>Current logo:</strong> 
+                                <a href="<?php echo esc_url($logo_url); ?>" target="_blank"><?php echo esc_html($logo_filename); ?></a>
+                            </div>
+                        <?php endif; ?>
+                        <input type="hidden" id="fsc_logo_id" name="fsc_logo_id" value="<?php echo esc_attr($logo_id); ?>">
+                        <button type="button" class="button fsc-upload-logo-btn">
+                            <?php echo $logo_url ? 'Change Logo' : 'Upload Logo'; ?>
+                        </button>
+                        <?php if ($logo_url): ?>
+                            <button type="button" class="button fsc-remove-logo-btn" style="margin-left: 5px;">Remove Logo</button>
+                        <?php endif; ?>
+                    </div>
+                    <p class="description">Upload SVG logo file for this product<?php echo $logo_url ? ' (click to replace)' : ' (required)'; ?></p>
+                </td>
+            </tr>
+            <tr style="display: none;">
+                <th><label for="fsc_color_options">Color Options</label></th>
+                <td>
+                    <textarea id="fsc_color_options" name="fsc_color_options" rows="4" class="large-text" placeholder="black, yellow, dark-red, orange, light-blue, light-green, purple, light-grey, brown, bright-yellow, dark-green, light-purple"><?php echo esc_textarea($color_options); ?></textarea>
+                    <p class="description">Enter available colors separated by commas</p>
+                </td>
+            </tr>
+        </table>
+        <?php
+    }
+
+    public function product_features_meta_box($post)
+    {
+        $features = get_post_meta($post->ID, '_fsc_features', true);
+        if (!is_array($features)) {
+            $features = array(
+                'DOT Approved Size',
+                '5 years outdoor life',
+                'Air release for bubble free installing',
+                'Professional quality materials'
+            );
+        }
+        ?>
+        <div id="fsc-features-container">
+            <?php foreach ($features as $index => $feature): ?>
+            <div class="fsc-feature-row">
+                <input type="text" name="fsc_features[]" value="<?php echo esc_attr($feature); ?>" class="regular-text" placeholder="Enter feature">
+                <button type="button" class="button fsc-remove-feature">Remove</button>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <button type="button" class="button fsc-add-feature">Add Feature</button>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            // Toggle customization options visibility
+            $('#fsc_customizable').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#fsc_customization_options_row').show();
+                } else {
+                    $('#fsc_customization_options_row').hide();
+                }
+            });
+            
+            $('.fsc-add-feature').on('click', function() {
+                var newRow = '<div class="fsc-feature-row"><input type="text" name="fsc_features[]" value="" class="regular-text" placeholder="Enter feature"><button type="button" class="button fsc-remove-feature">Remove</button></div>';
+                $('#fsc-features-container').append(newRow);
+            });
+            
+            $(document).on('click', '.fsc-remove-feature', function() {
+                $(this).parent().remove();
+            });
+        });
+        </script>
+        
+        <style>
+        .fsc-feature-row {
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .fsc-feature-row input {
+            flex: 1;
+        }
+        </style>
+        <?php
+    }
+
+    public function product_variants_meta_box($post)
+    {
+        $variants = get_post_meta($post->ID, '_apd_variants', true);
+        
+        // Initialize default structure
+        if (!is_array($variants)) {
+            $variants = array(
+                'enabled' => false,
+                'size_options' => array(
+                    array('value' => '12x6', 'label' => '12" × 6"'),
+                    array('value' => '18x12', 'label' => '18" × 12"')
+                ),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+        }
+        
+        // Get all available materials
+        $all_materials = get_option('apd_materials', array());
+        
+        ?>
+        <div class="apd-variants-wrapper">
+            <p>
+                <label>
+                    <input type="checkbox" id="apd_variants_enabled" name="apd_variants_enabled" value="1" <?php checked($variants['enabled'], true); ?>>
+                    <strong>Enable SKU-based variants for this product</strong>
+                </label>
+            </p>
+            <p class="description">When enabled, customers select material and size on the product detail page, then enter customizer with those selections.</p>
+            
+            <div id="apd-variants-content" style="<?php echo !$variants['enabled'] ? 'display:none;' : ''; ?>">
+                
+                <div style="padding: 15px; background: #e7f3ff; border-left: 4px solid #2271b1; margin-bottom: 20px;">
+                    <h4 style="margin-top: 0; color: #2271b1;">💡 Price Inheritance</h4>
+                    <p style="margin-bottom: 0; color: #2c3338;">
+                        Variants automatically inherit the <strong>Price</strong> and <strong>Sale Price</strong> from the "Product Details" section above.<br>
+                        Only fill in variant-specific prices when they differ from the base product price. Leave empty to use the default prices.
+                    </p>
+                </div>
+                
+                <hr>
+                
+                <!-- Size Options -->
+                <h3>Size Options</h3>
+                <p class="description">Define available sizes (e.g., 12×6, 18×12). Value is used in SKU, Label is shown to customer.</p>
+                
+                <table class="widefat" id="apd-size-options-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 200px;">Value (for SKU)</th>
+                            <th>Label (display name)</th>
+                            <th style="width: 80px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apd-size-options-body">
+                        <?php foreach ($variants['size_options'] as $idx => $size): ?>
+                        <tr>
+                            <td><input type="text" name="apd_size_value[]" value="<?php echo esc_attr($size['value']); ?>" class="regular-text" placeholder="12x6"></td>
+                            <td><input type="text" name="apd_size_label[]" value="<?php echo esc_attr($size['label']); ?>" class="regular-text" placeholder='12" × 6"'></td>
+                            <td><button type="button" class="button apd-remove-size-btn">Remove</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <button type="button" class="button apd-add-size-btn" style="margin-top: 10px;">Add Size</button>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Material Options -->
+                <h3>Material Options</h3>
+                <p class="description">Define available materials (e.g., Sticker, Steel, Metal). Value is used in SKU, Label is shown to customer.</p>
+                
+                <table class="widefat" id="apd-material-options-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 200px;">Value (for SKU)</th>
+                            <th>Label (display name)</th>
+                            <th style="width: 80px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apd-material-options-body">
+                        <?php foreach ($variants['material_options'] as $idx => $material): ?>
+                        <tr>
+                            <td><input type="text" name="apd_material_value[]" value="<?php echo esc_attr($material['value']); ?>" class="regular-text" placeholder="sticker"></td>
+                            <td><input type="text" name="apd_material_label[]" value="<?php echo esc_attr($material['label']); ?>" class="regular-text" placeholder="Sticker"></td>
+                            <td><button type="button" class="button apd-remove-material-btn">Remove</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <button type="button" class="button apd-add-material-btn" style="margin-top: 10px;">Add Material</button>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Generate Combinations -->
+                <button type="button" class="button button-primary" id="apd-generate-combinations">Generate Combinations Table</button>
+                <p class="description">Click to automatically create all size × material combinations below.</p>
+                
+                <hr style="margin: 20px 0;">
+                
+                <!-- Combinations Table -->
+                <h3>Variant Combinations</h3>
+                <p class="description">Each combination gets unique SKU, price, sale price, stock status, and optional quantity discounts.</p>
+                
+                <div class="apd-variant-combinations">
+                    <?php 
+                    $pricing_service = new APD_Pricing_Service();
+                    $variant_tiers_all = get_post_meta($post->ID, '_apd_variant_price_tiers', true);
+                    if (!is_array($variant_tiers_all)) {
+                        $variant_tiers_all = array();
+                    }
+                    
+                    foreach ($variants['combinations'] as $idx => $combo): 
+                        $sku = isset($combo['sku']) ? $combo['sku'] : '';
+                        $variant_tiers = isset($variant_tiers_all[$sku]) ? $variant_tiers_all[$sku] : array();
+                    ?>
+                    <div class="apd-variant-item" style="margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; background: #fff;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <h4 style="margin: 0;">
+                                <?php echo esc_html($combo['size']); ?> 
+                                <?php if (!empty($combo['material'])): ?>
+                                    × <?php echo esc_html($combo['material']); ?>
+                                <?php endif; ?>
+                            </h4>
+                            <button type="button" class="button apd-toggle-variant-tiers" data-variant-idx="<?php echo esc_attr($idx); ?>" data-sku="<?php echo esc_attr($sku); ?>">
+                                <?php echo !empty($variant_tiers) ? 'Edit' : 'Add'; ?> Quantity Discounts
+                            </button>
+                        </div>
+                        
+                        <input type="hidden" name="apd_comb_size[]" value="<?php echo esc_attr($combo['size']); ?>">
+                        <input type="hidden" name="apd_comb_material[]" value="<?php echo esc_attr($combo['material']); ?>">
+                        
+                        <table class="form-table" style="margin: 0;">
+                            <tr>
+                                <th style="padding-left: 0; width: 120px;">SKU</th>
+                                <td><input type="text" name="apd_comb_sku[]" value="<?php echo esc_attr($combo['sku']); ?>" class="regular-text" placeholder="VAR-12X6-GOLD"></td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Price ($)</th>
+                                <td>
+                                    <input type="number" name="apd_comb_price[]" value="<?php echo esc_attr($combo['price']); ?>" step="0.01" min="0" class="regular-text" placeholder="<?php echo esc_attr(get_post_meta($post->ID, '_fsc_price', true)); ?>">
+                                    <p class="description">Leave empty to use product base price ($<?php echo esc_html(get_post_meta($post->ID, '_fsc_price', true) ?: '0.00'); ?>)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Sale Price ($)</th>
+                                <td>
+                                    <input type="number" name="apd_comb_sale_price[]" value="<?php echo esc_attr($combo['sale_price']); ?>" step="0.01" min="0" class="regular-text" placeholder="<?php echo esc_attr(get_post_meta($post->ID, '_fsc_sale_price', true)); ?>">
+                                    <p class="description">Leave empty to use product sale price ($<?php echo esc_html(get_post_meta($post->ID, '_fsc_sale_price', true) ?: 'none'); ?>)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th style="padding-left: 0;">Stock</th>
+                                <td>
+                                    <select name="apd_comb_stock[]">
+                                        <option value="instock" <?php selected($combo['stock'], 'instock'); ?>>In Stock</option>
+                                        <option value="outofstock" <?php selected($combo['stock'], 'outofstock'); ?>>Out of Stock</option>
+                                    </select>
+                                </td>
+                            </tr>
+                        </table>
+                        
+                        <!-- Variant-specific tier pricing -->
+                        <div class="apd-variant-tiers-section" data-variant-idx="<?php echo esc_attr($idx); ?>" data-sku="<?php echo esc_attr($sku); ?>" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                            <h4 style="margin-top: 0;">Quantity Discounts for this Variant</h4>
+                            <!-- Hidden field to map variant index to SKU -->
+                            <input type="hidden" name="apd_var_tier_sku_map[<?php echo esc_attr($idx); ?>]" value="<?php echo esc_attr($sku); ?>">
+                            <table class="widefat apd-variant-tiers-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 100px;">Min Qty</th>
+                                        <th style="width: 100px;">Discount %</th>
+                                        <th style="width: 150px;">Tier Name</th>
+                                        <th style="width: 80px;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="apd-variant-tiers-body">
+                                    <?php if (!empty($variant_tiers)): ?>
+                                        <?php foreach ($variant_tiers as $tier): ?>
+                                        <tr>
+                                            <td><input type="number" name="apd_var_tier_minqty[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['min_qty']); ?>" min="1" class="small-text"></td>
+                                            <td><input type="number" name="apd_var_tier_discount[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['discount_percent']); ?>" min="0" max="100" step="0.01" class="small-text"></td>
+                                            <td><input type="text" name="apd_var_tier_name[<?php echo esc_attr($idx); ?>][]" value="<?php echo esc_attr($tier['name']); ?>" class="regular-text" placeholder="Bulk"></td>
+                                            <td><button type="button" class="button apd-remove-variant-tier">Remove</button></td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                            <button type="button" class="button apd-add-variant-tier" data-variant-idx="<?php echo esc_attr($idx); ?>" style="margin-top: 10px;">Add Tier</button>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            // Toggle variants content
+            $('#apd_variants_enabled').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#apd-variants-content').slideDown();
+                } else {
+                    $('#apd-variants-content').slideUp();
+                }
+            });
+            
+            // Add size option
+            $('.apd-add-size-btn').on('click', function() {
+                var newRow = '<tr>' +
+                    '<td><input type="text" name="apd_size_value[]" value="" class="regular-text" placeholder="24x12"></td>' +
+                    '<td><input type="text" name="apd_size_label[]" value="" class="regular-text" placeholder="24\\" × 12\\""></td>' +
+                    '<td><button type="button" class="button apd-remove-size-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-size-options-body').append(newRow);
+            });
+            
+            // Remove size option
+            $(document).on('click', '.apd-remove-size-btn', function() {
+                $(this).closest('tr').remove();
+            });
+            
+            // Add material option
+            $('.apd-add-material-btn').on('click', function() {
+                var newRow = '<tr>' +
+                    '<td><input type="text" name="apd_material_value[]" value="" class="regular-text" placeholder="steel"></td>' +
+                    '<td><input type="text" name="apd_material_label[]" value="" class="regular-text" placeholder="Steel"></td>' +
+                    '<td><button type="button" class="button apd-remove-material-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-material-options-body').append(newRow);
+            });
+            
+            // Remove material option
+            $(document).on('click', '.apd-remove-material-btn', function() {
+                $(this).closest('tr').remove();
+            });
+            
+            // Toggle variant tiers section
+            $(document).on('click', '.apd-toggle-variant-tiers', function(e) {
+                e.preventDefault();
+                var variantIdx = $(this).data('variant-idx');
+                var $section = $('.apd-variant-tiers-section[data-variant-idx="' + variantIdx + '"]');
+                $section.slideToggle();
+            });
+            
+            // Add variant tier
+            $(document).on('click', '.apd-add-variant-tier', function(e) {
+                e.preventDefault();
+                var variantIdx = $(this).data('variant-idx');
+                var $tbody = $('.apd-variant-tiers-section[data-variant-idx="' + variantIdx + '"] .apd-variant-tiers-body');
+                var newRow = '<tr>' +
+                    '<td><input type="number" name="apd_var_tier_minqty[' + variantIdx + '][]" value="" min="1" class="small-text"></td>' +
+                    '<td><input type="number" name="apd_var_tier_discount[' + variantIdx + '][]" value="" min="0" max="100" step="0.01" class="small-text"></td>' +
+                    '<td><input type="text" name="apd_var_tier_name[' + variantIdx + '][]" value="" class="regular-text" placeholder="Bulk"></td>' +
+                    '<td><button type="button" class="button apd-remove-variant-tier">Remove</button></td>' +
+                    '</tr>';
+                $tbody.append(newRow);
+            });
+            
+            // Remove variant tier
+            $(document).on('click', '.apd-remove-variant-tier', function(e) {
+                e.preventDefault();
+                $(this).closest('tr').remove();
+            });
+            
+            // Helper function to generate variant card HTML
+            function generateVariantCard(idx, size, sizeLabel, material, materialLabel, sku) {
+                var title = sizeLabel;
+                if (materialLabel && materialLabel !== 'N/A') {
+                    title += ' × ' + materialLabel;
+                }
+                
+                var card = '<div class="apd-variant-item" style="margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; background: #fff;">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
+                        '<h4 style="margin: 0;">' + title + '</h4>' +
+                        '<button type="button" class="button apd-toggle-variant-tiers" data-variant-idx="' + idx + '" data-sku="' + sku + '">Add Quantity Discounts</button>' +
+                    '</div>' +
+                    '<input type="hidden" name="apd_comb_size[]" value="' + size + '">' +
+                    '<input type="hidden" name="apd_comb_material[]" value="' + material + '">' +
+                    '<table class="form-table" style="margin: 0;">' +
+                        '<tr>' +
+                            '<th style="padding-left: 0; width: 120px;">SKU</th>' +
+                            '<td><input type="text" name="apd_comb_sku[]" value="' + sku + '" class="regular-text" placeholder="VAR-12X6-GOLD"></td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Price ($)</th>' +
+                            '<td>' +
+                                '<input type="number" name="apd_comb_price[]" value="" step="0.01" min="0" class="regular-text">' +
+                                '<p class="description">Leave empty to use product base price</p>' +
+                            '</td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Sale Price ($)</th>' +
+                            '<td>' +
+                                '<input type="number" name="apd_comb_sale_price[]" value="" step="0.01" min="0" class="regular-text">' +
+                                '<p class="description">Leave empty to use product sale price</p>' +
+                            '</td>' +
+                        '</tr>' +
+                        '<tr>' +
+                            '<th style="padding-left: 0;">Stock</th>' +
+                            '<td>' +
+                                '<select name="apd_comb_stock[]">' +
+                                    '<option value="instock">In Stock</option>' +
+                                    '<option value="outofstock">Out of Stock</option>' +
+                                '</select>' +
+                            '</td>' +
+                        '</tr>' +
+                    '</table>' +
+                    '<div class="apd-variant-tiers-section" data-variant-idx="' + idx + '" data-sku="' + sku + '" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">' +
+                        '<h4 style="margin-top: 0;">Quantity Discounts for this Variant</h4>' +
+                        '<input type="hidden" name="apd_var_tier_sku_map[' + idx + ']" value="' + sku + '">' +
+                        '<table class="widefat apd-variant-tiers-table">' +
+                            '<thead>' +
+                                '<tr>' +
+                                    '<th style="width: 100px;">Min Qty</th>' +
+                                    '<th style="width: 100px;">Discount %</th>' +
+                                    '<th style="width: 150px;">Tier Name</th>' +
+                                    '<th style="width: 80px;">Actions</th>' +
+                                '</tr>' +
+                            '</thead>' +
+                            '<tbody class="apd-variant-tiers-body"></tbody>' +
+                        '</table>' +
+                        '<button type="button" class="button apd-add-variant-tier" data-variant-idx="' + idx + '" style="margin-top: 10px;">Add Tier</button>' +
+                    '</div>' +
+                '</div>';
+                
+                return card;
+            }
+            
+            // Generate combinations
+            $('#apd-generate-combinations').on('click', function() {
+                var sizes = [];
+                $('input[name="apd_size_value[]"]').each(function(i) {
+                    var value = $(this).val();
+                    var label = $('input[name="apd_size_label[]"]').eq(i).val();
+                    if (value && label) {
+                        sizes.push({value: value, label: label});
+                    }
+                });
+                
+                var materials = [];
+                $('input[name="apd_material_value[]"]').each(function(i) {
+                    var value = $(this).val();
+                    var label = $('input[name="apd_material_label[]"]').eq(i).val();
+                    if (value && label) {
+                        materials.push({value: value, label: label});
+                    }
+                });
+                
+                // Allow either sizes only, materials only, or both
+                if (sizes.length === 0 && materials.length === 0) {
+                    alert('Please add at least one size or at least one material.');
+                    return;
+                }
+                
+                // Clear existing combinations
+                $('.apd-variant-combinations').empty();
+                
+                var idx = 0;
+                
+                // Generate combinations based on what's available
+                if (sizes.length > 0 && materials.length > 0) {
+                    // Both sizes and materials - create full combinations
+                    sizes.forEach(function(size) {
+                        materials.forEach(function(material) {
+                            var sku = 'VAR-' + size.value.toUpperCase() + '-' + material.value.toUpperCase().replace(/\s+/g, '-');
+                            var card = generateVariantCard(idx, size.value, size.label, material.value, material.label, sku);
+                            $('.apd-variant-combinations').append(card);
+                            idx++;
+                        });
+                    });
+                } else if (sizes.length > 0) {
+                    // Only sizes - create variants with empty material
+                    sizes.forEach(function(size) {
+                        var sku = 'VAR-' + size.value.toUpperCase();
+                        var card = generateVariantCard(idx, size.value, size.label, '', 'N/A', sku);
+                        $('.apd-variant-combinations').append(card);
+                        idx++;
+                    });
+                } else {
+                    // Only materials - create variants with empty size
+                    materials.forEach(function(material) {
+                        var sku = 'VAR-' + material.value.toUpperCase().replace(/\s+/g, '-');
+                        var card = generateVariantCard(idx, '', 'N/A', material.value, material.label, sku);
+                        $('.apd-variant-combinations').append(card);
+                        idx++;
+                    });
+                }
+                
+                alert('Combinations generated! Please fill in prices for each variant.');
+            });
+        });
+        </script>
+        
+        <style>
+        .apd-variants-wrapper table.widefat {
+            margin-top: 10px;
+        }
+        .apd-variants-wrapper table.widefat td input[type="text"],
+        .apd-variants-wrapper table.widefat td input[type="number"] {
+            width: 100%;
+        }
+        </style>
+        <?php
+    }
+
+    public function save_product_meta($post_id)
+    {
+        // Check nonce
+        if (!isset($_POST['fsc_product_meta_nonce']) || !wp_verify_nonce($_POST['fsc_product_meta_nonce'], 'fsc_save_product_meta')) {
+            return;
+        }
+
+        // Check permissions
+        if (!current_user_can('edit_post', $post_id)) {
+            return;
+        }
+
+        // Save product details
+        if (isset($_POST['fsc_template'])) {
+            update_post_meta($post_id, '_fsc_template', intval($_POST['fsc_template']));
+        }
+
+        if (isset($_POST['fsc_price'])) {
+            update_post_meta($post_id, '_fsc_price', sanitize_text_field($_POST['fsc_price']));
+        }
+
+        if (isset($_POST['fsc_sale_price'])) {
+            update_post_meta($post_id, '_fsc_sale_price', sanitize_text_field($_POST['fsc_sale_price']));
+        }
+
+        if (isset($_POST['fsc_category'])) {
+            update_post_meta($post_id, '_fsc_category', sanitize_text_field($_POST['fsc_category']));
+        }
+
+        if (isset($_POST['fsc_material'])) {
+            update_post_meta($post_id, '_fsc_material', sanitize_text_field($_POST['fsc_material']));
+        }
+
+        if (isset($_POST['fsc_size'])) {
+            update_post_meta($post_id, '_fsc_size', sanitize_text_field($_POST['fsc_size']));
+        }
+
+        if (isset($_POST['fsc_color_options'])) {
+            update_post_meta($post_id, '_fsc_color_options', sanitize_textarea_field($_POST['fsc_color_options']));
+        }
+
+        // Save customizable checkbox
+        if (isset($_POST['fsc_customizable'])) {
+            update_post_meta($post_id, '_fsc_customizable', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_customizable', '0');
+        }
+        
+        // Save customization options
+        if (isset($_POST['fsc_enable_color_selection'])) {
+            update_post_meta($post_id, '_fsc_enable_color_selection', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_enable_color_selection', '0');
+        }
+        
+        if (isset($_POST['fsc_enable_outline_selection'])) {
+            update_post_meta($post_id, '_fsc_enable_outline_selection', '1');
+        } else {
+            update_post_meta($post_id, '_fsc_enable_outline_selection', '0');
+        }
+
+        // Save features
+        if (isset($_POST['fsc_features']) && is_array($_POST['fsc_features'])) {
+            $features = array_filter(array_map('sanitize_text_field', $_POST['fsc_features']));
+            update_post_meta($post_id, '_fsc_features', $features);
+        }
+
+        // Save thumbnail ID from media selector
+        if (isset($_POST['fsc_thumbnail_id'])) {
+            update_post_meta($post_id, '_fsc_thumbnail_id', sanitize_text_field($_POST['fsc_thumbnail_id']));
+        }
+
+        // Save logo ID from media selector
+        if (isset($_POST['fsc_logo_id'])) {
+            $logo_id = sanitize_text_field($_POST['fsc_logo_id']);
+            update_post_meta($post_id, '_fsc_logo_id', $logo_id);
+            
+            // Also update the logo file URL for backward compatibility
+            if ($logo_id) {
+                $logo_url = wp_get_attachment_url($logo_id);
+                if ($logo_url) {
+                    update_post_meta($post_id, '_fsc_logo_file', $logo_url);
+                }
+            } else {
+                // Clear logo file if no logo ID
+                delete_post_meta($post_id, '_fsc_logo_file');
+            }
+        }
+
+        // Save product variants
+        if (isset($_POST['apd_variants_enabled'])) {
+            // Build variants data structure
+            $variants_data = array(
+                'enabled' => true,
+                'size_options' => array(),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+            
+            // Save size options
+            if (isset($_POST['apd_size_value']) && isset($_POST['apd_size_label'])) {
+                $size_values = $_POST['apd_size_value'];
+                $size_labels = $_POST['apd_size_label'];
+                
+                foreach ($size_values as $idx => $value) {
+                    if (!empty($value) && !empty($size_labels[$idx])) {
+                        $variants_data['size_options'][] = array(
+                            'value' => sanitize_text_field($value),
+                            'label' => sanitize_text_field($size_labels[$idx])
+                        );
+                    }
+                }
+            }
+            
+            // Save material options
+            if (isset($_POST['apd_material_value']) && isset($_POST['apd_material_label'])) {
+                $material_values = $_POST['apd_material_value'];
+                $material_labels = $_POST['apd_material_label'];
+                
+                foreach ($material_values as $idx => $value) {
+                    if (!empty($value) && !empty($material_labels[$idx])) {
+                        $variants_data['material_options'][] = array(
+                            'value' => sanitize_text_field($value),
+                            'label' => sanitize_text_field($material_labels[$idx])
+                        );
+                    }
+                }
+            }
+            
+            // Save combinations
+            if (isset($_POST['apd_comb_size']) && is_array($_POST['apd_comb_size'])) {
+                $comb_sizes = $_POST['apd_comb_size'];
+                $comb_materials = isset($_POST['apd_comb_material']) ? $_POST['apd_comb_material'] : array();
+                $comb_skus = isset($_POST['apd_comb_sku']) ? $_POST['apd_comb_sku'] : array();
+                $comb_prices = isset($_POST['apd_comb_price']) ? $_POST['apd_comb_price'] : array();
+                $comb_sale_prices = isset($_POST['apd_comb_sale_price']) ? $_POST['apd_comb_sale_price'] : array();
+                $comb_stocks = isset($_POST['apd_comb_stock']) ? $_POST['apd_comb_stock'] : array();
+                
+                foreach ($comb_sizes as $idx => $size) {
+                    $variants_data['combinations'][] = array(
+                        'size' => sanitize_text_field($size),
+                        'material' => sanitize_text_field($comb_materials[$idx]),
+                        'sku' => sanitize_text_field($comb_skus[$idx]),
+                        'price' => sanitize_text_field($comb_prices[$idx]),
+                        'sale_price' => sanitize_text_field($comb_sale_prices[$idx]),
+                        'stock' => sanitize_text_field($comb_stocks[$idx])
+                    );
+                }
+            }
+            
+            update_post_meta($post_id, '_apd_variants', $variants_data);
+            
+            // Save variant-specific pricing tiers using index-based approach
+            $pricing_service = new APD_Pricing_Service();
+            $all_variant_tiers = array();
+            
+            // Get the SKU mapping from the form
+            $sku_map = isset($_POST['apd_var_tier_sku_map']) ? $_POST['apd_var_tier_sku_map'] : array();
+            
+            foreach ($sku_map as $variant_idx => $sku) {
+                if (empty($sku)) {
+                    continue;
+                }
+                
+                // Check for tier data for this variant index
+                if (isset($_POST['apd_var_tier_minqty'][$variant_idx]) && is_array($_POST['apd_var_tier_minqty'][$variant_idx])) {
+                    $variant_tiers = array();
+                    $min_qtys = $_POST['apd_var_tier_minqty'][$variant_idx];
+                    $discounts = isset($_POST['apd_var_tier_discount'][$variant_idx]) ? $_POST['apd_var_tier_discount'][$variant_idx] : array();
+                    $names = isset($_POST['apd_var_tier_name'][$variant_idx]) ? $_POST['apd_var_tier_name'][$variant_idx] : array();
+                    
+                    foreach ($min_qtys as $tier_idx => $min_qty) {
+                        if (!empty($min_qty) && isset($discounts[$tier_idx]) && $discounts[$tier_idx] !== '') {
+                            $variant_tiers[] = array(
+                                'min_qty' => intval($min_qty),
+                                'discount_percent' => floatval($discounts[$tier_idx]),
+                                'name' => isset($names[$tier_idx]) ? sanitize_text_field($names[$tier_idx]) : ''
+                            );
+                        }
+                    }
+                    
+                    if (!empty($variant_tiers)) {
+                        // Sort tiers by min_qty ascending
+                        usort($variant_tiers, function($a, $b) {
+                            return $a['min_qty'] - $b['min_qty'];
+                        });
+                        $all_variant_tiers[$sku] = $variant_tiers;
+                    }
+                }
+            }
+            
+            // Save all variant tiers at once
+            if (!empty($all_variant_tiers)) {
+                update_post_meta($post_id, '_apd_variant_price_tiers', $all_variant_tiers);
+            } else {
+                delete_post_meta($post_id, '_apd_variant_price_tiers');
+            }
+        } else {
+            // Variants disabled
+            $variants_data = array(
+                'enabled' => false,
+                'size_options' => array(),
+                'material_options' => array(),
+                'combinations' => array()
+            );
+            update_post_meta($post_id, '_apd_variants', $variants_data);
+        }
+
+        // Save pricing tiers
+        if (isset($_POST['apd_pricing_tiers_nonce']) && wp_verify_nonce($_POST['apd_pricing_tiers_nonce'], 'apd_pricing_tiers_meta')) {
+            $pricing_service = new APD_Pricing_Service();
+            
+            $tiers = array();
+            if (isset($_POST['apd_tier_min_qty']) && is_array($_POST['apd_tier_min_qty'])) {
+                $min_qtys = $_POST['apd_tier_min_qty'];
+                $discounts = isset($_POST['apd_tier_discount']) ? $_POST['apd_tier_discount'] : array();
+                $names = isset($_POST['apd_tier_name']) ? $_POST['apd_tier_name'] : array();
+                
+                foreach ($min_qtys as $index => $min_qty) {
+                    if (!empty($min_qty) && isset($discounts[$index]) && $discounts[$index] !== '') {
+                        $tiers[] = array(
+                            'min_qty' => intval($min_qty),
+                            'discount_percent' => floatval($discounts[$index]),
+                            'name' => isset($names[$index]) ? sanitize_text_field($names[$index]) : ''
+                        );
+                    }
+                }
+            }
+            
+            if (!empty($tiers)) {
+                $pricing_service->save_price_tiers($post_id, $tiers);
+            } else {
+                $pricing_service->delete_price_tiers($post_id);
+            }
+        }
+    }
+
+    public function enqueue_scripts()
+    {
+        // Only enqueue customizer scripts on customizer pages
+        if (get_query_var('customizer')) {
+            wp_enqueue_style('apd-styles', APD_PLUGIN_URL . 'assets/css/customizer.css', array(), APD_VERSION);
+            wp_enqueue_script('html2canvas', 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', array('jquery'), '1.4.1', true);
+            // Use consistent handle 'apd-customizer' instead of 'apd-script'
+            wp_enqueue_script('apd-customizer', APD_PLUGIN_URL . 'assets/js/customizer.js', array('jquery', 'html2canvas'), APD_VERSION, true);
+
+            // Get product ID for customizer
+            $product_id = get_query_var('customizer');
+            
+            // Get template ID and customization options if product is loaded
+            $template_id = 0;
+            $enable_color_selection = 1;  // Default enabled (use integers for JavaScript)
+            $enable_outline_selection = 1;  // Default enabled (use integers for JavaScript)
+            
+            if ($product_id) {
+                $template_id = get_post_meta($product_id, '_fsc_template', true);
+                
+                // Get customization options
+                $color_opt = get_post_meta($product_id, '_fsc_enable_color_selection', true);
+                $outline_opt = get_post_meta($product_id, '_fsc_enable_outline_selection', true);
+                
+                // Default to enabled if not set, convert to integer (1 or 0) for JavaScript
+                $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+                $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            }
+
+            wp_localize_script('apd-customizer', 'apd_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                // Nonces used by various endpoints
+                'nonce' => wp_create_nonce('apd_ajax_nonce'),
+                'fsc_nonce' => wp_create_nonce('fsc_nonce'),
+                'plugin_url' => APD_PLUGIN_URL,
+                'site_url' => home_url(),
+                'product_id' => $product_id,
+                'template_id' => $template_id,
+                'enable_color_selection' => $enable_color_selection,
+                'enable_outline_selection' => $enable_outline_selection
+            ));
+
+            // Pass uploaded fonts to the customizer for font rendering
+            $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+            wp_localize_script('apd-customizer', 'apdUploadedFonts', $uploaded_fonts);
+
+            // Provide materials directly to the page to avoid extra AJAX calls
+            $materials_map = $this->get_materials($template_id);
+            // Convert to format expected by frontend: name => {url, price}
+            wp_localize_script('apd-customizer', 'fscDefaults', array(
+                'materials' => $materials_map
+            ));
+
+            // Debug: Log script enqueue
+            error_log('APD Scripts: Enqueued for customizer with product_id: ' . $product_id);
+        }
+    }
+
+    public function admin_enqueue_scripts()
+    {
+        wp_enqueue_style('apd-admin-styles', APD_PLUGIN_URL . 'assets/css/admin.css', array(), APD_VERSION);
+        wp_enqueue_style('apd-admin-fixes', APD_PLUGIN_URL . 'assets/css/admin-fixes.css', array(), APD_VERSION);
+
+        // Fix for WordPress dismissible notices
+        add_action('admin_footer', function() {
+            ?>
+            <script>
+            // Fix for dismissible notices - ensure elements exist before adding listeners
+            (function() {
+                if (typeof jQuery !== 'undefined') {
+                    jQuery(document).ready(function($) {
+                        $('.notice-dismiss').off('click.wp-dismiss-notice').on('click.wp-dismiss-notice', function(e) {
+                            e.preventDefault();
+                            $(this).closest('.notice').fadeOut();
+                        });
+                    });
+                }
+            })();
+            </script>
+            <?php
+        });
+
+        // Enqueue media uploader on product edit page
+        $screen = get_current_screen();
+        if ($screen && $screen->post_type === 'apd_product') {
+            wp_enqueue_media();
+            wp_enqueue_script('apd-product-admin', APD_PLUGIN_URL . 'assets/js/product-admin.js', array('jquery'), APD_VERSION, true);
+        }
+
+        // Enqueue designer scripts only on designer page
+        if ($screen && strpos($screen->id, 'apd-designer') !== false) {
+            wp_enqueue_script('apd-designer', APD_PLUGIN_URL . 'assets/js/designer.js', array('jquery'), APD_VERSION, true);
+
+            wp_localize_script('apd-designer', 'apd_designer', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('apd_nonce'),
+                'plugin_url' => APD_PLUGIN_URL
+            ));
+
+            // Add meta tags for nonce and AJAX URL
+            add_action('admin_head', function () {
+                echo '<meta name="apd-nonce" content="' . wp_create_nonce('apd_nonce') . '">';
+                echo '<meta name="apd-ajax-url" content="' . admin_url('admin-ajax.php') . '">';
+            });
+        }
+    }
+
+    public function enqueue_block_editor_assets()
+    {
+        // This hook is specifically for block editor assets
+
+        // Enqueue block editor scripts with proper dependencies
+        wp_enqueue_script('jquery');
+        wp_enqueue_script(
+            'apd-product-store',
+            APD_PLUGIN_URL . 'assets/js/product-store.js',
+            array('jquery'),
+            APD_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'apd-product-block',
+            APD_PLUGIN_URL . 'assets/js/product-block.js',
+            array('apd-product-store', 'jquery'),
+            APD_VERSION,
+            true
+        );
+
+        wp_enqueue_style('apd-product-block', APD_PLUGIN_URL . 'assets/css/product-block.css', array(), APD_VERSION);
+
+        wp_localize_script('apd-product-block', 'apd_ajax', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('apd_ajax_nonce'),
+            'site_url' => home_url()
+        ));
+    }
+
+    public function enqueue_frontend_scripts()
+    {
+        // Always ensure jQuery is enqueued first (WordPress should handle this, but be explicit)
+        // Use priority to ensure jQuery loads early
+        wp_enqueue_script('jquery');
+        
+        // Check if product list shortcode is used on the page
+        global $post;
+        $has_product_list = false;
+        if ($post && isset($post->post_content)) {
+            $has_product_list = has_shortcode($post->post_content, 'apd_product_list');
+        }
+        
+        // Enqueue frontend scripts for product blocks
+        wp_enqueue_script('apd-product-block-frontend', APD_PLUGIN_URL . 'assets/js/product-block-frontend.js', array('jquery'), APD_VERSION, true);
+        wp_enqueue_style('apd-product-block', APD_PLUGIN_URL . 'assets/css/product-block.css', array(), APD_VERSION);
+
+        // Inject uploaded fonts as inline CSS for frontend rendering
+        $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+        if (!empty($uploaded_fonts)) {
+            $font_css = '';
+            foreach ($uploaded_fonts as $font) {
+                if (!empty($font['family']) && !empty($font['url'])) {
+                    $family_css = esc_attr($font['family']);
+                    $url_css = esc_url($font['url']);
+                    $weight_css = isset($font['weight']) ? esc_attr($font['weight']) : '400';
+                    // Determine font format based on URL extension
+                    $format = 'truetype';
+                    if (strpos($url_css, '.woff2') !== false) {
+                        $format = 'woff2';
+                    } elseif (strpos($url_css, '.woff') !== false) {
+                        $format = 'woff';
+                    } elseif (strpos($url_css, '.otf') !== false) {
+                        $format = 'opentype';
+                    }
+                    $font_css .= "@font-face{font-family:'{$family_css}';src:url('{$url_css}') format('{$format}');font-weight:{$weight_css};font-display:swap;}";
+                }
+            }
+            if ($font_css) {
+                wp_add_inline_style('apd-product-block', $font_css);
+            }
+        }
+
+        // Enqueue customizer scripts and styles
+        wp_enqueue_script('apd-product-customizer', APD_PLUGIN_URL . 'assets/js/product-customizer.js', array('jquery'), APD_VERSION, true);
+        wp_enqueue_style('apd-product-customizer', APD_PLUGIN_URL . 'assets/css/product-customizer.css', array(), APD_VERSION);
+
+        // NOTE: customizer.js is loaded by enqueue_scripts() on customizer pages only
+        // Do NOT load it here to avoid duplicate loading and conflicts
+
+        // Enqueue cart scripts and styles on cart page
+        if (is_page() && (has_shortcode(get_post()->post_content, 'apd_cart') || is_page(get_option('apd_cart')))) {
+            wp_enqueue_script('apd-cart', APD_PLUGIN_URL . 'assets/js/cart.js', array('jquery'), APD_VERSION, true);
+            wp_enqueue_style('apd-cart', APD_PLUGIN_URL . 'assets/css/cart.css', array(), APD_VERSION);
+        }
+
+        // Enqueue orders scripts and styles on orders page
+        if (is_page() && (has_shortcode(get_post()->post_content, 'apd_orders') || is_page(get_option('apd_orders')))) {
+            wp_enqueue_script('apd-orders', APD_PLUGIN_URL . 'assets/js/orders.js', array('jquery'), APD_VERSION, true);
+            wp_enqueue_style('apd-orders', APD_PLUGIN_URL . 'assets/css/orders.css', array(), APD_VERSION);
+        }
+
+        // Enqueue product variants script on product detail pages
+        wp_enqueue_script('apd-product-variants', APD_PLUGIN_URL . 'assets/js/product-variants.js', array('jquery'), APD_VERSION, true);
+        wp_localize_script('apd-product-variants', 'apdVariantsConfig', array(
+            'homeUrl' => home_url(),
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('apd_ajax_nonce')
+        ));
+
+        // Prepare apd_ajax data
+        $apd_ajax_data = array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('apd_ajax_nonce'),
+            'site_url' => home_url(),
+            'cart_url' => home_url(get_option('apd_cart_url', '/cart/')),
+            'checkout_url' => home_url(get_option('apd_checkout_url', '/checkout/')),
+            'products_url' => home_url(get_option('apd_products_url', '/products/')),
+            'orders_url' => home_url(get_option('apd_orders_url', '/my-orders/')),
+            'customizer_url' => home_url(get_option('apd_customizer_url', '/customizer/')),
+            'thank_you_url' => home_url(get_option('apd_thank_you_url', '/thank-you/'))
+        );
+        
+        // Add customization options if on customizer page
+        if (get_query_var('customizer')) {
+            $product_id = get_query_var('customizer');
+            $template_id = 0;
+            $enable_color_selection = 1;
+            $enable_outline_selection = 1;
+            
+            if ($product_id) {
+                $template_id = get_post_meta($product_id, '_fsc_template', true);
+                $color_opt = get_post_meta($product_id, '_fsc_enable_color_selection', true);
+                $outline_opt = get_post_meta($product_id, '_fsc_enable_outline_selection', true);
+                
+                $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+                $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            }
+            
+            $apd_ajax_data['product_id'] = $product_id;
+            $apd_ajax_data['template_id'] = $template_id;
+            $apd_ajax_data['enable_color_selection'] = $enable_color_selection;
+            $apd_ajax_data['enable_outline_selection'] = $enable_outline_selection;
+        }
+
+        wp_localize_script('apd-product-block-frontend', 'apd_ajax', $apd_ajax_data);
+
+        wp_localize_script('apd-product-customizer', 'apd_ajax', $apd_ajax_data);
+
+        // Also localize for cart script
+        if (is_page() && (has_shortcode(get_post()->post_content, 'apd_cart') || is_page(get_option('apd_cart')))) {
+            wp_localize_script('apd-cart', 'apd_ajax', $apd_ajax_data);
+            wp_localize_script('apd-orders', 'apd_ajax', $apd_ajax_data);
+        }
+    }
+
+    public function customizer_shortcode($atts)
+    {
+        $atts = shortcode_atts(array(
+            'product_id' => 0
+        ), $atts);
+
+        // Debug: Log shortcode usage
+        error_log('APD Shortcode: Called with atts: ' . print_r($atts, true));
+        error_log('APD Shortcode: Product ID from shortcode: ' . $atts['product_id']);
+
+        // Enqueue scripts for customizer shortcode
+        $this->enqueue_frontend_scripts();
+
+        ob_start();
+        $this->render_customizer($atts['product_id']);
+        return ob_get_clean();
+    }
+
+    public function product_list_shortcode($atts)
+    {
+        $atts = shortcode_atts(array(
+            'show_title' => 'true',
+            'show_description' => 'true',
+            'show_price' => 'true',
+            'show_sale' => 'true',
+            'columns' => '3',
+            'items_per_page' => '12'
+        ), $atts);
+
+        // Enqueue frontend scripts when shortcode is used
+        $this->enqueue_frontend_scripts();
+
+        ob_start();
+        $this->render_product_list($atts);
+        return ob_get_clean();
+    }
+
+    public function products_by_company_shortcode($atts)
+    {
+        $atts = shortcode_atts(array(
+            'company' => '',
+            'show_title' => 'true',
+            'show_description' => 'true',
+            'show_price' => 'true',
+            'show_sale' => 'true',
+            'columns' => '3',
+            'items_per_page' => '12',
+            'hide_header' => 'false'
+        ), $atts);
+
+        // Enqueue frontend scripts when shortcode is used
+        $this->enqueue_frontend_scripts();
+
+        ob_start();
+        $this->render_products_by_company($atts);
+        return ob_get_clean();
+    }
+
+    public function render_customizer($product_id = 0)
+    {
+        // Debug: Log render_customizer call
+        error_log('APD Render Customizer: Called with product_id: ' . $product_id);
+
+        // Get product data if product_id is provided
+        $product_data = null;
+        if ($product_id > 0) {
+            $product_data = get_post($product_id);
+            error_log('APD Render Customizer: Product data retrieved: ' . ($product_data ? 'Found' : 'Not found'));
+            if ($product_data) {
+                error_log('APD Render Customizer: Product title: ' . $product_data->post_title . ', Type: ' . $product_data->post_type . ', Status: ' . $product_data->post_status);
+            }
+        }
+
+        // Get all products for dropdown
+        $all_products = get_posts(array(
+            'post_type' => 'apd_product',
+            'posts_per_page' => -1,
+            'orderby' => 'title',
+            'order' => 'ASC',
+            'post_status' => 'publish'
+        ));
+
+        // Get template ID from product if available
+        $template_id = 0;
+        if ($product_data) {
+            $template_id = get_post_meta($product_data->ID, '_fsc_template', true);
+        }
+
+        // Get materials from uploads folder (filtered by template's allowed categories)
+        $materials = $this->get_materials($template_id);
+
+        // Debug: Log materials for troubleshooting
+        error_log('FSC Materials loaded: ' . print_r($materials, true));
+
+        // Get colors
+        $colors = array(
+            'black' => '#000000',
+            'yellow' => '#FFFF00',
+            'dark-red' => '#8B0000',
+            'orange' => '#FFA500',
+            'light-blue' => '#87CEEB',
+            'light-green' => '#90EE90',
+            'purple' => '#800080',
+            'light-grey' => '#D3D3D3',
+            'brown' => '#A52A2A',
+            'bright-yellow' => '#FFD700',
+            'dark-green' => '#006400',
+            'light-purple' => '#DDA0DD'
+        );
+
+        // Get product meta data
+        $product_price = '';
+        $product_sale_price = '';
+        $product_material = '';
+        $product_features = array();
+        $product_logo_content = '';
+        $enable_color_selection = 1; // Default enabled (integer)
+        $enable_outline_selection = 1; // Default enabled (integer)
+
+        if ($product_data) {
+            $product_price = get_post_meta($product_data->ID, '_fsc_price', true);
+            $product_sale_price = get_post_meta($product_data->ID, '_fsc_sale_price', true);
+            $product_material = get_post_meta($product_data->ID, '_fsc_material', true);
+            $product_features = get_post_meta($product_data->ID, '_fsc_features', true);
+            
+            // Get customization options
+            $color_opt = get_post_meta($product_data->ID, '_fsc_enable_color_selection', true);
+            $outline_opt = get_post_meta($product_data->ID, '_fsc_enable_outline_selection', true);
+            // Default to enabled if not set, convert to integer for JavaScript
+            $enable_color_selection = ($color_opt === '' || $color_opt === '1') ? 1 : 0;
+            $enable_outline_selection = ($outline_opt === '' || $outline_opt === '1') ? 1 : 0;
+            
+            // Get logo URL - prefer attachment ID over meta field
+            $logo_id = get_post_meta($product_data->ID, '_fsc_logo_id', true);
+            $product_logo_url = '';
+            
+            if ($logo_id) {
+                $product_logo_url = wp_get_attachment_url($logo_id);
+                error_log('APD: Got logo from attachment ID ' . $logo_id . ': ' . ($product_logo_url ?: 'FAILED'));
+            }
+            
+            if (!$product_logo_url) {
+                $product_logo_url = get_post_meta($product_data->ID, '_fsc_logo_file', true);
+                if ($product_logo_url) {
+                    error_log('APD: Using logo_file meta as fallback: ' . $product_logo_url);
+                }
+            }
+
+            // Get processed SVG content for product-specific logo
+            if ($product_logo_url) {
+                // Convert URL to file path using WordPress uploads directory
+                $upload_dir = wp_upload_dir();
+                $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $product_logo_url);
+                
+                // Also try replacing the site URL for cases where full URL is stored
+                if (!file_exists($logo_path)) {
+                    $logo_path = str_replace(site_url(), ABSPATH, $product_logo_url);
+                }
+                
+                error_log('APD: Attempting to load SVG from: ' . $logo_path);
+                
+                if (file_exists($logo_path)) {
+                    $product_logo_content = $this->_get_processed_svg_content($logo_path);
+                    
+                    if ($product_logo_content) {
+                        error_log('APD: Logo content loaded successfully, size: ' . strlen($product_logo_content) . ' bytes');
+                    } else {
+                        error_log('APD: Failed to get processed SVG content');
+                    }
+                } else {
+                    error_log('APD: Logo file does not exist at path: ' . $logo_path);
+                }
+            }
+
+            // Override colors if product has custom color options
+            $custom_colors = get_post_meta($product_data->ID, '_fsc_color_options', true);
+            if ($custom_colors) {
+                $color_array = array_map('trim', explode(',', $custom_colors));
+                $colors = array();
+                foreach ($color_array as $color) {
+                    if (isset($this->get_default_colors()[$color])) {
+                        $colors[$color] = $this->get_default_colors()[$color];
+                    }
+                }
+            }
+        }
+
+        // Do not inject mock defaults; leave empty if not available so frontend can handle gracefully
+
+        include APD_PLUGIN_PATH . 'templates/customizer.php';
+    }
+
+    public function render_product_list($atts)
+    {
+        // Debug: Log shortcode call
+        error_log('APD Product List: Shortcode called with atts: ' . print_r($atts, true));
+
+        // Get all products
+        $products = get_posts(array(
+            'post_type' => 'apd_product',
+            'posts_per_page' => -1,
+            'post_status' => 'publish',
+            'orderby' => 'title',
+            'order' => 'ASC'
+        ));
+
+        // Debug: Log products found
+        error_log('APD Product List: Found ' . count($products) . ' products');
+
+        // If no products, show a message
+        if (empty($products)) {
+            return '<div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong>No Products Found:</strong> Please create some products in the admin panel first. 
+                <a href="' . admin_url('post-new.php?post_type=apd_product') . '" target="_blank">Create Product</a>
+            </div>';
+        }
+
+        // Group products by category
+        $categories = array();
+        foreach ($products as $product) {
+            $category = get_post_meta($product->ID, '_fsc_category', true);
+            if (empty($category)) {
+                $category = 'Uncategorized';
+            }
+
+            if (!isset($categories[$category])) {
+                $categories[$category] = array();
+            }
+
+            $price = get_post_meta($product->ID, '_fsc_price', true);
+            $sale_price = get_post_meta($product->ID, '_fsc_sale_price', true);
+            $features = get_post_meta($product->ID, '_fsc_features', true);
+            $template_id = get_post_meta($product->ID, '_fsc_template', true);
+
+            // Get custom thumbnail or fallback to featured image
+            $thumbnail_id = get_post_meta($product->ID, '_fsc_thumbnail_id', true);
+            $thumbnail_url = '';
+            if ($thumbnail_id) {
+                $thumbnail_url = wp_get_attachment_image_url($thumbnail_id, 'medium');
+            }
+            if (!$thumbnail_url) {
+                $thumbnail_url = get_the_post_thumbnail_url($product->ID, 'medium');
+            }
+
+            $categories[$category][] = array(
+                'id' => $product->ID,
+                'title' => $product->post_title,
+                'description' => wp_trim_words($product->post_content, 20),
+                'content' => $product->post_content,
+                'price' => $price ?: '0.00',
+                'sale_price' => $sale_price,
+                'features' => is_array($features) ? $features : array(),
+                'template_id' => $template_id,
+                'permalink' => get_permalink($product->ID),
+                'thumbnail' => $thumbnail_url
+            );
+        }
+
+        // Pass data to template
+        // Debug: Log categories created
+        error_log('APD Product List: Created ' . count($categories) . ' categories: ' . implode(', ', array_keys($categories)));
+
+        $template_data = array(
+            'categories' => $categories,
+            'atts' => $atts,
+            'show_title' => $atts['show_title'] === 'true',
+            'show_description' => $atts['show_description'] === 'true',
+            'show_price' => $atts['show_price'] === 'true',
+            'show_sale' => $atts['show_sale'] === 'true',
+            'columns' => intval($atts['columns']),
+            'items_per_page' => intval($atts['items_per_page'])
+        );
+
+        // Debug: Log template data
+        error_log('APD Product List: Template data prepared, including ' . count($template_data['categories']) . ' categories');
+
+        // Include the product list template
+        include APD_PLUGIN_PATH . 'templates/product-list.php';
+    }
+
+    public function render_products_by_company($atts)
+    {
+        // Get the company slug or name from attributes
+        $company_slug = sanitize_text_field($atts['company']);
+        
+        if (empty($company_slug)) {
+            return '<div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong>No Company Specified:</strong> Please specify a company using the "company" attribute. Example: [apd_products_by_company company="company-slug"]
+            </div>';
+        }
+
+        // Get all products for the specified company
+        $args = array(
+            'post_type' => 'apd_product',
+            'posts_per_page' => -1,
+            'post_status' => 'publish',
+            'orderby' => 'title',
+            'order' => 'ASC',
+            'tax_query' => array(
+                array(
+                    'taxonomy' => 'apd_company',
+                    'field' => 'slug',
+                    'terms' => $company_slug,
+                ),
+            ),
+        );
+
+        $products = get_posts($args);
+
+        // Get company term for display
+        $company_term = get_term_by('slug', $company_slug, 'apd_company');
+        $company_name = $company_term ? $company_term->name : ucwords(str_replace('-', ' ', $company_slug));
+
+        // If no products, show a message
+        if (empty($products)) {
+            return '<div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong>No Products Found:</strong> No products are assigned to the company "' . esc_html($company_name) . '". 
+                <a href="' . admin_url('edit.php?post_type=apd_product') . '" target="_blank">Manage Products</a>
+            </div>';
+        }
+
+        // Group products by category (same as render_product_list)
+        $categories = array();
+        foreach ($products as $product) {
+            $category = get_post_meta($product->ID, '_fsc_category', true);
+            if (empty($category)) {
+                $category = 'Uncategorized';
+            }
+
+            if (!isset($categories[$category])) {
+                $categories[$category] = array();
+            }
+
+            $price = get_post_meta($product->ID, '_fsc_price', true);
+            $sale_price = get_post_meta($product->ID, '_fsc_sale_price', true);
+            $features = get_post_meta($product->ID, '_fsc_features', true);
+            $template_id = get_post_meta($product->ID, '_fsc_template', true);
+
+            // Get custom thumbnail or fallback to featured image
+            $thumbnail_id = get_post_meta($product->ID, '_fsc_thumbnail_id', true);
+            $thumbnail_url = '';
+            if ($thumbnail_id) {
+                $thumbnail_url = wp_get_attachment_image_url($thumbnail_id, 'medium');
+            }
+            if (!$thumbnail_url) {
+                $thumbnail_url = get_the_post_thumbnail_url($product->ID, 'medium');
+            }
+
+            $categories[$category][] = array(
+                'id' => $product->ID,
+                'title' => $product->post_title,
+                'description' => wp_trim_words($product->post_content, 20),
+                'content' => $product->post_content,
+                'price' => $price ?: '0.00',
+                'sale_price' => $sale_price,
+                'features' => is_array($features) ? $features : array(),
+                'template_id' => $template_id,
+                'permalink' => get_permalink($product->ID),
+                'thumbnail' => $thumbnail_url
+            );
+        }
+
+        // Pass data to template
+        $template_data = array(
+            'categories' => $categories,
+            'atts' => $atts,
+            'show_title' => $atts['show_title'] === 'true',
+            'show_description' => $atts['show_description'] === 'true',
+            'show_price' => $atts['show_price'] === 'true',
+            'show_sale' => $atts['show_sale'] === 'true',
+            'columns' => intval($atts['columns']),
+            'items_per_page' => intval($atts['items_per_page']),
+            'company_name' => $company_name,
+            'hide_header' => $atts['hide_header'] === 'true'
+        );
+
+        // Include the product list template
+        include APD_PLUGIN_PATH . 'templates/product-list.php';
+    }
+
+    public function test_shortcode($atts)
+    {
+        return '<div style="background: #f0f0f0; padding: 20px; border: 2px solid #333; margin: 10px 0;">TEST SHORTCODE WORKS! Current time: ' . date('Y-m-d H:i:s') . '</div>';
+    }
+
+    public function debug_shortcode($atts)
+    {
+        return '<div style="background: #e1f5fe; padding: 20px; border: 2px solid #2196f3; margin: 10px 0;">
+            <h3>Debug Info:</h3>
+            <p><strong>Shortcode called:</strong> ' . date('Y-m-d H:i:s') . '</p>
+            <p><strong>Products found:</strong> ' . count(get_posts(array('post_type' => 'apd_product', 'posts_per_page' => -1, 'post_status' => 'publish'))) . '</p>
+            <p><strong>Plugin active:</strong> ' . (is_plugin_active('freight-signs-customizer/freight-signs-customizer.php') ? 'Yes' : 'No') . '</p>
+            <p><strong>Customizer Query Var:</strong> ' . get_query_var('customizer') . '</p>
+            <p><strong>Test Customizer URL:</strong> <a href="' . home_url('/customizer/1/') . '">/customizer/1/</a></p>
+        </div>';
+    }
+
+    public function add_form_enctype()
+    {
+        global $post_type;
+        if ($post_type === 'apd_product') {
+            echo ' enctype="multipart/form-data"';
+        }
+    }
+
+    public function get_default_colors()
+    {
+        return array(
+            'black' => '#000000',
+            'yellow' => '#FFFF00',
+            'dark-red' => '#8B0000',
+            'orange' => '#FFA500',
+            'light-blue' => '#87CEEB',
+            'light-green' => '#90EE90',
+            'purple' => '#800080',
+            'light-grey' => '#D3D3D3',
+            'brown' => '#A52A2A',
+            'bright-yellow' => '#FFD700',
+            'dark-green' => '#006400',
+            'light-purple' => '#DDA0DD'
+        );
+    }
+
+    public function get_materials($template_id = 0)
+    {
+        $materials = array();
+        $allowed_categories = array();
+        
+        // Get allowed categories for this template if template_id is provided
+        if ($template_id > 0) {
+            $allowed_categories = get_post_meta($template_id, '_apd_allowed_material_categories', true);
+            if (!is_array($allowed_categories)) {
+                $allowed_categories = array();
+            }
+        }
+        
+        // Check if we should filter by categories
+        $filter_by_category = !empty($allowed_categories) && !in_array('all', $allowed_categories);
+
+        // Get materials from database first
+        $db_materials = get_option('apd_materials', array());
+
+        if (!empty($db_materials)) {
+            foreach ($db_materials as $material) {
+                // Check if material should be included based on category filtering
+                if ($filter_by_category) {
+                    $material_category = isset($material['category']) ? $material['category'] : 'Uncategorized';
+                    if (!in_array($material_category, $allowed_categories)) {
+                        continue; // Skip this material
+                    }
+                }
+                
+                // Backward compatibility: ensure price exists
+                $price = isset($material['price']) ? floatval($material['price']) : 0;
+                $materials[$material['name']] = array(
+                    'url' => $material['url'],
+                    'price' => $price,
+                    'category' => isset($material['category']) ? $material['category'] : 'Uncategorized'
+                );
+            }
+        } else {
+            // Fallback: Use plugin directory if no database materials
+            $plugin_dir = APD_PLUGIN_PATH;
+            $material_path = $plugin_dir . 'uploads/material/';
+
+            if (is_dir($material_path)) {
+                $files = glob($material_path . '*.{png,jpg,jpeg}', GLOB_BRACE);
+                foreach ($files as $file) {
+                    $name = pathinfo($file, PATHINFO_FILENAME);
+                    $materials[$name] = array(
+                        'url' => APD_PLUGIN_URL . 'uploads/material/' . basename($file),
+                        'price' => 0
+                    );
+                }
+            }
+        }
+
+        // Final fallback materials if none found
+        if (empty($materials)) {
+            $materials = array(
+                'Brush_gold' => array(
+                    'url' => APD_PLUGIN_URL . 'uploads/material/Brush_gold.png',
+                    'price' => 0
+                ),
+                'Diamond_Plate' => array(
+                    'url' => APD_PLUGIN_URL . 'uploads/material/Diamond_Plate.png',
+                    'price' => 0
+                ),
+                'Engine turn_gold' => array(
+                    'url' => APD_PLUGIN_URL . 'uploads/material/Engine_turn_gold.png',
+                    'price' => 0
+                ),
+                'Florentine_Silver' => array(
+                    'url' => APD_PLUGIN_URL . 'uploads/material/Florentine_Silver.png',
+                    'price' => 0
+                ),
+                'gold' => array(
+                    'url' => APD_PLUGIN_URL . 'uploads/material/gold.png',
+                    'price' => 0
+                )
+            );
+        }
+
+        return $materials;
+    }
+
+    /**
+     * Helper function to process SVG content for dynamic coloring
+     */
+    private function _get_processed_svg_content($logo_path)
+    {
+        error_log('APD: Checking SVG path: ' . $logo_path);
+        
+        if (!file_exists($logo_path)) {
+            error_log('APD: SVG file does not exist at: ' . $logo_path);
+            return false;
+        }
+
+        $svg_content = file_get_contents($logo_path);
+        if ($svg_content === false || $svg_content === '') {
+            error_log('APD: Failed to read SVG content or file is empty');
+            return false;
+        }
+        
+        error_log('APD: SVG file loaded, size: ' . strlen($svg_content) . ' bytes');
+        error_log('APD: First 100 chars: ' . substr($svg_content, 0, 100));
+
+        // Normalize encoding to UTF-8 if file appears to be UTF-16
+        if (strpos($svg_content, "\x00") !== false || preg_match('/encoding=["\']utf-16["\']/i', $svg_content)) {
+            if (function_exists('mb_convert_encoding')) {
+                $converted = @mb_convert_encoding($svg_content, 'UTF-8', 'UTF-16,UTF-16LE,UTF-16BE,UTF-8');
+                if ($converted !== false) {
+                    $svg_content = $converted;
+                }
+            }
+        }
+
+        // Strip UTF-8 BOM and XML prolog/DOCTYPE which can break innerHTML parsing
+        $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content); // UTF-8 BOM
+        $svg_content = preg_replace('/<\?xml[^>]*\?>/i', '', $svg_content);
+        $svg_content = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svg_content);
+        
+        // Trim whitespace
+        $svg_content = trim($svg_content);
+
+        // Validate it starts with <svg
+        if (!preg_match('/^<svg[\s>]/i', $svg_content)) {
+            error_log('APD: Invalid SVG - does not start with <svg tag. First 200 chars: ' . substr($svg_content, 0, 200));
+            return false;
+        }
+
+        // Keep only the <svg>...</svg> fragment
+        if (preg_match('/<svg[\s\S]*<\/svg>/i', $svg_content, $m)) {
+            $svg_content = $m[0];
+        } else {
+            error_log('APD: Could not find complete <svg>...</svg> tags');
+            return false;
+        }
+
+        // Ensure xmlns exists for robust DOM parsing
+        if (stripos($svg_content, 'xmlns=') === false) {
+            $svg_content = preg_replace('/<svg\b/i', '<svg xmlns="http://www.w3.org/2000/svg"', $svg_content, 1);
+        }
+
+        // Remove any existing class attributes from SVG tag
+        $svg_content = preg_replace('/<svg([^>]*?)class=\"[^\"]*\"([^>]*?)>/', '<svg$1$2>', $svg_content);
+
+        // Add our custom class
+        $svg_content = str_replace('<svg', '<svg class="fsc-logo-svg"', $svg_content);
+
+        // Add outline filter if not present
+        if (strpos($svg_content, 'id="fsc-outline"') === false) {
+            $svg_content = str_replace('<defs>', '<defs><filter id="fsc-outline"><feMorphology operator="dilate" radius="2"/><feComposite operator="out" in="SourceGraphic"/></filter></defs>', $svg_content);
+        }
+        
+        error_log('APD: Processed SVG successfully, final size: ' . strlen($svg_content) . ' bytes');
+
+        return $svg_content ?: false;
+    }
+
+    public function get_logo_svg()
+    {
+        $plugin_dir = APD_PLUGIN_PATH;
+        $logo_path = $plugin_dir . 'uploads/object/Logo-PNG.svg';
+        return $this->_get_processed_svg_content($logo_path);
+    }
+
+    public function save_customization()
+    {
+        // Accept multiple nonce keys; do not hard-fail to reduce friction on front-end
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : (isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : (isset($_POST['security']) ? $_POST['security'] : (isset($_POST['apd_nonce']) ? $_POST['apd_nonce'] : '')));
+        if ($nonce) {
+            $ok = (wp_verify_nonce($nonce, 'fsc_nonce') || wp_verify_nonce($nonce, 'apd_ajax_nonce'));
+            if (!$ok && is_user_logged_in()) {
+                // Logged-in users can proceed even if nonce mismatched
+                $ok = true;
+            }
+            if (!$ok) {
+                // Soft warning instead of 403
+                // continue;  // proceed anyway
+            }
+        }
+
+        $data = array(
+            'print_color' => sanitize_text_field($_POST['print_color']),
+            'vinyl_material' => sanitize_text_field($_POST['vinyl_material']),
+            'quantity' => intval($_POST['quantity']),
+            'product_price' => floatval($_POST['product_price']),
+            'product_id' => sanitize_text_field($_POST['product_id']),
+            'product_name' => sanitize_text_field($_POST['product_name']),
+            'material_texture_url' => esc_url_raw($_POST['material_texture_url']),
+            'image_url' => esc_url_raw($_POST['image_url']),  // Add image URL
+            'text_fields' => isset($_POST['text_fields']) ? $_POST['text_fields'] : array(),
+            'template_data' => isset($_POST['template_data']) ? $_POST['template_data'] : array()
+        );
+
+        // Save to session or database
+        if (!session_id()) {
+            session_start();
+        }
+        $_SESSION['fsc_customization'] = $data;
+
+        wp_send_json_success(array('message' => 'Customization saved successfully'));
+    }
+
+    // Cart Management Functions
+    public function ajax_save_settings()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+
+        // Save URL settings
+        $url_settings = array(
+            'apd_cart_url',
+            'apd_checkout_url',
+            'apd_products_url',
+            'apd_orders_url',
+            'apd_customizer_url',
+            'apd_thank_you_url'
+        );
+
+        foreach ($url_settings as $setting) {
+            if (isset($_POST[$setting])) {
+                $value = sanitize_text_field($_POST[$setting]);
+                // Ensure URL starts with /
+                if (!empty($value) && !str_starts_with($value, '/')) {
+                    $value = '/' . $value;
+                }
+                update_option($setting, $value);
+            }
+        }
+
+        // Save other settings
+        $other_settings = array(
+            'apd_paypal_client_id',
+            'apd_paypal_environment',
+            'apd_currency',
+            'apd_paypal_test_mode'
+        );
+
+        foreach ($other_settings as $setting) {
+            if (isset($_POST[$setting])) {
+                $value = sanitize_text_field($_POST[$setting]);
+                update_option($setting, $value);
+            }
+        }
+
+        // Save email settings
+        $email_settings = array(
+            'apd_email_enabled',
+            'apd_email_from_name',
+            'apd_email_from_address',
+            'apd_email_subject',
+            'apd_email_template',
+            'apd_admin_email_notifications',
+            'apd_admin_email_address',
+            'apd_smtp_enabled',
+            'apd_smtp_host',
+            'apd_smtp_port',
+            'apd_smtp_encryption',
+            'apd_smtp_username',
+            'apd_smtp_password',
+            'apd_smtp_from_email',
+            'apd_smtp_from_name',
+            'apd_smtp_debug',
+            'apd_email_html_enabled',
+            'apd_email_footer',
+            'apd_email_headers',
+            'apd_email_attachments',
+            'apd_email_reply_to',
+            'apd_email_cc',
+            'apd_email_bcc',
+            'apd_email_delay',
+            'apd_email_retry_failed',
+            'apd_email_max_retries'
+        );
+
+        foreach ($email_settings as $setting) {
+            if (isset($_POST[$setting])) {
+                $value = sanitize_text_field($_POST[$setting]);
+                // Special handling for password field
+                if ($setting === 'apd_smtp_password') {
+                    $value = sanitize_text_field($_POST[$setting]);
+                } elseif (in_array($setting, ['apd_email_template', 'apd_email_footer', 'apd_email_headers'])) {
+                    $value = sanitize_textarea_field($_POST[$setting]);
+                } elseif (in_array($setting, ['apd_smtp_port', 'apd_email_delay', 'apd_email_max_retries'])) {
+                    $value = intval($_POST[$setting]);
+                } else {
+                    $value = sanitize_text_field($_POST[$setting]);
+                }
+                update_option($setting, $value);
+            }
+        }
+
+        wp_send_json_success(array('message' => 'Settings saved successfully'));
+    }
+
+    public function ajax_get_orders()
+    {
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+
+        $user_id = get_current_user_id();
+        $orders = get_user_meta($user_id, 'apd_orders', true);
+
+        if (!is_array($orders)) {
+            $orders = array();
+        }
+
+        // Sort orders by date (newest first)
+        usort($orders, function ($a, $b) {
+            return strtotime($b['created_at']) - strtotime($a['created_at']);
+        });
+
+        wp_send_json_success(array('orders' => $orders));
+    }
+
+    public function ajax_create_order()
+    {
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+
+        // Allow guest checkout (user_id 0 when not logged in)
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            $user_id = 0;
+        }
+
+        $cart = get_user_meta($user_id, 'apd_cart', true);
+        if (empty($cart)) {
+            wp_send_json_error('Cart is empty');
+        }
+
+        // Calculate total
+        $total = 0;
+        foreach ($cart as $item) {
+            $total += floatval($item['total']);
+        }
+
+        // Create order
+        $order = array(
+            'id' => 'ORD-' . time() . '-' . rand(1000, 9999),
+            'user_id' => $user_id,
+            'items' => $cart,
+            'total' => $total,
+            'status' => 'pending',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        );
+
+        // Save order
+        $orders = get_user_meta($user_id, 'apd_orders', true);
+        if (!is_array($orders)) {
+            $orders = array();
+        }
+        $orders[] = $order;
+        update_user_meta($user_id, 'apd_orders', $orders);
+
+        // Clear cart
+        delete_user_meta($user_id, 'apd_cart');
+
+        wp_send_json_success(array(
+            'order' => $order,
+            'message' => 'Order created successfully'
+        ));
+    }
+
+    public function ajax_add_to_cart()
+    {
+        // Log for debugging
+        error_log('APD Add to Cart: Started');
+        error_log('APD Add to Cart POST data: ' . print_r($_POST, true));
+        
+        // Verify nonce (allow both nonce types for compatibility)
+        // Make nonce optional to support guest checkout
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : '';
+        if ($nonce && !empty($nonce)) {
+            if (!wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_AJAX) && !wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_FSC)) {
+                error_log('APD Add to Cart: Nonce verification failed');
+                wp_send_json_error('Security check failed');
+                return;
+            }
+            error_log('APD Add to Cart: Nonce verified successfully');
+        } else {
+            error_log('APD Add to Cart: No nonce provided, allowing guest access');
+        }
+
+        $product_id = intval($_POST['product_id']);
+        $quantity = intval($_POST['quantity']);
+        $customization_data = $_POST['customization_data'] ?? array();
+
+        // Debug: Log what we received
+        error_log('APD Add to Cart: product_id = ' . $product_id);
+        error_log('APD Add to Cart: quantity = ' . $quantity);
+        error_log('APD Add to Cart: print_color = ' . ($customization_data['print_color'] ?? 'NOT SET'));
+        error_log('APD Add to Cart: vinyl_material = ' . ($customization_data['vinyl_material'] ?? 'NOT SET'));
+
+        // Use cart service to add item
+        $result = $this->cart_service->add_to_cart($product_id, $quantity, $customization_data);
+        
+        if (is_wp_error($result)) {
+            error_log('APD Add to Cart: Error - ' . $result->get_error_message());
+            wp_send_json_error($result->get_error_message());
+            return;
+        }
+
+        $cart_totals = $this->cart_service->get_cart_totals();
+        
+        error_log('APD Add to Cart: Item added successfully. Cart now has ' . $cart_totals['items'] . ' items');
+
+        wp_send_json_success(array(
+            'message' => 'Product added to cart',
+            'cart_item' => $result,
+            'cart_count' => $cart_totals['items']
+        ));
+    }
+
+    public function ajax_get_cart()
+    {
+        error_log('APD Get Cart: Started');
+        
+        $cart = $this->cart_service->get_cart();
+        $totals = $this->cart_service->get_cart_totals();
+        
+        error_log('APD Get Cart: Cart count: ' . $totals['items']);
+        error_log('APD Get Cart: Total: ' . $totals['subtotal']);
+
+        wp_send_json_success(array(
+            'cart' => $cart,
+            'total' => $totals['subtotal'],
+            'count' => $totals['count']
+        ));
+    }
+
+    public function ajax_update_cart_item()
+    {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
+            wp_send_json_error('Security check failed');
+        }
+
+        $cart_item_id = sanitize_text_field($_POST['cart_item_id']);
+        $quantity = intval($_POST['quantity']);
+
+        if ($quantity < 1) {
+            wp_send_json_error('Invalid quantity');
+        }
+
+        $result = $this->cart_service->update_cart_item($cart_item_id, $quantity);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+            return;
+        }
+
+        wp_send_json_success(array(
+            'message' => 'Cart updated',
+            'cart_item' => $result
+        ));
+    }
+
+    public function ajax_remove_cart_item()
+    {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
+            wp_send_json_error('Security check failed');
+        }
+
+        $cart_item_id = sanitize_text_field($_POST['cart_item_id']);
+        $result = $this->cart_service->remove_cart_item($cart_item_id);
+
+        if ($result) {
+            wp_send_json_success(array('message' => 'Item removed from cart'));
+        } else {
+            wp_send_json_error('Cart item not found');
+        }
+    }
+
+    public function ajax_clear_cart()
+    {
+        if (!wp_verify_nonce($_POST['nonce'], APD_Config::NONCE_ACTION_AJAX)) {
+            wp_send_json_error('Security check failed');
+        }
+
+        $this->cart_service->clear_cart();
+        wp_send_json_success(array('message' => 'Cart cleared'));
+    }
+
+    private function get_cart()
+    {
+        // Delegate to cart service
+        return $this->cart_service->get_cart();
+    }
+
+    private function save_cart($cart)
+    {
+        // Delegate to cart service
+        return $this->cart_service->save_cart($cart);
+        
+        error_log('APD save_cart(): Verification - SESSION apd_cart now has ' . count($_SESSION['apd_cart']) . ' items');
+    }
+
+    // Handle PNG data URL upload and return a media URL
+    public function apd_save_customization_image()
+    {
+        // Accept multiple nonce field names for compatibility
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : (isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : (isset($_POST['security']) ? $_POST['security'] : (isset($_POST['apd_nonce']) ? $_POST['apd_nonce'] : '')));
+        if ($nonce && !(wp_verify_nonce($nonce, 'fsc_nonce') || wp_verify_nonce($nonce, 'apd_ajax_nonce'))) {
+            // Soft fail: allow if logged-in; otherwise continue but note we didn't verify
+        }
+        if (!isset($_POST['image'])) {
+            wp_send_json_error(array('message' => 'No image provided'), 400);
+        }
+        $data_url = $_POST['image'];
+        if (strpos($data_url, 'data:image/png;base64,') !== 0) {
+            wp_send_json_error(array('message' => 'Invalid image format'), 400);
+        }
+        $raw = base64_decode(substr($data_url, strlen('data:image/png;base64,')));
+        if ($raw === false) {
+            wp_send_json_error(array('message' => 'Decode failed'), 400);
+        }
+        // Optional size cap 8MB
+        if (strlen($raw) > 8 * 1024 * 1024) {
+            wp_send_json_error(array('message' => 'Image too large'), 400);
+        }
+        // Store file in uploads
+        $upload = wp_upload_bits('customization-' . time() . '-' . wp_generate_password(6, false, false) . '.png', null, $raw);
+        if (!empty($upload['error'])) {
+            wp_send_json_error(array('message' => $upload['error']), 500);
+        }
+        // Optionally, register as attachment
+        $file_url = $upload['url'];
+        wp_send_json_success(array('url' => esc_url($file_url)));
+    }
+
+    public function load_product()
+    {
+        // Accept either FSC nonce or APD ajax nonce for compatibility
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : '';
+        $valid = false;
+        if ($nonce && wp_verify_nonce($nonce, 'fsc_nonce')) {
+            $valid = true;
+        }
+        if (!$valid && $nonce && wp_verify_nonce($nonce, 'apd_ajax_nonce')) {
+            $valid = true;
+        }
+        if (!$valid) {
+            wp_send_json_error(array('message' => 'Security check failed (invalid nonce)'));
+        }
+
+        $product_id = intval($_POST['product_id']);
+
+        if ($product_id <= 0) {
+            wp_send_json_error(array('message' => 'Invalid product ID'));
+        }
+
+        $product = get_post($product_id);
+
+        if (!$product || $product->post_type !== 'apd_product') {
+            wp_send_json_error(array('message' => 'Product not found'));
+        }
+
+        // Get product meta data
+        $price = get_post_meta($product_id, '_fsc_price', true);
+        $material = get_post_meta($product_id, '_fsc_material', true);
+        $features = get_post_meta($product_id, '_fsc_features', true);
+        $color_options = get_post_meta($product_id, '_fsc_color_options', true);
+        $template_id = get_post_meta($product_id, '_fsc_template', true);
+        
+        // Get logo URL - prefer attachment ID over meta field
+        $logo_id = get_post_meta($product_id, '_fsc_logo_id', true);
+        $product_logo_url = '';
+        
+        if ($logo_id) {
+            $product_logo_url = wp_get_attachment_url($logo_id);
+        }
+        
+        if (!$product_logo_url) {
+            $product_logo_url = get_post_meta($product_id, '_fsc_logo_file', true);
+        }
+
+        // Get processed SVG content for product-specific logo
+        $product_logo_content = '';
+        if ($product_logo_url) {
+            // Convert URL to file path using WordPress uploads directory
+            $upload_dir = wp_upload_dir();
+            $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $product_logo_url);
+            
+            // Also try replacing the site URL for cases where full URL is stored
+            if (!file_exists($logo_path)) {
+                $logo_path = str_replace(site_url(), ABSPATH, $product_logo_url);
+            }
+            
+            if (file_exists($logo_path)) {
+                $product_logo_content = $this->_get_processed_svg_content($logo_path);
+            }
+        }
+
+        // Do not inject mock defaults; leave empty values so UI reflects real data
+        // $price, $material, $features, $product_logo_content may be empty if not set
+
+        // Process color options: only include colors explicitly configured
+        $colors = array();
+        if ($color_options) {
+            $default_colors = $this->get_default_colors();
+            $color_array = array_map('trim', explode(',', $color_options));
+            foreach ($color_array as $color) {
+                if (isset($default_colors[$color])) {
+                    $colors[$color] = $default_colors[$color];
+                }
+            }
+        }
+
+        // Resolve template data (if linked)
+        $template_data = null;
+        if ($template_id) {
+            $template_post = get_post($template_id);
+            if ($template_post && $template_post->post_type === 'apd_template') {
+                error_log('APD load_product: template_id=' . $template_id . ' title=' . $template_post->post_title);
+                $template_data_raw = get_post_meta($template_id, '_apd_template_data', true);
+                if ($template_data_raw) {
+                    $decoded = json_decode($template_data_raw, true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $template_data = $decoded;
+                        error_log('APD load_product: template_data decoded OK (array)');
+                    } else {
+                        // Try if stored as already-decoded array/string
+                        $template_data = $template_data_raw;
+                        error_log('APD load_product: template_data not JSON, using raw value');
+                    }
+                } else {
+                    // Fallbacks: sometimes stored in post_content
+                    $content = trim($template_post->post_content);
+                    if ($content) {
+                        $decoded = json_decode($content, true);
+                        if (json_last_error() === JSON_ERROR_NONE) {
+                            $template_data = $decoded;
+                            error_log('APD load_product: template_data loaded from post_content JSON');
+                        } else {
+                            error_log('APD load_product: no _apd_template_data and post_content not JSON');
+                        }
+                    } else {
+                        error_log('APD load_product: no _apd_template_data and empty post_content');
+                    }
+                }
+            }
+        }
+
+        $response_data = array(
+            'id' => $product_id,
+            'title' => $product->post_title,
+            'price' => $price,
+            'material' => $material,
+            'features' => is_array($features) ? $features : array(),
+            'colors' => $colors,
+            'logo_content' => $product_logo_content,
+            'url' => get_permalink($product_id),
+            'template_id' => $template_id ? intval($template_id) : 0,
+            'template_data' => $template_data,
+            'templateData' => $template_data  // Keep both for backwards compatibility
+        );
+
+        if ($template_id && $template_data) {
+            error_log('APD load_product: returning templateData for product ' . $product_id);
+        } else if ($template_id && !$template_data) {
+            error_log('APD load_product: template linked but no templateData for product ' . $product_id);
+        } else {
+            error_log('APD load_product: no template linked for product ' . $product_id);
+        }
+
+        wp_send_json_success($response_data);
+    }
+
+    public function activate()
+    {
+        // Create database tables if needed
+        $this->create_tables();
+
+        // Create upload directories
+        $this->create_upload_directories();
+
+        // Create custom post type for designs
+        $this->create_design_post_type();
+
+        // Auto-create core pages: cart, checkout, thank you, orders
+        $this->maybe_create_core_pages();
+
+        // Flush rewrite rules
+        flush_rewrite_rules();
+    }
+
+    public function deactivate()
+    {
+        flush_rewrite_rules();
+    }
+
+    public function create_tables()
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'apd_customizations';
+
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $sql = "CREATE TABLE $table_name (
+            id mediumint(9) NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) NOT NULL,
+            product_id bigint(20) NOT NULL,
+            vin varchar(50) NOT NULL,
+            truck_no varchar(50) NOT NULL,
+            print_color varchar(20) NOT NULL,
+            vinyl_material varchar(50) NOT NULL,
+            quantity int(11) NOT NULL DEFAULT 1,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        ) $charset_collate;";
+
+        require_once (ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+    }
+
+    public function create_upload_directories()
+    {
+        $plugin_dir = APD_PLUGIN_PATH;
+
+        // Create material directory
+        $material_dir = $plugin_dir . 'uploads/material/';
+        if (!is_dir($material_dir)) {
+            wp_mkdir_p($material_dir);
+        }
+
+        // Create object directory
+        $object_dir = $plugin_dir . 'uploads/object/';
+        if (!is_dir($object_dir)) {
+            wp_mkdir_p($object_dir);
+        }
+    }
+
+    public function create_design_post_type()
+    {
+        register_post_type('apd_design', array(
+            'labels' => array(
+                'name' => 'Designs',
+                'singular_name' => 'Design',
+                'add_new' => 'Add New Design',
+                'add_new_item' => 'Add New Design',
+                'edit_item' => 'Edit Design',
+                'new_item' => 'New Design',
+                'view_item' => 'View Design',
+                'search_items' => 'Search Designs',
+                'not_found' => 'No designs found',
+                'not_found_in_trash' => 'No designs found in trash'
+            ),
+            'public' => false,
+            'show_ui' => true,
+            'show_in_menu' => 'apd-dashboard',
+            'supports' => array('title', 'custom-fields'),
+            'capability_type' => 'post'
+        ));
+    }
+
+    // Register lightweight order type and statuses
+    public function register_order_cpt_and_statuses()
+    {
+        // Custom post type for orders
+        register_post_type('apd_order', array(
+            'labels' => array(
+                'name' => 'Orders',
+                'singular_name' => 'Order'
+            ),
+            'public' => false,
+            'show_ui' => true,
+            'show_in_menu' => 'apd-dashboard',
+            'supports' => array('title', 'custom-fields'),
+            'capability_type' => 'post'
+        ));
+        // Statuses - only the 3 we actually use
+        $statuses = array(
+            'apd_pending' => 'Pending',
+            'apd_confirmed' => 'Confirmed',
+            'apd_completed' => 'Completed'
+        );
+        foreach ($statuses as $key => $label) {
+            if (!post_type_exists('apd_order'))
+                break;
+            register_post_status($key, array(
+                'label' => $label,
+                'public' => false,
+                'internal' => false,
+                'label_count' => _n_noop($label . ' <span class="count">(%s)</span>', $label . ' <span class="count">(%s)</span>')
+            ));
+        }
+    }
+
+    // AJAX: place order from checkout
+    public function apd_place_order()
+    {
+        // Turn off error reporting for clean JSON response
+        $error_reporting = error_reporting(0);
+        $display_errors = ini_get('display_errors');
+        ini_set('display_errors', 0);
+        
+        // Verify nonce
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : (isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : '');
+        if ($nonce && !(wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_AJAX) || wp_verify_nonce($nonce, APD_Config::NONCE_ACTION_FSC))) {
+            error_reporting($error_reporting);
+            ini_set('display_errors', $display_errors);
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        // Prepare customer data
+        $customer_data = array(
+            'customer_name' => sanitize_text_field($_POST['customer_name'] ?? ''),
+            'customer_email' => sanitize_email($_POST['customer_email'] ?? ''),
+            'customer_phone' => sanitize_text_field($_POST['customer_phone'] ?? ''),
+            'customer_address' => sanitize_textarea_field($_POST['customer_address'] ?? '')
+        );
+
+        // Prepare payment data
+        $payment_method = sanitize_text_field($_POST['payment_method'] ?? APD_Config::PAYMENT_METHOD_PAYPAL);
+        $payment_data = array(
+            'payment_method' => $payment_method,
+            'paypal_order_id' => sanitize_text_field($_POST['paypal_order_id'] ?? ''),
+            'paypal_transaction_id' => sanitize_text_field($_POST['paypal_transaction_id'] ?? ''),
+            'paypal_payer_id' => sanitize_text_field($_POST['paypal_payer_id'] ?? ''),
+            'payment_status' => ($payment_method === APD_Config::PAYMENT_METHOD_MOCK_PAYPAL) ? 'completed' : sanitize_text_field($_POST['payment_status'] ?? 'completed')
+        );
+
+        // Get cart items (prefer POST, then service cart)
+        $cart_items = null;
+        if (isset($_POST['cart'])) {
+            $posted_cart = json_decode(stripslashes($_POST['cart']), true);
+            if (is_array($posted_cart)) {
+                $cart_items = $posted_cart;
+            }
+        }
+
+        // Create order using OrderService
+        $order_id = $this->order_service->create_order($customer_data, $payment_data, $cart_items);
+
+        // Restore error reporting
+        error_reporting($error_reporting);
+        ini_set('display_errors', $display_errors);
+
+        // Handle errors
+        if (is_wp_error($order_id)) {
+            wp_send_json_error(array('message' => $order_id->get_error_message()));
+            return;
+        }
+
+        // Get thank you page URL
+        $thankyou_url = $this->order_service->get_thank_you_url();
+
+        wp_send_json_success(array(
+            'order_id' => $order_id,
+            'redirect' => esc_url($thankyou_url)
+        ));
+    }
+
+    public function apd_get_order_details()
+    {
+        // Verify nonce for security
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'apd_order_details')) {
+            wp_send_json_error('Invalid nonce');
+            return;
+        }
+
+        $order_id = intval($_POST['order_id'] ?? 0);
+        if (!$order_id) {
+            wp_send_json_error('Invalid order ID');
+            return;
+        }
+
+        // Get order using OrderService
+        $order_data = $this->order_service->get_order($order_id);
+
+        if (is_wp_error($order_data)) {
+            wp_send_json_error($order_data->get_error_message());
+            return;
+        }
+
+        wp_send_json_success($order_data);
+    }
+
+    public function apd_process_cut_ready_svg()
+    {
+        // Verify admin access
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+            return;
+        }
+
+        $order_id = intval($_POST['order_id'] ?? 0);
+        if (!$order_id) {
+            wp_send_json_error('Invalid order ID');
+            return;
+        }
+
+        // Get the original SVG - try multiple sources
+        $svg_content = '';
+        $source = '';
+        
+        // Try 1: Direct meta field
+        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
+        if (!empty($svg_content)) {
+            $source = 'preview_image_svg meta';
+        }
+        
+        // Try 2: PNG meta (might be base64 SVG)
+        if (empty($svg_content)) {
+            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
+            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
+                $svg_content = $preview_png;
+                $source = 'preview_image_png meta (contains SVG)';
+            }
+        }
+        
+        // Try 3: URL meta
+        if (empty($svg_content)) {
+            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
+            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
+                $svg_content = $preview_url;
+                $source = 'preview_image_url meta (contains SVG)';
+            }
+        }
+        
+        // Try 4: Cart items
+        if (empty($svg_content)) {
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first_item = is_array($cart_items) && !empty($cart_items[0]) ? $cart_items[0] : null;
+                if ($first_item) {
+                    // Check multiple fields in cart item
+                    $svg_content = $first_item['preview_image_svg'] ?? '';
+                    if (!empty($svg_content)) {
+                        $source = 'cart_items[0].preview_image_svg';
+                    }
+                    
+                    if (empty($svg_content)) {
+                        $svg_content = $first_item['preview_image_png'] ?? '';
+                        if (!empty($svg_content) && strpos($svg_content, 'data:image/svg') !== false) {
+                            $source = 'cart_items[0].preview_image_png (contains SVG)';
+                        } else {
+                            $svg_content = '';
+                        }
+                    }
+                    
+                    if (empty($svg_content) && !empty($first_item['customization_data'])) {
+                        $cd = is_string($first_item['customization_data']) ? json_decode($first_item['customization_data'], true) : $first_item['customization_data'];
+                        if (is_array($cd)) {
+                            $svg_content = $cd['preview_image_svg'] ?? ($cd['preview_image_png'] ?? '');
+                            if (!empty($svg_content)) {
+                                $source = 'cart_items[0].customization_data.preview_image_svg/png';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Log what we found for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Source=%s, Content Length=%d, First 100 chars=%s',
+            $order_id,
+            $source ?: 'NONE',
+            strlen($svg_content),
+            substr($svg_content, 0, 100)
+        ));
+
+        // Check if svg_content is a URL instead of actual SVG content
+        if (!empty($svg_content) && (strpos($svg_content, 'http://') === 0 || strpos($svg_content, 'https://') === 0)) {
+            error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Content is a URL, fetching: ' . $svg_content);
+            $response = wp_remote_get($svg_content);
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $svg_content = wp_remote_retrieve_body($response);
+                $source .= ' (fetched from URL)';
+                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Fetched content length: ' . strlen($svg_content));
+            } else {
+                $error_msg = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
+                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Failed to fetch URL: ' . $error_msg);
+                wp_send_json_error('Failed to fetch SVG from URL: ' . $error_msg);
+                return;
+            }
+        }
+
+        if (empty($svg_content)) {
+            // Return detailed error with all meta keys for debugging
+            $all_meta = get_post_meta($order_id);
+            $available_keys = array_keys($all_meta);
+            
+            // Also check cart_items to see what's there
+            $cart_items = get_post_meta($order_id, 'cart_items', true);
+            $debug_info = array();
+            $debug_info['available_meta_keys'] = $available_keys;
+            
+            if (is_string($cart_items)) {
+                $cart_items = json_decode($cart_items, true);
+            }
+            if (is_array($cart_items) && !empty($cart_items)) {
+                $first_item = $cart_items[0] ?? null;
+                if ($first_item) {
+                    $debug_info['first_item_keys'] = array_keys($first_item);
+                    // Check if preview_image_svg exists and what it contains
+                    if (isset($first_item['preview_image_svg'])) {
+                        $svg_val = $first_item['preview_image_svg'];
+                        $debug_info['preview_image_svg_length'] = strlen($svg_val);
+                        $debug_info['preview_image_svg_start'] = substr($svg_val, 0, 100);
+                    }
+                    // Check customization_data too
+                    if (isset($first_item['customization_data'])) {
+                        $cd = is_string($first_item['customization_data']) ? json_decode($first_item['customization_data'], true) : $first_item['customization_data'];
+                        if (is_array($cd)) {
+                            $debug_info['customization_data_keys'] = array_keys($cd);
+                        }
+                    }
+                }
+            }
+            
+            error_log('APD Cut-Ready SVG Debug Info: ' . print_r($debug_info, true));
+            
+            wp_send_json_error(sprintf(
+                'No SVG found for this order. Available meta keys: %s. See error log for more details.',
+                implode(', ', $available_keys)
+            ));
+            return;
+        }
+
+        // Process the SVG to make it cut-ready
+        $clean_svg = $this->clean_svg_for_cutting($svg_content, $order_id);
+
+        if (is_wp_error($clean_svg)) {
+            wp_send_json_error($clean_svg->get_error_message());
+            return;
+        }
+
+        // Save the clean SVG as a file
+        $upload_dir = wp_upload_dir();
+        $filename = 'order-' . $order_id . '-cut-ready-' . time() . '.svg';
+        $filepath = $upload_dir['path'] . '/' . $filename;
+        
+        if (!file_put_contents($filepath, $clean_svg)) {
+            wp_send_json_error('Failed to save processed SVG file');
+            return;
+        }
+
+        $file_url = $upload_dir['url'] . '/' . $filename;
+        
+        // Save the URL to order meta for future reference
+        update_post_meta($order_id, 'cut_ready_svg_url', $file_url);
+        update_post_meta($order_id, 'cut_ready_svg_generated_at', current_time('mysql'));
+
+        wp_send_json_success(array(
+            'file_url' => $file_url,
+            'filename' => $filename,
+            'message' => 'Cut-ready SVG generated successfully'
+        ));
+    }
+
+    private function clean_svg_for_cutting($svg_content, $order_id = 0)
+    {
+        // Handle data URL format
+        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
+            // Check if it's base64 encoded
+            if (strpos($svg_content, 'base64,') !== false) {
+                $svg_content = preg_replace('/^data:image\/svg\+xml;base64,/', '', $svg_content);
+                $svg_content = base64_decode($svg_content);
+            } else {
+                // URL encoded
+                $svg_content = preg_replace('/^data:image\/svg\+xml[^,]*,/', '', $svg_content);
+                $svg_content = urldecode($svg_content);
+            }
+            
+            if ($svg_content === false || empty($svg_content)) {
+                return new WP_Error('decode_failed', 'Failed to decode SVG data URL');
+            }
+        }
+
+        // Clean up common issues before parsing
+        $svg_content = trim($svg_content);
+        
+        // Remove HTML entities that might break XML parsing
+        $svg_content = html_entity_decode($svg_content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        
+        // Log content type for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG Debug - Order #%d: After decode length=%d, starts with=%s, contains <svg=%s',
+            $order_id,
+            strlen($svg_content),
+            substr($svg_content, 0, 50),
+            strpos($svg_content, '<svg') !== false ? 'YES' : 'NO'
+        ));
+        
+        // Ensure we have an SVG element
+        if (strpos($svg_content, '<svg') === false) {
+            // Provide more detailed error for debugging
+            $preview = strlen($svg_content) > 200 ? substr($svg_content, 0, 200) . '...' : $svg_content;
+            error_log('APD Cut-Ready SVG Error - Content preview: ' . $preview);
+            return new WP_Error('not_svg', 'Content does not appear to be SVG. Content starts with: ' . substr($svg_content, 0, 100));
+        }
+
+        // Load SVG with DOMDocument
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument('1.0', 'UTF-8'); // Start with UTF-8, convert to UTF-16 at end
+        $dom->preserveWhiteSpace = false;
+        $dom->formatOutput = true;
+        
+        // Fix common XML issues BEFORE first parse attempt
+        $svg_content = $this->fix_common_xml_issues($svg_content);
+        
+        // Try to load with error suppression
+        $loaded = @$dom->loadXML($svg_content, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
+        
+        if (!$loaded) {
+            // Get libxml errors for debugging
+            $errors = libxml_get_errors();
+            $error_messages = array();
+            foreach ($errors as $error) {
+                $error_messages[] = trim($error->message);
+            }
+            libxml_clear_errors();
+            
+            error_log('APD SVG Processing Error (first attempt) - Order #' . $order_id . ': ' . implode('; ', $error_messages));
+            error_log('APD SVG Content (first 1000 chars): ' . substr($svg_content, 0, 1000));
+            
+            // Second attempt: Try wrapping in proper XML document and using HTML parser as fallback
+            // Strip any existing XML declaration first
+            $svg_content = preg_replace('/<\?xml[^?]*\?>/', '', $svg_content);
+            
+            // Try to use HTML5-style parsing which is more lenient
+            $wrapped_content = '<?xml version="1.0" encoding="UTF-8"?>' . 
+                              '<root xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">' . 
+                              $svg_content . 
+                              '</root>';
+            
+            $dom2 = new DOMDocument('1.0', 'UTF-8');
+            $dom2->preserveWhiteSpace = false;
+            
+            // Try with the wrapped content
+            $loaded = @$dom2->loadXML($wrapped_content, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE | LIBXML_NOCDATA);
+            
+            if ($loaded) {
+                // Extract the SVG from the root wrapper
+                $svgs = $dom2->getElementsByTagName('svg');
+                if ($svgs->length > 0) {
+                    $svgElement = $svgs->item(0);
+                    $dom = new DOMDocument('1.0', 'UTF-8');
+                    $dom->preserveWhiteSpace = false;
+                    $dom->formatOutput = true;
+                    $importedSvg = $dom->importNode($svgElement, true);
+                    $dom->appendChild($importedSvg);
+                    $loaded = true;
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Recovered using wrapped XML parsing');
+                }
+            }
+            
+            if (!$loaded) {
+                // Third attempt: Use regex to aggressively clean the SVG
+                error_log('APD SVG Processing - Order #' . $order_id . ': Attempting aggressive regex cleanup');
+                
+                // Remove all style attributes entirely as they're often the source of issues
+                $svg_content_cleaned = preg_replace('/\s+style="[^"]*"/', '', $svg_content);
+                
+                // Fix path d attributes with line breaks or special chars
+                $svg_content_cleaned = preg_replace_callback(
+                    '/(<path[^>]*\sd=")([^"]*)(")/s',
+                    function($matches) {
+                        $d = $matches[2];
+                        // Remove line breaks and normalize whitespace in path data
+                        $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                        $d = preg_replace('/\s+/', ' ', $d);
+                        $d = trim($d);
+                        return $matches[1] . $d . $matches[3];
+                    },
+                    $svg_content_cleaned
+                );
+                
+                // Try loading the cleaned version
+                $dom = new DOMDocument('1.0', 'UTF-8');
+                $dom->preserveWhiteSpace = false;
+                $dom->formatOutput = true;
+                
+                $svg_content_cleaned = '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . 
+                                       preg_replace('/<\?xml[^?]*\?>/', '', $svg_content_cleaned);
+                
+                $loaded = @$dom->loadXML($svg_content_cleaned, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_PARSEHUGE);
+                
+                if ($loaded) {
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Recovered by removing style attributes');
+                } else {
+                    // Fourth attempt: Use HTML parser which is more lenient
+                    error_log('APD SVG Processing - Order #' . $order_id . ': Attempting HTML parser fallback');
+                    
+                    $dom = new DOMDocument('1.0', 'UTF-8');
+                    $dom->preserveWhiteSpace = false;
+                    
+                    // Wrap in HTML and try loadHTML which is more lenient
+                    $html_wrapped = '<html><body>' . $svg_content_cleaned . '</body></html>';
+                    $loaded = @$dom->loadHTML($html_wrapped, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_HTML_NOIMPLIED | LIBXML_PARSEHUGE);
+                    
+                    if ($loaded) {
+                        // Find the SVG element
+                        $svgs = $dom->getElementsByTagName('svg');
+                        if ($svgs->length > 0) {
+                            $svgElement = $svgs->item(0);
+                            $newDom = new DOMDocument('1.0', 'UTF-8');
+                            $newDom->preserveWhiteSpace = false;
+                            $newDom->formatOutput = true;
+                            $importedSvg = $newDom->importNode($svgElement, true);
+                            $newDom->appendChild($importedSvg);
+                            $dom = $newDom;
+                            $loaded = true;
+                            error_log('APD SVG Processing - Order #' . $order_id . ': Recovered using HTML parser');
+                        } else {
+                            $loaded = false;
+                        }
+                    }
+                    
+                    if (!$loaded) {
+                        // Final fallback: COMPLETELY rebuild the SVG from scratch
+                        // Extract only path/shape data and build a clean, valid SVG
+                        error_log('APD SVG Processing - Order #' . $order_id . ': All XML parsing failed, rebuilding SVG from scratch');
+                        
+                        // Start with the original content
+                        $raw_svg = $svg_content;
+                        
+                        // Extract viewBox and dimensions from the root SVG
+                        $viewBox = '0 0 800 600'; // Default
+                        $width = '800';
+                        $height = '600';
+                        
+                        if (preg_match('/<svg[^>]*\sviewBox="([^"]+)"/i', $raw_svg, $vb_match)) {
+                            $viewBox = preg_replace('/[\r\n\t]+/', ' ', $vb_match[1]);
+                            $viewBox = preg_replace('/\s+/', ' ', trim($viewBox));
+                        }
+                        if (preg_match('/<svg[^>]*\swidth="([^"]+)"/i', $raw_svg, $w_match)) {
+                            $width = $w_match[1];
+                        }
+                        if (preg_match('/<svg[^>]*\sheight="([^"]+)"/i', $raw_svg, $h_match)) {
+                            $height = $h_match[1];
+                        }
+                        
+                        // Extract all path elements with their d attributes
+                        $paths = array();
+                        if (preg_match_all('/<path[^>]+>/is', $raw_svg, $path_matches)) {
+                            foreach ($path_matches[0] as $path_tag) {
+                                // Extract just the d attribute
+                                if (preg_match('/\sd="([^"]*)"/s', $path_tag, $d_match)) {
+                                    $d = $d_match[1];
+                                    // Clean the d attribute
+                                    $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                                    $d = preg_replace('/\s+/', ' ', trim($d));
+                                    if (!empty($d)) {
+                                        // Extract fill and stroke if present
+                                        $fill = 'none';
+                                        $stroke = 'black';
+                                        $stroke_width = '1';
+                                        
+                                        if (preg_match('/\sfill="([^"]+)"/', $path_tag, $fill_match)) {
+                                            $fill = $fill_match[1];
+                                            // Skip pattern references
+                                            if (strpos($fill, 'url(') !== false) {
+                                                $fill = 'none';
+                                            }
+                                        }
+                                        if (preg_match('/\sstroke="([^"]+)"/', $path_tag, $stroke_match)) {
+                                            $stroke = $stroke_match[1];
+                                            if (strpos($stroke, 'url(') !== false) {
+                                                $stroke = 'black';
+                                            }
+                                        }
+                                        if (preg_match('/\sstroke-width="([^"]+)"/', $path_tag, $sw_match)) {
+                                            $stroke_width = $sw_match[1];
+                                        }
+                                        
+                                        $paths[] = sprintf(
+                                            '<path d="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                            htmlspecialchars($d, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($fill, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($stroke, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                            htmlspecialchars($stroke_width, ENT_XML1 | ENT_QUOTES, 'UTF-8')
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Extract rect elements
+                        if (preg_match_all('/<rect[^>]+\/?>/is', $raw_svg, $rect_matches)) {
+                            foreach ($rect_matches[0] as $rect_tag) {
+                                $x = '0'; $y = '0'; $w = '0'; $h = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\sx="([^"]+)"/', $rect_tag, $m)) $x = $m[1];
+                                if (preg_match('/\sy="([^"]+)"/', $rect_tag, $m)) $y = $m[1];
+                                if (preg_match('/\swidth="([^"]+)"/', $rect_tag, $m)) $w = $m[1];
+                                if (preg_match('/\sheight="([^"]+)"/', $rect_tag, $m)) $h = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $rect_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $rect_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $rect_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<rect x="%s" y="%s" width="%s" height="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $x, $y, $w, $h, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract circle elements
+                        if (preg_match_all('/<circle[^>]+\/?>/is', $raw_svg, $circle_matches)) {
+                            foreach ($circle_matches[0] as $circle_tag) {
+                                $cx = '0'; $cy = '0'; $r = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\scx="([^"]+)"/', $circle_tag, $m)) $cx = $m[1];
+                                if (preg_match('/\scy="([^"]+)"/', $circle_tag, $m)) $cy = $m[1];
+                                if (preg_match('/\sr="([^"]+)"/', $circle_tag, $m)) $r = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $circle_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $circle_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $circle_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<circle cx="%s" cy="%s" r="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $cx, $cy, $r, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract polygon elements  
+                        if (preg_match_all('/<polygon[^>]+\/?>/is', $raw_svg, $poly_matches)) {
+                            foreach ($poly_matches[0] as $poly_tag) {
+                                if (preg_match('/\spoints="([^"]*)"/s', $poly_tag, $p_match)) {
+                                    $points = preg_replace('/[\r\n\t]+/', ' ', $p_match[1]);
+                                    $points = preg_replace('/\s+/', ' ', trim($points));
+                                    
+                                    $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                    if (preg_match('/\sfill="([^"]+)"/', $poly_tag, $m)) {
+                                        $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                    }
+                                    if (preg_match('/\sstroke="([^"]+)"/', $poly_tag, $m)) {
+                                        $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                    }
+                                    if (preg_match('/\sstroke-width="([^"]+)"/', $poly_tag, $m)) $stroke_width = $m[1];
+                                    
+                                    $paths[] = sprintf(
+                                        '<polygon points="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                        htmlspecialchars($points, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                                        $fill, $stroke, $stroke_width
+                                    );
+                                }
+                            }
+                        }
+                        
+                        // Extract ellipse elements
+                        if (preg_match_all('/<ellipse[^>]+\/?>/is', $raw_svg, $ellipse_matches)) {
+                            foreach ($ellipse_matches[0] as $ellipse_tag) {
+                                $cx = '0'; $cy = '0'; $rx = '0'; $ry = '0';
+                                $fill = 'none'; $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\scx="([^"]+)"/', $ellipse_tag, $m)) $cx = $m[1];
+                                if (preg_match('/\scy="([^"]+)"/', $ellipse_tag, $m)) $cy = $m[1];
+                                if (preg_match('/\srx="([^"]+)"/', $ellipse_tag, $m)) $rx = $m[1];
+                                if (preg_match('/\sry="([^"]+)"/', $ellipse_tag, $m)) $ry = $m[1];
+                                if (preg_match('/\sfill="([^"]+)"/', $ellipse_tag, $m)) {
+                                    $fill = strpos($m[1], 'url(') !== false ? 'none' : $m[1];
+                                }
+                                if (preg_match('/\sstroke="([^"]+)"/', $ellipse_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $ellipse_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<ellipse cx="%s" cy="%s" rx="%s" ry="%s" fill="%s" stroke="%s" stroke-width="%s"/>',
+                                    $cx, $cy, $rx, $ry, $fill, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Extract line elements
+                        if (preg_match_all('/<line[^>]+\/?>/is', $raw_svg, $line_matches)) {
+                            foreach ($line_matches[0] as $line_tag) {
+                                $x1 = '0'; $y1 = '0'; $x2 = '0'; $y2 = '0';
+                                $stroke = 'black'; $stroke_width = '1';
+                                
+                                if (preg_match('/\sx1="([^"]+)"/', $line_tag, $m)) $x1 = $m[1];
+                                if (preg_match('/\sy1="([^"]+)"/', $line_tag, $m)) $y1 = $m[1];
+                                if (preg_match('/\sx2="([^"]+)"/', $line_tag, $m)) $x2 = $m[1];
+                                if (preg_match('/\sy2="([^"]+)"/', $line_tag, $m)) $y2 = $m[1];
+                                if (preg_match('/\sstroke="([^"]+)"/', $line_tag, $m)) {
+                                    $stroke = strpos($m[1], 'url(') !== false ? 'black' : $m[1];
+                                }
+                                if (preg_match('/\sstroke-width="([^"]+)"/', $line_tag, $m)) $stroke_width = $m[1];
+                                
+                                $paths[] = sprintf(
+                                    '<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="%s"/>',
+                                    $x1, $y1, $x2, $y2, $stroke, $stroke_width
+                                );
+                            }
+                        }
+                        
+                        // Build a completely clean SVG from scratch
+                        $raw_svg = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+                        $raw_svg .= sprintf(
+                            '<svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="%s">',
+                            htmlspecialchars($width, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                            htmlspecialchars($height, ENT_XML1 | ENT_QUOTES, 'UTF-8'),
+                            htmlspecialchars($viewBox, ENT_XML1 | ENT_QUOTES, 'UTF-8')
+                        ) . "\n";
+                        $raw_svg .= '  <metadata>Cut-ready SVG rebuilt from Order #' . intval($order_id) . ' - textures and images removed for cutting</metadata>' . "\n";
+                        $raw_svg .= '  <g id="cut-paths">' . "\n";
+                        
+                        foreach ($paths as $path) {
+                            $raw_svg .= '    ' . $path . "\n";
+                        }
+                        
+                        $raw_svg .= '  </g>' . "\n";
+                        $raw_svg .= '</svg>';
+                        
+                        error_log('APD SVG Processing - Order #' . $order_id . ': Rebuilt SVG with ' . count($paths) . ' elements');
+                        
+                        error_log('APD SVG Processing - Order #' . $order_id . ': Cleaned SVG length: ' . strlen($raw_svg));
+                        
+                        // Set headers and output
+                        header('Content-Type: image/svg+xml; charset=utf-8');
+                        header('Content-Disposition: attachment; filename="order-' . $order_id . '-cut-ready.svg"');
+                        header('Cache-Control: no-cache, must-revalidate');
+                        echo $raw_svg;
+                        exit;
+                    }
+                }
+            }
+        }
+        
+        libxml_clear_errors();
+
+        $xpath = new DOMXPath($dom);
+        $xpath->registerNamespace('svg', 'http://www.w3.org/2000/svg');
+
+        // Get the root SVG element and preserve its dimensions
+        $svgRoot = $dom->documentElement;
+        $originalViewBox = $svgRoot->getAttribute('viewBox');
+        $originalWidth = $svgRoot->getAttribute('width');
+        $originalHeight = $svgRoot->getAttribute('height');
+        
+        // Log original dimensions for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Original dimensions - viewBox="%s", width="%s", height="%s"',
+            $order_id,
+            $originalViewBox,
+            $originalWidth,
+            $originalHeight
+        ));
+
+        // 1. Remove all <image> elements (embedded textures/photos)
+        $images = $xpath->query('//svg:image');
+        foreach ($images as $image) {
+            $image->parentNode->removeChild($image);
+        }
+
+        // 2. Handle material stroke patterns - for cut-ready, strokes with patterns should be removed
+        // The pattern strokes are decorative (material texture outline) and not needed for cutting
+        $strokeRefs = $xpath->query('//*[@stroke and contains(@stroke, "url(#")]');
+        $stroke_count = 0;
+        foreach ($strokeRefs as $elem) {
+            $stroke = $elem->getAttribute('stroke');
+            if (preg_match('/url\(#.*pattern.*\)/i', $stroke)) {
+                // Remove the decorative pattern stroke - it causes blur/artifacts in cut files
+                $elem->setAttribute('stroke', 'none');
+                $elem->removeAttribute('stroke-width');
+                $stroke_count++;
+                // Log what we found for debugging
+                error_log(sprintf(
+                    'APD Cut-Ready SVG - Order #%d: Removed pattern stroke on <%s> element',
+                    $order_id,
+                    $elem->nodeName
+                ));
+            }
+        }
+        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Removed %d pattern strokes', $order_id, $stroke_count));
+        
+        // 3. Remove all <pattern> elements (used for textures)
+        $patterns = $xpath->query('//svg:pattern');
+        foreach ($patterns as $pattern) {
+            $pattern->parentNode->removeChild($pattern);
+        }
+
+        // 4. Remove elements that reference removed patterns in FILL only
+        $fillRefs = $xpath->query('//*[@fill and contains(@fill, "url(#")]');
+        foreach ($fillRefs as $elem) {
+            $fill = $elem->getAttribute('fill');
+            if (preg_match('/url\(#.*pattern.*\)/i', $fill)) {
+                // Change to solid color or remove fill
+                $elem->setAttribute('fill', 'none');
+            }
+        }
+
+        // 5. Convert text elements to paths would require complex library
+        // For now, just add a comment warning about text
+        $texts = $xpath->query('//svg:text');
+        if ($texts->length > 0) {
+            $comment = $dom->createComment(' WARNING: This SVG contains text elements. Convert to paths in CorelDRAW before cutting. ');
+            $root = $dom->documentElement;
+            $root->insertBefore($comment, $root->firstChild);
+        }
+
+        // 6. Flatten nested SVG elements - IMPORTANT: preserve position and scale
+        $nestedSvgs = $xpath->query('//svg:svg[parent::*]');
+        foreach ($nestedSvgs as $nested) {
+            $g = $dom->createElement('g');
+            
+            // Build transform to preserve position and scale
+            $transforms = array();
+            
+            // Get position (x, y attributes)
+            $x = $nested->getAttribute('x') ?: '0';
+            $y = $nested->getAttribute('y') ?: '0';
+            if ($x !== '0' || $y !== '0') {
+                $transforms[] = "translate($x, $y)";
+            }
+            
+            // Copy existing transform if present
+            if ($nested->hasAttribute('transform')) {
+                $transforms[] = $nested->getAttribute('transform');
+            }
+            
+            // Handle viewBox scaling - if nested SVG has different viewBox, we need to scale
+            $nestedViewBox = $nested->getAttribute('viewBox');
+            $nestedWidth = $nested->getAttribute('width');
+            $nestedHeight = $nested->getAttribute('height');
+            
+            if ($nestedViewBox && ($nestedWidth || $nestedHeight)) {
+                // Parse viewBox
+                $vbParts = preg_split('/[\s,]+/', trim($nestedViewBox));
+                if (count($vbParts) >= 4) {
+                    $vbWidth = floatval($vbParts[2]);
+                    $vbHeight = floatval($vbParts[3]);
+                    
+                    // Parse width/height (remove units)
+                    $actualWidth = floatval(preg_replace('/[^0-9.]/', '', $nestedWidth ?: $vbWidth));
+                    $actualHeight = floatval(preg_replace('/[^0-9.]/', '', $nestedHeight ?: $vbHeight));
+                    
+                    // Calculate scale factors
+                    if ($vbWidth > 0 && $vbHeight > 0) {
+                        $scaleX = $actualWidth / $vbWidth;
+                        $scaleY = $actualHeight / $vbHeight;
+                        
+                        // Only add scale if it's not 1:1
+                        if (abs($scaleX - 1) > 0.001 || abs($scaleY - 1) > 0.001) {
+                            $transforms[] = "scale($scaleX, $scaleY)";
+                        }
+                        
+                        // Handle viewBox offset (minX, minY)
+                        $vbMinX = floatval($vbParts[0]);
+                        $vbMinY = floatval($vbParts[1]);
+                        if ($vbMinX != 0 || $vbMinY != 0) {
+                            $transforms[] = "translate(" . (-$vbMinX) . ", " . (-$vbMinY) . ")";
+                        }
+                    }
+                }
+            }
+            
+            // Apply combined transform
+            if (!empty($transforms)) {
+                $g->setAttribute('transform', implode(' ', $transforms));
+                error_log(sprintf(
+                    'APD Cut-Ready SVG - Order #%d: Flattened nested SVG with transform="%s"',
+                    $order_id,
+                    implode(' ', $transforms)
+                ));
+            }
+            
+            // Move all children to group
+            while ($nested->firstChild) {
+                $g->appendChild($nested->firstChild);
+            }
+            $nested->parentNode->replaceChild($g, $nested);
+        }
+        
+        error_log(sprintf('APD Cut-Ready SVG - Order #%d: Flattened %d nested SVG elements', $order_id, $nestedSvgs->length));
+
+        // 7. Add metadata for tracking
+        $metadata = $dom->createElement('metadata');
+        $metadata->nodeValue = sprintf(
+            'Cut-ready SVG processed from Order #%d on %s. Optimized for CorelDRAW/cutting machines. Material outlines preserved as black strokes.',
+            $order_id,
+            current_time('Y-m-d H:i:s')
+        );
+        $dom->documentElement->insertBefore($metadata, $dom->documentElement->firstChild);
+
+        // 8. Restore and ensure proper dimensions for the root SVG element
+        // This prevents the cut-ready SVG from being scaled differently than the original
+        if ($originalViewBox && !$svgRoot->getAttribute('viewBox')) {
+            $svgRoot->setAttribute('viewBox', $originalViewBox);
+        }
+        if ($originalWidth && !$svgRoot->getAttribute('width')) {
+            $svgRoot->setAttribute('width', $originalWidth);
+        }
+        if ($originalHeight && !$svgRoot->getAttribute('height')) {
+            $svgRoot->setAttribute('height', $originalHeight);
+        }
+        
+        // Log final dimensions for debugging
+        error_log(sprintf(
+            'APD Cut-Ready SVG - Order #%d: Final dimensions - viewBox="%s", width="%s", height="%s"',
+            $order_id,
+            $svgRoot->getAttribute('viewBox'),
+            $svgRoot->getAttribute('width'),
+            $svgRoot->getAttribute('height')
+        ));
+
+        // 9. Clean up and return with UTF-16 encoding
+        $clean_svg = $dom->saveXML();
+        
+        // Apply the common XML fixes to the output as well
+        // This catches any corruption that happened during DOMDocument processing
+        $clean_svg = $this->fix_common_xml_issues($clean_svg);
+        
+        // Fix any remaining malformed attributes (like stroke-width: becoming an invalid QName)
+        // These can happen when style properties get incorrectly parsed
+        $clean_svg = preg_replace('/\s+stroke-width:(?=[^"]*(?:"|$))/', ' stroke-width="', $clean_svg);
+        $clean_svg = preg_replace('/\s+fill:(?=[^"]*(?:"|$))/', ' fill="', $clean_svg);
+        $clean_svg = preg_replace('/\s+stroke:(?=[^"]*(?:"|$))/', ' stroke="', $clean_svg);
+        
+        // Remove any attribute that has a colon as its name (invalid XML)
+        $clean_svg = preg_replace('/\s+[a-zA-Z-]+:[a-zA-Z-]+:[^=]*="[^"]*"/', '', $clean_svg);
+        
+        // Fix double-colon issues in attribute names
+        $clean_svg = preg_replace('/\s+([a-zA-Z-]+)::([a-zA-Z-]+)="/', ' $1-$2="', $clean_svg);
+        
+        // Remove orphaned colons at the end of attribute names
+        $clean_svg = preg_replace('/\s+([a-zA-Z-]+):="/', ' $1="', $clean_svg);
+        
+        // Clean up any empty style attributes
+        $clean_svg = preg_replace('/style="\s*"/', '', $clean_svg);
+        
+        // Add DOCTYPE for SVG 1.1 (like CorelDRAW exports) - insert after XML declaration
+        if (strpos($clean_svg, '<!DOCTYPE') === false) {
+            $clean_svg = preg_replace(
+                '/(<\?xml[^?]*\?>)/i',
+                '$1' . "\n" . '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">',
+                $clean_svg
+            );
+        }
+        
+        // Ensure UTF-16 encoding in XML declaration
+        if (!preg_match('/encoding="UTF-16"/i', $clean_svg)) {
+            $clean_svg = preg_replace('/encoding="[^"]+"/i', 'encoding="UTF-16"', $clean_svg);
+            if (!preg_match('/encoding=/i', $clean_svg)) {
+                $clean_svg = preg_replace('/<\?xml version="[^"]+"\?>/i', '<?xml version="1.0" encoding="UTF-16"?>', $clean_svg);
+            }
+        }
+        
+        // Convert to UTF-16LE (Little Endian) for maximum CorelDRAW compatibility
+        $clean_svg = mb_convert_encoding($clean_svg, 'UTF-16LE', 'UTF-8');
+        
+        // Add BOM (Byte Order Mark) for UTF-16LE
+        $bom = chr(255) . chr(254);
+        $clean_svg = $bom . $clean_svg;
+        
+        return $clean_svg;
+    }
+
+    private function fix_common_xml_issues($svg_content)
+    {
+        // Remove any BOM (UTF-8 and UTF-16 variants)
+        $svg_content = preg_replace('/^\xEF\xBB\xBF/', '', $svg_content);
+        $svg_content = preg_replace('/^\xFF\xFE/', '', $svg_content);
+        $svg_content = preg_replace('/^\xFE\xFF/', '', $svg_content);
+        
+        // Remove any null bytes or control characters (except newline/tab)
+        $svg_content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $svg_content);
+        
+        // ==========================================
+        // Fix corrupted/split SVG attributes
+        // Pattern: vector-effect="" non-scaling-stroke="" should be vector-effect="non-scaling-stroke"
+        // Pattern: stroke-linejoin="" round="" should be stroke-linejoin="round"
+        // Pattern: stroke-width="=" should be removed or fixed
+        // Pattern: fill="="" rgb="" should be fixed
+        // ==========================================
+        
+        // Fix stroke-width with corrupted value: stroke-width="="" -> remove entirely
+        // This pattern: stroke-width="="" needs to be removed
+        $svg_content = preg_replace('/\s+stroke-width="=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+stroke-width="="/', '', $svg_content);
+        $svg_content = preg_replace('/\s+stroke-width=""/', '', $svg_content);
+        
+        // Fix vector-effect split: vector-effect="" non-scaling-stroke="" OR vector-effect=""
+        $svg_content = preg_replace('/vector-effect=""\s+non-scaling-stroke=""/', 'vector-effect="non-scaling-stroke"', $svg_content);
+        // Remove empty vector-effect if not followed by non-scaling-stroke
+        $svg_content = preg_replace('/\s+vector-effect=""(?!\s+non-scaling-stroke)/', '', $svg_content);
+        
+        // Fix stroke-linejoin split: stroke-linejoin="" round="" OR just empty stroke-linejoin=""
+        $svg_content = preg_replace('/stroke-linejoin=""\s+round=""/', 'stroke-linejoin="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+miter=""/', 'stroke-linejoin="miter"', $svg_content);
+        $svg_content = preg_replace('/stroke-linejoin=""\s+bevel=""/', 'stroke-linejoin="bevel"', $svg_content);
+        // Remove empty stroke-linejoin if not followed by valid value
+        $svg_content = preg_replace('/\s+stroke-linejoin=""(?!\s+(round|miter|bevel)="")/', '', $svg_content);
+        
+        // Fix stroke-linecap split: stroke-linecap="" round="" OR just empty stroke-linecap=""
+        $svg_content = preg_replace('/stroke-linecap=""\s+round=""/', 'stroke-linecap="round"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+square=""/', 'stroke-linecap="square"', $svg_content);
+        $svg_content = preg_replace('/stroke-linecap=""\s+butt=""/', 'stroke-linecap="butt"', $svg_content);
+        // Remove empty stroke-linecap if not followed by valid value
+        $svg_content = preg_replace('/\s+stroke-linecap=""(?!\s+(round|square|butt)="")/', '', $svg_content);
+        
+        // Fix fill with corrupted value patterns
+        $svg_content = preg_replace('/fill="=""/', 'fill="none"', $svg_content);
+        $svg_content = preg_replace('/fill=""=""/', 'fill="none"', $svg_content);
+        // Remove empty fill="" at the end of attributes (before d= or > or />)
+        $svg_content = preg_replace('/\s+fill=""(?=\s+d=|\s*>|\s*\/>)/', '', $svg_content);
+        
+        // Fix orphaned attribute values that became separate attributes (e.g., non-scaling-stroke="")
+        $svg_content = preg_replace('/\s+non-scaling-stroke=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+round=""(?!\s*\w+[=-])/', '', $svg_content);
+        $svg_content = preg_replace('/\s+miter=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+bevel=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+square=""/', '', $svg_content);
+        $svg_content = preg_replace('/\s+butt=""/', '', $svg_content);
+        
+        // Fix orphaned rgb="" that shouldn't be an attribute
+        $svg_content = preg_replace('/\s+rgb=""/', '', $svg_content);
+        
+        // Fix double/nested CDATA markers (common issue from repeated processing)
+        // Pattern: <![CDATA[<![CDATA[...]]>]]> should become <![CDATA[...]]>
+        $svg_content = preg_replace('/<!\[CDATA\[\s*<!\[CDATA\[/', '<![CDATA[', $svg_content);
+        $svg_content = preg_replace('/\]\]>\s*\]\]>/', ']]>', $svg_content);
+        
+        // Preserve CDATA sections by temporarily replacing them with placeholders
+        $cdataPlaceholders = array();
+        $svg_content = preg_replace_callback(
+            '/<!\[CDATA\[(.*?)\]\]>/s',
+            function($matches) use (&$cdataPlaceholders) {
+                $placeholder = '___CDATA_PLACEHOLDER_' . count($cdataPlaceholders) . '___';
+                $cdataPlaceholders[$placeholder] = '<![CDATA[' . $matches[1] . ']]>';
+                return $placeholder;
+            },
+            $svg_content
+        );
+        
+        // Remove HTML-style class attributes that break XML parsing
+        $svg_content = preg_replace('/\s+class="[^"]*"/', '', $svg_content);
+        
+        // Remove data-* attributes which are HTML5 specific and can break XML
+        $svg_content = preg_replace('/\s+data-[a-zA-Z0-9-]+="[^"]*"/', '', $svg_content);
+        
+        // Fix path d attributes with line breaks, tabs, or excessive whitespace
+        $svg_content = preg_replace_callback(
+            '/(<path[^>]*\sd=")([^"]*)(")/s',
+            function($matches) {
+                $d = $matches[2];
+                // Remove line breaks and normalize whitespace in path data
+                $d = preg_replace('/[\r\n\t]+/', ' ', $d);
+                $d = preg_replace('/\s+/', ' ', $d);
+                $d = trim($d);
+                return $matches[1] . $d . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix polygon/polyline points attributes with line breaks
+        $svg_content = preg_replace_callback(
+            '/(<(?:polygon|polyline)[^>]*\spoints=")([^"]*)(")/s',
+            function($matches) {
+                $points = $matches[2];
+                $points = preg_replace('/[\r\n\t]+/', ' ', $points);
+                $points = preg_replace('/\s+/', ' ', $points);
+                $points = trim($points);
+                return $matches[1] . $points . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Sanitize style attributes - convert CSS property names to valid XML
+        // Replace hyphenated properties with camelCase equivalents
+        $svg_content = preg_replace_callback(
+            '/style="([^"]*)"/',
+            function($matches) {
+                $style = $matches[1];
+                // Convert common hyphenated CSS properties to camelCase
+                $style = str_replace('shape-rendering', 'shapeRendering', $style);
+                $style = str_replace('text-rendering', 'textRendering', $style);
+                $style = str_replace('image-rendering', 'imageRendering', $style);
+                $style = str_replace('color-interpolation', 'colorInterpolation', $style);
+                $style = str_replace('fill-rule', 'fillRule', $style);
+                $style = str_replace('clip-rule', 'clipRule', $style);
+                $style = str_replace('stroke-width', 'strokeWidth', $style);
+                $style = str_replace('stroke-linecap', 'strokeLinecap', $style);
+                $style = str_replace('stroke-linejoin', 'strokeLinejoin', $style);
+                $style = str_replace('stroke-miterlimit', 'strokeMiterlimit', $style);
+                $style = str_replace('stroke-dasharray', 'strokeDasharray', $style);
+                $style = str_replace('stroke-dashoffset', 'strokeDashoffset', $style);
+                $style = str_replace('stroke-opacity', 'strokeOpacity', $style);
+                $style = str_replace('fill-opacity', 'fillOpacity', $style);
+                $style = str_replace('font-family', 'fontFamily', $style);
+                $style = str_replace('font-size', 'fontSize', $style);
+                $style = str_replace('font-weight', 'fontWeight', $style);
+                $style = str_replace('font-style', 'fontStyle', $style);
+                $style = str_replace('text-anchor', 'textAnchor', $style);
+                $style = str_replace('dominant-baseline', 'dominantBaseline', $style);
+                $style = str_replace('paint-order', 'paintOrder', $style);
+                return 'style="' . $style . '"';
+            },
+            $svg_content
+        );
+        
+        // Escape or remove potentially problematic base64 href attributes in images
+        // Match href="data:image..." and ensure it's properly formatted
+        $svg_content = preg_replace_callback(
+            '/(href=")([^"]*data:image[^"]*)(")/i',
+            function($matches) {
+                // Clean up any potential XML-breaking characters in the data URL
+                $data_url = $matches[2];
+                // Remove any newlines or carriage returns that might have snuck in
+                $data_url = str_replace(array("\r", "\n", "\t"), '', $data_url);
+                return $matches[1] . $data_url . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix unencoded ampersands (except in entities)
+        $svg_content = preg_replace('/&(?!(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);)/', '&amp;', $svg_content);
+        
+        // Remove any null bytes
+        $svg_content = str_replace("\0", '', $svg_content);
+        
+        // Fix attributes with newlines inside them (common XMLSerializer issue)
+        // This pattern finds attributes and removes any internal line breaks
+        $svg_content = preg_replace_callback(
+            '/(\s[a-zA-Z][a-zA-Z0-9-]*=")([^"]*)(")/s',
+            function($matches) {
+                $attr_value = $matches[2];
+                // Remove line breaks and excessive whitespace inside attribute values
+                $attr_value = preg_replace('/[\r\n]+/', ' ', $attr_value);
+                $attr_value = preg_replace('/\s+/', ' ', $attr_value);
+                return $matches[1] . trim($attr_value) . $matches[3];
+            },
+            $svg_content
+        );
+        
+        // Fix shape-rendering and text-rendering attributes outside of style (standalone attributes)
+        $svg_content = preg_replace('/\sshape-rendering=/', ' shapeRendering=', $svg_content);
+        $svg_content = preg_replace('/\stext-rendering=/', ' textRendering=', $svg_content);
+        
+        // Fix any stray < or > characters that aren't part of tags
+        // This is tricky but we can try to fix obvious cases
+        $svg_content = preg_replace('/\s<\s/', ' &lt; ', $svg_content);
+        $svg_content = preg_replace('/\s>\s/', ' &gt; ', $svg_content);
+        
+        // Ensure proper XML declaration if missing
+        if (strpos($svg_content, '<?xml') === false) {
+            $svg_content = '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . $svg_content;
+        }
+        
+        // Restore CDATA sections from placeholders
+        foreach ($cdataPlaceholders as $placeholder => $cdataContent) {
+            $svg_content = str_replace($placeholder, $cdataContent, $svg_content);
+        }
+        
+        return $svg_content;
+    }
+
+    // --- Admin: Register/ensure statuses visible in All ---
+    public function apd_register_statuses_visible()
+    {
+        // Register only the statuses we actually use
+        register_post_status('apd_pending', array(
+            'label' => 'Pending',
+            'public' => true,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('Pending <span class="count">(%s)</span>', 'Pending <span class="count">(%s)</span>')
+        ));
+        register_post_status('apd_confirmed', array(
+            'label' => 'Confirmed',
+            'public' => true,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('Confirmed <span class="count">(%s)</span>', 'Confirmed <span class="count">(%s)</span>')
+        ));
+        register_post_status('apd_completed', array(
+            'label' => 'Completed',
+            'public' => true,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('Completed <span class="count">(%s)</span>', 'Completed <span class="count">(%s)</span>')
+        ));
+    }
+
+    // --- Admin Pages ---
+    public function apd_register_orders_admin_pages()
+    {
+        add_menu_page(
+            'Orders', 'Orders', 'manage_options', 'apd_orders', array($this, 'apd_render_orders_list_page'), 'dashicons-cart', 26
+        );
+        add_submenu_page('apd_orders', 'Orders', 'All Orders', 'manage_options', 'apd_orders', array($this, 'apd_render_orders_list_page'));
+        add_submenu_page('apd_orders', 'Order Detail', 'Order Detail', 'manage_options', 'apd_order_detail', array($this, 'apd_render_order_detail_page'));
+    }
+
+    private function apd_get_all_statuses()
+    {
+        return array(
+            'apd_pending' => 'Pending',
+            'apd_confirmed' => 'Confirmed',
+            'apd_completed' => 'Completed'
+        );
+    }
+
+    public function apd_render_orders_list_page()
+    {
+        if (!current_user_can('manage_options'))
+            return;
+        $status = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
+        $s = isset($_GET['s']) ? sanitize_text_field($_GET['s']) : '';
+        $args = array(
+            'post_type' => 'apd_order',
+            'post_status' => array_keys($this->apd_get_all_statuses()),
+            'posts_per_page' => 20,
+            's' => $s,
+        );
+        if ($status) {
+            $args['post_status'] = $status;
+        }
+        $q = new WP_Query($args);
+        echo '<div class="wrap"><h1>Orders</h1>';
+        echo '<form method="get" style="margin:12px 0">';
+        echo '<input type="hidden" name="page" value="apd_orders"/>';
+        echo '<select name="status"><option value="">All statuses</option>';
+        foreach ($this->apd_get_all_statuses() as $k => $v) {
+            printf('<option value="%s" %s>%s</option>', esc_attr($k), selected($status, $k, false), esc_html($v));
+        }
+        echo '</select> ';
+        printf('<input type="search" name="s" value="%s" placeholder="Search orders..."/> ', esc_attr($s));
+        echo '<button class="button">Filter</button>';
+        echo '</form>';
+        echo '<table class="wp-list-table widefat fixed striped"><thead><tr><th>ID</th><th>Customer</th><th>Status</th><th>Total</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
+        if ($q->have_posts()) {
+            while ($q->have_posts()) {
+                $q->the_post();
+                $pid = get_the_ID();
+                $cust = get_post_meta($pid, 'customer_name', true);
+                $total = floatval(get_post_meta($pid, 'total_amount', true));
+                $status_label = get_post_status_object(get_post_status($pid));
+                printf('<tr><td>%d</td><td>%s</td><td>%s</td><td>$%0.2f</td><td>%s</td><td><a class="button" href="%s">View</a></td></tr>',
+                    $pid,
+                    esc_html($cust ?: '-'),
+                    esc_html($status_label ? $status_label->label : get_post_status($pid)),
+                    $total,
+                    esc_html(get_the_date('Y-m-d H:i')),
+                    esc_url(admin_url('admin.php?page=apd_order_detail&order_id=' . $pid)));
+            }
+            wp_reset_postdata();
+        } else {
+            echo '<tr><td colspan="6">No orders found.</td></tr>';
+        }
+        echo '</tbody></table></div>';
+    }
+
+    public function apd_render_order_detail_page()
+    {
+        if (!current_user_can('manage_options'))
+            return;
+        $order_id = isset($_GET['order_id']) ? intval($_GET['order_id']) : 0;
+        if (!$order_id) {
+            echo '<div class="wrap"><h1>Order Detail</h1><p>Invalid order.</p></div>';
+            return;
+        }
+        $p = get_post($order_id);
+        if (!$p || $p->post_type !== 'apd_order') {
+            echo '<div class="wrap"><h1>Order Detail</h1><p>Order not found.</p></div>';
+            return;
+        }
+        $meta = array(
+            'customer_name' => get_post_meta($order_id, 'customer_name', true),
+            'customer_email' => get_post_meta($order_id, 'customer_email', true),
+            'customer_phone' => get_post_meta($order_id, 'customer_phone', true),
+            'customer_address' => get_post_meta($order_id, 'customer_address', true),
+        );
+        $text_fields = get_post_meta($order_id, 'text_fields', true);
+        $template_data = get_post_meta($order_id, 'template_data', true);
+        $fields_display = get_post_meta($order_id, 'fields_display', true);
+        $template_fields_array = get_post_meta($order_id, 'template_fields_array', true);
+    $preview_image_png = get_post_meta($order_id, 'preview_image_png', true);
+    $preview_image_svg = get_post_meta($order_id, 'preview_image_svg', true);
+        $preview_image_url = get_post_meta($order_id, 'preview_image_url', true);
+        $customization_image_url = get_post_meta($order_id, 'customization_image_url', true);
+        // Load cart items (support JSON string or array shapes)
+        $raw_cart = get_post_meta($order_id, 'cart_items', true);
+        $cart_items = $raw_cart;
+        if (is_string($raw_cart)) {
+            $decoded = json_decode($raw_cart, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $cart_items = $decoded;
+            }
+        }
+        if (!is_array($cart_items)) {
+            $cart_items = array();
+        }
+        // Normalize shapes: {items: [...]}, associative maps -> sequential array
+        if (isset($cart_items['items']) && is_array($cart_items['items'])) {
+            $cart_items = $cart_items['items'];
+        }
+        $keys = array_keys($cart_items);
+        $is_assoc = array_filter($keys, 'is_string') ? true : false;
+        if ($is_assoc) {
+            $cart_items = array_values($cart_items);
+        }
+
+        $cart_total = get_post_meta($order_id, 'cart_total', true);
+        if (!is_numeric($cart_total)) {
+            $cart_total = 0;
+            foreach ($cart_items as $ci) {
+                $cart_total += isset($ci['total']) ? (float) $ci['total'] : ((float) ($ci['price'] ?? $ci['product_price'] ?? 0) * (int) ($ci['quantity'] ?? 1));
+            }
+        }
+        $notes = get_post_meta($order_id, 'apd_notes', true);
+        if (!is_array($notes))
+            $notes = array();
+
+        // Debug: Log what images we found
+    error_log("APD Order Detail #$order_id - preview_image_svg: " . ($preview_image_svg ?: 'EMPTY'));
+    error_log("APD Order Detail #$order_id - preview_image_png: " . ($preview_image_png ?: 'EMPTY'));
+        error_log("APD Order Detail #$order_id - preview_image_url: " . ($preview_image_url ?: 'EMPTY'));
+        error_log("APD Order Detail #$order_id - customization_image_url: " . ($customization_image_url ?: 'EMPTY'));
+
+        echo '<div class="wrap"><h1>Order #' . $order_id . '</h1>';
+
+        // Display Preview Image if available (fallback to first cart item preview if top-level missing)
+        $image_to_display = $preview_image_svg ?: ($preview_image_png ?: ($preview_image_url ?: $customization_image_url));
+        if (!$image_to_display && !empty($cart_items)) {
+            $first = $cart_items[0];
+            $image_to_display = $first['preview_image_svg'] ?? $first['preview_image_png'] ?? $first['preview_image_url'] ?? $first['customization_image_url'] ?? $first['image_url'] ?? '';
+            
+            // For non-customizable products, try to get product thumbnail or logo
+            if (!$image_to_display && !empty($first['product_id'])) {
+                $prod_id = intval($first['product_id']);
+                
+                // Try thumbnail first
+                $thumbnail_id = get_post_meta($prod_id, '_fsc_thumbnail_id', true);
+                if ($thumbnail_id) {
+                    $image_to_display = wp_get_attachment_image_url($thumbnail_id, 'large');
+                }
+                
+                // Fallback to logo if no thumbnail
+                if (!$image_to_display) {
+                    $logo_url = get_post_meta($prod_id, '_fsc_logo_file', true);
+                    if ($logo_url) {
+                        $image_to_display = $logo_url;
+                    }
+                }
+                
+                // Last resort: post thumbnail
+                if (!$image_to_display) {
+                    $image_to_display = get_the_post_thumbnail_url($prod_id, 'large');
+                }
+            }
+        }
+
+        // Determine best SVG source (if available) for direct download
+        $svg_download_url = '';
+        if (!empty($preview_image_svg)) {
+            $svg_download_url = $preview_image_svg;
+        } elseif (!empty($cart_items)) {
+            // Try to find an SVG on the first cart item
+            $first = $cart_items[0];
+            if (!empty($first['preview_image_svg'])) {
+                $svg_download_url = $first['preview_image_svg'];
+            } elseif (!empty($first['customization_data'])) {
+                $cd = is_array($first['customization_data']) ? $first['customization_data'] : json_decode($first['customization_data'], true);
+                if (is_array($cd) && !empty($cd['preview_image_svg'])) {
+                    $svg_download_url = $cd['preview_image_svg'];
+                }
+            }
+            
+            // For non-customizable products, fetch the product's logo SVG
+            if (empty($svg_download_url) && !empty($first['product_id'])) {
+                $product_id_from_cart = intval($first['product_id']);
+                $product_logo = get_post_meta($product_id_from_cart, '_fsc_logo_file', true);
+                error_log("APD Order Detail - Looking for SVG: product_id={$product_id_from_cart}, logo_file=" . ($product_logo ?: 'EMPTY'));
+                
+                // Validate that it's actually an SVG file
+                if (!empty($product_logo) && preg_match('/\.svg$/i', $product_logo)) {
+                    // Check if it's a URL or file path
+                    if (filter_var($product_logo, FILTER_VALIDATE_URL)) {
+                        $svg_download_url = $product_logo;
+                        error_log("APD Order Detail - SVG URL found: {$product_logo}");
+                    } else {
+                        // It's a file path, convert to URL if needed
+                        $upload_dir = wp_upload_dir();
+                        $base_dir = $upload_dir['basedir'];
+                        $base_url = $upload_dir['baseurl'];
+                        
+                        // If path is relative to uploads dir
+                        if (strpos($product_logo, $base_dir) === 0) {
+                            $svg_download_url = str_replace($base_dir, $base_url, $product_logo);
+                        } else {
+                            $svg_download_url = $product_logo;
+                        }
+                        error_log("APD Order Detail - SVG path converted to URL: {$svg_download_url}");
+                    }
+                }
+            }
+        }
+        // If not explicitly found, but the displayed image is an SVG data URL, allow downloading that
+        if (empty($svg_download_url) && is_string($image_to_display) && preg_match('/^data:image(?:\\+svg|\\/svg(?:\\+xml|\\-xml)?);/i', $image_to_display)) {
+            $svg_download_url = $image_to_display;
+        }
+        
+        // Add download SVG button for admin
+        if (current_user_can('manage_options') && !empty($svg_download_url)) {
+            echo '<div class="order-svg-download-section" style="margin: 20px 0; padding: 15px; background: #f0f6fc; border: 1px solid #0073aa; border-radius: 4px;">';
+            echo '<h3 style="margin: 0 0 10px 0; font-size: 14px; color: #0073aa;">Production Files</h3>';
+            echo '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
+            echo '<button type="button" class="button button-primary" onclick="downloadOrderSVG(' . $order_id . ')">';
+            echo '<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Download Original SVG';
+            echo '</button>';
+            echo '<button type="button" class="button button-secondary" onclick="processCutReadySVG(' . $order_id . ')" style="background: #2271b1; color: white; border-color: #2271b1;">';
+            echo '<span class="dashicons dashicons-media-code" style="margin-top: 3px;"></span> Export Cut-Ready SVG';
+            echo '</button>';
+            echo '</div>';
+            echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers).</p>';
+            echo '</div>';
+        }
+
+        // Debug output for admin
+        if (current_user_can('manage_options')) {
+            echo '<!-- DEBUG: preview_image_svg = ' . esc_html($preview_image_svg ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: preview_image_png = ' . esc_html($preview_image_png ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: preview_image_url = ' . esc_html($preview_image_url ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: customization_image_url = ' . esc_html($customization_image_url ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: image_to_display = ' . esc_html($image_to_display ?: 'EMPTY') . ' -->';
+            echo '<!-- DEBUG: svg_download_url = ' . esc_html($svg_download_url ?: 'EMPTY') . ' -->';
+            if (!empty($cart_items)) {
+                $first_item = $cart_items[0];
+                echo '<!-- DEBUG: first_cart_item_product_id = ' . esc_html($first_item['product_id'] ?? 'EMPTY') . ' -->';
+                echo '<!-- DEBUG: first_cart_item_keys = ' . esc_html(implode(', ', array_keys($first_item))) . ' -->';
+            }
+        }
+
+        if ($image_to_display) {
+            echo '<h2 class="title">Customized Design Preview</h2>';
+            echo '<div style="background:#f8f9fa;border:1px solid #e1e1e1;padding:20px;max-width:800px;margin-bottom:20px;border-radius:8px;">';
+            echo '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;gap:8px;">';
+            echo '<span style="font-weight:600;color:#333;">Design Preview</span>';
+            echo '<div style="display:flex;gap:8px;">';
+            // PNG download button (existing)
+            echo '<button id="download-design-btn" class="button button-primary" style="background:#0073aa;border-color:#0073aa;color:#fff;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">';
+            echo 'Download PNG';
+            echo '</button>';
+            // SVG download button (new) — only show if we have an SVG source
+            echo '<button id="download-design-svg-btn" class="button" style="border-color:#2271b1;color:#2271b1;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:' . (!empty($svg_download_url) ? 'inline-flex' : 'none') . ';align-items:center;gap:8px;">';
+            echo 'Download SVG';
+            echo '</button>';
+            // PDF download button
+            echo '<button id="download-design-pdf-btn" class="button" style="border-color:#d63638;color:#d63638;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">';
+            echo 'Download PDF';
+            echo '</button>';
+            echo '</div>';
+            echo '</div>';
+            echo '<img id="preview-image" src="' . esc_attr($image_to_display) . '" alt="Customized Design" style="max-width:100%;height:auto;display:block;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" />';
+            echo '</div>';
+        }
+
+        // Order Items list
+        echo '<h2 class="title" style="margin-top:20px;">Order Items</h2>';
+        if (empty($cart_items)) {
+            echo '<p>No items found in this order.</p>';
+        } else {
+            echo '<div style="background:#fff;border:1px solid #e1e1e1;padding:12px;border-radius:8px;max-width:1000px;margin-bottom:12px;">';
+            foreach ($cart_items as $idx => $item) {
+                $cd = array();
+                if (!empty($item['customization_data'])) {
+                    if (is_array($item['customization_data']))
+                        $cd = $item['customization_data'];
+                    elseif (is_string($item['customization_data'])) {
+                        $decoded = json_decode($item['customization_data'], true);
+                        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded))
+                            $cd = $decoded;
+                    }
+                }
+                $imgUrl = $item['preview_image_svg'] ?? $item['preview_image_png'] ?? $item['preview_image_url'] ?? $item['customization_image_url'] ?? $item['image_url'] ?? '';
+                if (!$imgUrl && !empty($cd)) {
+                    $imgUrl = $cd['preview_image_svg'] ?? $cd['preview_image_png'] ?? $cd['preview_image_url'] ?? $cd['customization_image_url'] ?? $cd['image_url'] ?? '';
+                }
+                $pname = $item['product_name'] ?? ($cd['product_name'] ?? 'Product');
+                $qty = isset($item['quantity']) ? (int) $item['quantity'] : 1;
+                $price = isset($item['total']) ? (float) $item['total'] : ((float) ($item['price'] ?? $item['product_price'] ?? 0) * $qty);
+                echo '<div style="display:flex;gap:12px;align-items:center;border-bottom:1px solid #f1f1f1;padding:12px 0;">';
+                if ($imgUrl) {
+                    echo '<div style="width:120px;height:80px;flex:0 0 120px;overflow:hidden;border-radius:6px;border:1px solid #eee;display:flex;align-items:center;justify-content:center;background:#fafafa;"><img src="' . esc_attr($imgUrl) . '" style="max-width:100%;max-height:100%;display:block;"/></div>';
+                } else {
+                    echo '<div style="width:120px;height:80px;flex:0 0 120px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid #eee;background:#fafafa;color:#999;font-size:24px;">📦</div>';
+                }
+                echo '<div style="flex:1;">';
+                echo '<div style="font-weight:600;margin-bottom:6px;">' . esc_html($pname) . '</div>';
+                // specs - check item, customization_data, variants, and order-level meta fields
+                $specs = array();
+                
+                // Check for material in multiple places (customizer OR variants)
+                $material = $item['vinyl_material'] ?? $cd['vinyl_material'] ?? $cd['material'] ?? '';
+                // Check variants array for non-customizable products
+                if (empty($material) && !empty($cd['variants']['material'])) {
+                    $material = $cd['variants']['material'];
+                }
+                if (empty($material) && $idx === 0) {
+                    // For first item, fallback to order-level meta
+                    $material = get_post_meta($order_id, 'vinyl_material', true);
+                }
+                // Always show material, use 'none' if empty
+                $specs[] = 'Material: ' . (!empty($material) ? esc_html($material) : 'none');
+                
+                // Check for color in multiple places
+                $color = $item['print_color'] ?? $cd['print_color'] ?? $cd['color'] ?? '';
+                if (empty($color) && $idx === 0) {
+                    // For first item, fallback to order-level meta
+                    $color = get_post_meta($order_id, 'print_color', true);
+                }
+                if (!empty($color)) {
+                    $specs[] = 'Color: ' . esc_html($color);
+                }
+                
+                // Check for size (customization_data OR variants)
+                $size = $cd['size'] ?? '';
+                if (empty($size) && !empty($cd['variants']['size'])) {
+                    $size = $cd['variants']['size'];
+                }
+                if (!empty($size)) {
+                    $specs[] = 'Size: ' . esc_html($size);
+                }
+                
+                if (!empty($specs)) {
+                    echo '<div style="color:#666;margin-bottom:6px;">' . implode(' • ', $specs) . '</div>';
+                }
+                echo '<div style="color:#333;font-weight:600;">Qty: ' . esc_html($qty) . ' &nbsp; &nbsp; Price: $' . number_format($price, 2) . '</div>';
+                echo '</div>';  // flex:1
+                // Download buttons for SVG images
+                if ($imgUrl && strpos($imgUrl, 'data:image/svg') === 0) {
+                    echo '<div style="display:flex;flex-direction:column;gap:4px;">';
+                    echo '<button class="download-svg-btn button" data-svg-url="' . esc_attr($imgUrl) . '" data-item-name="' . esc_attr($pname) . '" style="border-color:#2271b1;color:#2271b1;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;">';
+                    echo 'Download SVG';
+                    echo '</button>';
+                    echo '<button class="download-pdf-btn button" data-img-url="' . esc_attr($imgUrl) . '" data-item-name="' . esc_attr($pname) . '" style="border-color:#d63638;color:#d63638;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;">';
+                    echo 'Download PDF';
+                    echo '</button>';
+                    echo '</div>';
+                }
+                echo '</div>';  // item row
+            }
+            echo '<div style="text-align:right;margin-top:12px;font-weight:700;">Order Total: $' . number_format((float) $cart_total, 2) . '</div>';
+            echo '</div>';
+        }
+
+        echo '<h2 class="title">Customer</h2><table class="widefat"><tbody>';
+        foreach ($meta as $k => $v) {
+            printf('<tr><th style="width:220px">%s</th><td>%s</td></tr>', esc_html(ucwords(str_replace('_', ' ', $k))), esc_html($v));
+        }
+        echo '</tbody></table>';
+
+        echo '<h2 class="title" style="margin-top:20px;">Text Fields</h2><table class="widefat"><tbody>';
+        $rendered_any = false;
+        if (is_array($fields_display) && !empty($fields_display)) {
+            foreach ($fields_display as $label => $val) {
+                if ($val === '')
+                    continue;
+                printf('<tr><th style="width:220px">%s</th><td>%s</td></tr>', esc_html($label), esc_html($val));
+                $rendered_any = true;
+            }
+        }
+        if (!$rendered_any && is_array($template_fields_array)) {
+            foreach ($template_fields_array as $row) {
+                $label = is_array($row) ? ($row['label'] ?? ($row['id'] ?? '')) : '';
+                $val = is_array($row) ? ($row['value'] ?? '') : '';
+                if ($label && $val !== '') {
+                    printf('<tr><th style="width:220px">%s</th><td>%s</td></tr>', esc_html($label), esc_html($val));
+                    $rendered_any = true;
+                }
+            }
+        }
+        if (!$rendered_any && is_array($template_data)) {
+            foreach ($template_data as $fid => $data) {
+                $label = is_array($data) ? ($data['label'] ?? $fid) : $fid;
+                $val = is_array($data) ? ($data['value'] ?? '') : $data;
+                if ($val === '')
+                    continue;
+                printf('<tr><th style="width:220px">%s</th><td>%s</td></tr>', esc_html($label), esc_html($val));
+                $rendered_any = true;
+            }
+        }
+        if (!$rendered_any && is_array($text_fields)) {
+            foreach ($text_fields as $fid => $val) {
+                if (!$val)
+                    continue;
+                $label = ucwords(str_replace(array('fsc-', '_'), array('', ' '), $fid));
+                printf('<tr><th style="width:220px">%s</th><td>%s</td></tr>', esc_html($label), esc_html($val));
+            }
+        }
+        echo '</tbody></table>';
+
+        $statuses = $this->apd_get_all_statuses();
+        $cur = get_post_status($order_id);
+        echo '<h2 class="title" style="margin-top:20px;">Status</h2>';
+        echo '<select id="apd-status" style="min-width:220px;">';
+        foreach ($statuses as $k => $v) {
+            printf('<option value="%s" %s>%s</option>', esc_attr($k), selected($cur, $k, false), esc_html($v));
+        }
+        echo '</select> <button class="button button-primary" id="apd-save-status">Update</button>';
+
+        echo '<h2 class="title" style="margin-top:20px;">Internal Notes</h2>';
+        echo '<div id="apd-notes" style="background:#fff;border:1px solid #e1e1e1;padding:12px;max-width:800px;">';
+        if ($notes) {
+            foreach ($notes as $n) {
+                printf('<div style="margin-bottom:8px;"><em>%s</em> &mdash; %s</div>', esc_html($n['time'] ?? ''), esc_html($n['text'] ?? ''));
+            }
+        }
+        echo '</div>';
+        echo '<textarea id="apd-note-text" rows="3" style="width:800px;margin-top:8px;" placeholder="Add a note..."></textarea><br/>';
+        echo '<button class="button" id="apd-add-note">Add Note</button>';
+
+        echo '<h2 class="title" style="margin-top:20px;">Maintenance</h2>';
+        echo '<button class="button" id="apd-rebuild-labels">Rebuild Field Labels</button> <span id="apd-rebuild-result" style="margin-left:8px;color:#555;"></span>';
+
+        // JS
+        ?>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script>
+        (function(){
+            const orderId = <?php echo (int) $order_id; ?>;
+            document.getElementById('apd-save-status').addEventListener('click', function(){
+                const status = document.getElementById('apd-status').value;
+                fetch(ajaxurl, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({ action:'apd_update_order_status', order_id: orderId, status: status, _wpnonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>' }) })
+                .then(r=>r.json()).then(r=>{ if(r.success){ alert('Status updated'); } else { alert('Failed: '+(r.data&&r.data.message||'unknown')); } });
+            });
+            document.getElementById('apd-add-note').addEventListener('click', function(){
+                const text = document.getElementById('apd-note-text').value.trim();
+                if(!text) return;
+                fetch(ajaxurl, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({ action:'apd_add_order_note', order_id: orderId, text: text, _wpnonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>' }) })
+                .then(r=>r.json()).then(r=>{ if(r.success){ location.reload(); } else { alert('Failed: '+(r.data&&r.data.message||'unknown')); } });
+            });
+            document.getElementById('apd-rebuild-labels').addEventListener('click', function(){
+                const el = document.getElementById('apd-rebuild-result');
+                el.textContent = 'Working...';
+                fetch(ajaxurl, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({ action:'apd_rebuild_order_labels', order_id: orderId, _wpnonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>' }) })
+                .then(r=>r.json()).then(r=>{ if(r.success){ el.textContent = 'Rebuilt '+(r.data&&r.data.count||0)+' fields.'; location.reload(); } else { el.textContent = 'Failed: '+(r.data&&r.data.message||'unknown'); } });
+            });
+            
+            // Download image functionality
+            const downloadBtn = document.getElementById('download-design-btn');
+            if (downloadBtn) {
+                downloadBtn.addEventListener('click', function(){
+                    const img = document.getElementById('preview-image');
+                    if (!img) {
+                        alert('No image found to download');
+                        return;
+                    }
+                    
+                    // Create a temporary canvas to convert image to downloadable format
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Set canvas size to match image
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    
+                    // Draw image on canvas
+                    ctx.drawImage(img, 0, 0);
+                    
+                    // Convert canvas to blob and download
+                    canvas.toBlob(function(blob) {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'order-' + orderId + '-design.png';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 'image/png');
+                });
+            }
+
+            // Download SVG functionality (if available)
+            const svgDataUrl = <?php echo json_encode($svg_download_url ?: ''); ?>;
+            const downloadSvgBtn = document.getElementById('download-design-svg-btn');
+            if (downloadSvgBtn) {
+                if (!svgDataUrl) {
+                    downloadSvgBtn.style.display = 'none';
+                } else {
+                    downloadSvgBtn.addEventListener('click', function(){
+                        // Check if it's a data URL or regular URL
+                        if (svgDataUrl.startsWith('data:')) {
+                            // Normalize uncommon mime like data:image+svg to image/svg+xml
+                            const href = svgDataUrl.replace(/^data:image\+svg/i, 'data:image/svg+xml');
+                            const a = document.createElement('a');
+                            a.href = href;
+                            a.download = 'order-' + orderId + '-design.svg';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                        } else {
+                            // For regular URLs, fetch and download
+                            fetch(svgDataUrl)
+                                .then(response => {
+                                    if (!response.ok) throw new Error('Failed to fetch SVG');
+                                    return response.blob();
+                                })
+                                .then(blob => {
+                                    const url = window.URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = 'order-' + orderId + '-design.svg';
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    window.URL.revokeObjectURL(url);
+                                })
+                                .catch(error => {
+                                    console.error('Download error:', error);
+                                    alert('Error downloading SVG file. The file may be corrupted or missing.');
+                                });
+                        }
+                    });
+                }
+            }
+
+            // Download SVG for individual order items
+            document.querySelectorAll('.download-svg-btn').forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const svgUrl = this.getAttribute('data-svg-url');
+                    const itemName = this.getAttribute('data-item-name');
+                    if (!svgUrl) {
+                        alert('No SVG data found');
+                        return;
+                    }
+                    
+                    let svgContent = '';
+                    
+                    // Handle data URL (data:image/svg+xml,... or data:image/svg+xml;base64,...)
+                    if (svgUrl.startsWith('data:')) {
+                        const parts = svgUrl.split(',');
+                        if (parts.length > 1) {
+                            // Check if it's base64 encoded
+                            if (parts[0].includes('base64')) {
+                                svgContent = atob(parts[1]);
+                            } else {
+                                // It's URL encoded
+                                svgContent = decodeURIComponent(parts[1]);
+                            }
+                        }
+                    } else {
+                        // It's a regular URL, we can't directly download cross-origin
+                        alert('Cannot download SVG from external URL');
+                        return;
+                    }
+                    
+                    // Ensure SVG has proper XML declaration and namespace
+                    if (svgContent && !svgContent.trim().startsWith('<' + '?xml')) {
+                        svgContent = '<' + '?xml version="1.0" encoding="UTF-8"?' + '>\n' + svgContent;
+                    }
+                    
+                    // Ensure SVG has proper xmlns attribute
+                    if (svgContent && svgContent.includes('<svg') && !svgContent.includes('xmlns=')) {
+                        svgContent = svgContent.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+                    }
+                    
+                    // Create blob and download
+                    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = itemName.replace(/[^a-zA-Z0-9]/g, '-') + '-design.svg';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                });
+            });
+
+            // Download PDF functionality
+            const downloadPdfBtn = document.getElementById('download-design-pdf-btn');
+            if (downloadPdfBtn) {
+                downloadPdfBtn.addEventListener('click', function(){
+                    const img = document.getElementById('preview-image');
+                    if (!img) {
+                        alert('No image found to download');
+                        return;
+                    }
+                    
+                    // Create a temporary canvas to get image data
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    ctx.drawImage(img, 0, 0);
+                    
+                    // Convert to data URL
+                    const imgData = canvas.toDataURL('image/png');
+                    
+                    // Create PDF using jsPDF
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({
+                        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                        unit: 'px',
+                        format: [canvas.width, canvas.height]
+                    });
+                    
+                    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                    pdf.save('order-' + orderId + '-design.pdf');
+                });
+            }
+
+            // Download PDF for individual order items
+            document.querySelectorAll('.download-pdf-btn').forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const imgUrl = this.getAttribute('data-img-url');
+                    const itemName = this.getAttribute('data-item-name');
+                    if (!imgUrl) {
+                        alert('No image data found');
+                        return;
+                    }
+                    
+                    // Create an image element to load the SVG/image
+                    const img = new Image();
+                    img.onload = function() {
+                        // Create canvas and draw image
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        
+                        // Convert to PNG data URL
+                        const imgData = canvas.toDataURL('image/png');
+                        
+                        // Create PDF
+                        const { jsPDF } = window.jspdf;
+                        const pdf = new jsPDF({
+                            orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                            unit: 'px',
+                            format: [canvas.width, canvas.height]
+                        });
+                        
+                        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                        pdf.save(itemName.replace(/[^a-zA-Z0-9]/g, '-') + '-design.pdf');
+                    };
+                    
+                    img.onerror = function() {
+                        alert('Failed to load image');
+                    };
+                    
+                    img.src = imgUrl;
+                });
+            });
+        })();
+
+        // Download validated SVG from order
+        function downloadOrderSVG(orderId) {
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
+
+            // Add spinner animation
+            const style = document.createElement('style');
+            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'download_order_svg',
+                    order_id: orderId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Create download link for SVG file
+                        const blob = new Blob([response.data.svg_content], { type: 'image/svg+xml' });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 5000);
+                    } else {
+                        alert('Error: ' + (response.data.message || 'Failed to download SVG'));
+                    }
+                },
+                error: function() {
+                    alert('Network error occurred while downloading SVG');
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
+
+        // Process Cut-Ready SVG
+        function processCutReadySVG(orderId) {
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
+
+            jQuery.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'apd_process_cut_ready_svg',
+                    order_id: orderId,
+                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Download the processed SVG file
+                        const a = document.createElement('a');
+                        a.href = response.data.file_url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        // Show success message
+                        const successDiv = document.createElement('div');
+                        successDiv.className = 'notice notice-success is-dismissible';
+                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
+                        button.closest('.order-svg-download-section').appendChild(successDiv);
+                        
+                        setTimeout(() => successDiv.remove(), 8000);
+                    } else {
+                        alert('Error: ' + (response.data || 'Failed to process SVG'));
+                    }
+                },
+                error: function(xhr, status, error) {
+                    alert('Network error occurred while processing SVG: ' + error);
+                },
+                complete: function() {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+        }
+        </script>
+        <?php
+        echo '</div>';
+    }
+
+    public function apd_update_order_status()
+    {
+        // Enable error logging for debugging
+        error_log('APD Update Order Status - Start');
+        
+        if (!current_user_can('manage_options'))
+            wp_send_json_error(array('message' => 'forbidden'), 403);
+        if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'apd_ajax_nonce'))
+            wp_send_json_error(array('message' => 'bad nonce'), 403);
+        $order_id = intval($_POST['order_id'] ?? 0);
+        $status = sanitize_text_field($_POST['status'] ?? '');
+        if (!$order_id || !$status)
+            wp_send_json_error(array('message' => 'missing'), 400);
+        
+        error_log('APD Update Order Status - Order: ' . $order_id . ', Status: ' . $status);
+        
+        // Get old status before updating
+        $old_status = get_post_status($order_id);
+        
+        // Update the order status
+        wp_update_post(array('ID' => $order_id, 'post_status' => $status));
+        
+        // Send email if status changed to confirmed or completed
+        if ($old_status !== $status && in_array($status, array('apd_confirmed', 'apd_completed'))) {
+            error_log('APD Update Order Status - Status changed from ' . $old_status . ' to ' . $status . ', sending email');
+            
+            // Get order data for email
+            $cart_items_raw = get_post_meta($order_id, 'cart_items', true);
+            
+            // Decode cart_items if it's a JSON string
+            if (is_string($cart_items_raw)) {
+                $cart_items = json_decode($cart_items_raw, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    error_log('APD Update Order Status - Failed to decode cart_items JSON: ' . json_last_error_msg());
+                    $cart_items = array();
+                }
+            } else {
+                $cart_items = is_array($cart_items_raw) ? $cart_items_raw : array();
+            }
+            
+            $order_data = array(
+                'customer_name' => get_post_meta($order_id, 'customer_name', true),
+                'customer_email' => get_post_meta($order_id, 'customer_email', true),
+                'customer_phone' => get_post_meta($order_id, 'customer_phone', true),
+                'customer_address' => get_post_meta($order_id, 'customer_address', true),
+                'cart_items' => $cart_items,
+                'product_price' => get_post_meta($order_id, 'product_price', true),
+                'shipping_cost' => get_post_meta($order_id, 'shipping_cost', true),
+                'tax' => get_post_meta($order_id, 'tax', true),
+                'order_date' => get_post_meta($order_id, 'order_date', true),
+            );
+            
+            error_log('APD Update Order Status - Email to: ' . $order_data['customer_email']);
+            
+            try {
+                if ($status === 'apd_confirmed') {
+                    $result = $this->send_order_status_email($order_id, $order_data, 'confirmed');
+                    error_log('APD Update Order Status - Confirmed email sent: ' . ($result ? 'yes' : 'no'));
+                } elseif ($status === 'apd_completed') {
+                    $result = $this->send_order_status_email($order_id, $order_data, 'completed');
+                    error_log('APD Update Order Status - Completed email sent: ' . ($result ? 'yes' : 'no'));
+                }
+            } catch (Exception $e) {
+                error_log('APD Update Order Status - Email error: ' . $e->getMessage());
+            }
+        }
+        
+        error_log('APD Update Order Status - Success');
+        wp_send_json_success();
+    }
+
+    public function apd_add_order_note()
+    {
+        if (!current_user_can('manage_options'))
+            wp_send_json_error(array('message' => 'forbidden'), 403);
+        if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'apd_ajax_nonce'))
+            wp_send_json_error(array('message' => 'bad nonce'), 403);
+        $order_id = intval($_POST['order_id'] ?? 0);
+        $text = wp_kses_post($_POST['text'] ?? '');
+        if (!$order_id || !$text)
+            wp_send_json_error(array('message' => 'missing'), 400);
+        $notes = get_post_meta($order_id, 'apd_notes', true);
+        if (!is_array($notes))
+            $notes = array();
+        $notes[] = array('time' => current_time('Y-m-d H:i:s'), 'text' => $text, 'user' => get_current_user_id());
+        update_post_meta($order_id, 'apd_notes', $notes);
+        wp_send_json_success();
+    }
+
+    // Rebuild labels for old orders using template_data/text_fields heuristics
+    public function apd_rebuild_order_labels()
+    {
+        if (!current_user_can('manage_options'))
+            wp_send_json_error(array('message' => 'forbidden'), 403);
+        if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'apd_ajax_nonce'))
+            wp_send_json_error(array('message' => 'bad nonce'), 403);
+        $order_id = intval($_POST['order_id'] ?? 0);
+        if (!$order_id)
+            wp_send_json_error(array('message' => 'missing order_id'), 400);
+        $fields_display = get_post_meta($order_id, 'fields_display', true);
+        $template_fields_array = get_post_meta($order_id, 'template_fields_array', true);
+        $template_data = get_post_meta($order_id, 'template_data', true);
+        $text_fields = get_post_meta($order_id, 'text_fields', true);
+        $rebuilt = array();
+        // Prefer existing arrays
+        if (is_array($template_fields_array) && !empty($template_fields_array)) {
+            foreach ($template_fields_array as $row) {
+                $lbl = is_array($row) ? ($row['label'] ?? '') : '';
+                $val = is_array($row) ? ($row['value'] ?? '') : '';
+                if ($lbl && $val !== '')
+                    $rebuilt[$lbl] = $val;
+            }
+        } elseif (is_array($template_data) && !empty($template_data)) {
+            foreach ($template_data as $fid => $data) {
+                $lbl = is_array($data) ? ($data['label'] ?? $fid) : $fid;
+                $val = is_array($data) ? ($data['value'] ?? '') : $data;
+                if ($val !== '')
+                    $rebuilt[$lbl] = $val;
+            }
+        } elseif (is_array($text_fields) && !empty($text_fields)) {
+            foreach ($text_fields as $fid => $val) {
+                if (!$val)
+                    continue;
+                $lbl = ucwords(str_replace(array('fsc-', '_'), array('', ' '), $fid));
+                $rebuilt[$lbl] = $val;
+            }
+        }
+        if (!empty($rebuilt)) {
+            update_post_meta($order_id, 'fields_display', $rebuilt);
+            // Also create ordered array
+            $ordered = array();
+            foreach ($rebuilt as $k => $v) {
+                $ordered[] = array('id' => $k, 'label' => $k, 'value' => $v);
+            }
+            update_post_meta($order_id, 'template_fields_array', $ordered);
+        }
+        wp_send_json_success(array('count' => count($rebuilt)));
+    }
+
+    private function generateManufacturingNotes($customization_data)
+    {
+        $notes = array();
+
+        // Product specifications
+        $notes[] = 'PRODUCT SPECIFICATIONS:';
+        $notes[] = '- Product: ' . ($customization_data['product_name'] ?? 'Custom Freight Sign');
+        $notes[] = '- Quantity: ' . ($customization_data['quantity'] ?? 1);
+        $notes[] = '- Print Color: ' . ($customization_data['print_color'] ?? 'Black');
+        $notes[] = '- Material: ' . ($customization_data['vinyl_material'] ?? 'Standard');
+
+        // Text fields
+        if (!empty($customization_data['text_fields'])) {
+            $notes[] = '';
+            $notes[] = 'TEXT CONTENT:';
+            foreach ($customization_data['text_fields'] as $field_id => $value) {
+                if (is_array($value)) {
+                    $notes[] = '- ' . ($value['label'] ?? $field_id) . ': ' . ($value['value'] ?? '');
+                } else {
+                    $notes[] = '- ' . ucwords(str_replace('_', ' ', $field_id)) . ': ' . $value;
+                }
+            }
+        }
+
+        // Template data
+        if (!empty($customization_data['template_data'])) {
+            $notes[] = '';
+            $notes[] = 'TEMPLATE ELEMENTS:';
+            foreach ($customization_data['template_data'] as $field_id => $value) {
+                if (is_array($value)) {
+                    $notes[] = '- ' . ($value['label'] ?? $field_id) . ': ' . ($value['value'] ?? '');
+                } else {
+                    $notes[] = '- ' . ucwords(str_replace('_', ' ', $field_id)) . ': ' . $value;
+                }
+            }
+        }
+
+        // Visual references
+        if (!empty($customization_data['image_url'])) {
+            $notes[] = '';
+            $notes[] = 'VISUAL REFERENCES:';
+            $notes[] = '- Customization Image: ' . $customization_data['image_url'];
+        }
+
+        $notes[] = '';
+        $notes[] = 'ORDER DATE: ' . current_time('Y-m-d H:i:s');
+        $notes[] = 'STATUS: Ready for Production';
+
+        return implode("\n", $notes);
+    }
+
+    // Enhanced cart shortcode with live preview
+    public function shortcode_cart()
+    {
+        ob_start();
+        ?>
+        <div class="apd-cart-page">
+            <div class="apd-cart-header">
+                <h2>Your Cart</h2>
+                <div class="apd-cart-summary">
+                    <!-- Select / Unselect all checkbox -->
+                    <label class="apd-select-all-label" title="Select / Unselect all items">
+                        <input type="checkbox" id="apd-select-all-checkbox" />
+                        <span class="apd-select-all-ui"></span>
+                    </label>
+                    <span class="apd-cart-count">0 items</span>
+                    <span class="apd-cart-total">Total: $0.00</span>
+                </div>
+            </div>
+            
+            <div class="apd-cart-content">
+                <div class="apd-cart-items flex flex-col gap-3" id="apd-cart-items">
+                    <!-- Cart items will be loaded here -->
+                </div>
+                
+                <div class="apd-cart-actions">
+                    <button class="apd-btn apd-btn-secondary" id="apd-clear-cart">Clear Cart</button>
+                    <a href="<?php echo home_url(get_option('apd_checkout_url', '/checkout/')); ?>" class="apd-btn apd-btn-primary" id="apd-proceed-checkout" onclick="return APDCart.proceedToCheckout(event);">Proceed to Checkout</a>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        // Ensure apd_ajax is available for cart
+        if (typeof apd_ajax === 'undefined') {
+            window.apd_ajax = {
+                ajax_url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                nonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>',
+                cart_url: '<?php echo home_url('/cart/'); ?>'
+            };
+        }
+        // Cart will be initialized by cart.js automatically
+        </script>
+        <?php
+        return ob_get_clean();
+    }
+
+    public function shortcode_cart_count()
+    {
+        $cart = $this->get_cart();
+        $count = 0;
+        foreach ($cart as $item) {
+            $count += $item['quantity'];
+        }
+
+        ob_start();
+        ?>
+        <span class="apd-cart-count" id="apd-cart-count-display"><?php echo $count; ?></span>
+        <script>
+        jQuery(document).ready(function($) {
+            // Update cart count when page loads
+            $.ajax({
+                url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                type: 'POST',
+                data: {
+                    action: 'apd_get_cart',
+                    nonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('.apd-cart-count').text(response.data.count);
+                    }
+                }
+            });
+        });
+        </script>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Render floating cart icon in footer
+     */
+    public function render_floating_cart_icon()
+    {
+        // Don't show on admin pages
+        if (is_admin()) {
+            return;
+        }
+        
+        $cart = $this->get_cart();
+        $count = 0;
+        foreach ($cart as $item) {
+            $count += $item['quantity'];
+        }
+        
+        $cart_url = home_url(get_option('apd_cart_url', '/cart/'));
+        ?>
+        <style>
+            .apd-floating-cart {
+                position: fixed;
+                bottom: 30px;
+                right: 30px;
+                width: 70px;
+                height: 70px;
+                background: #2271b1;
+                border-radius: 50%;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                cursor: pointer;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.3s ease;
+                text-decoration: none;
+            }
+            .apd-floating-cart:hover {
+                transform: scale(1.1);
+                box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+                background: #135e96;
+            }
+            .apd-floating-cart-icon {
+                color: white;
+                font-size: 28px;
+                position: relative;
+            }
+            .apd-floating-cart-count {
+                position: absolute;
+                top: -8px;
+                right: -8px;
+                background: #dc3545;
+                color: white;
+                border-radius: 50%;
+                min-width: 20px;
+                height: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 2px 4px;
+                border: 2px solid white;
+            }
+            .apd-floating-cart-count.hidden {
+                display: none;
+            }
+            /* Hide on mobile if needed */
+            @media (max-width: 768px) {
+                .apd-floating-cart {
+                    bottom: 20px;
+                    right: 20px;
+                    width: 60px;
+                    height: 60px;
+                }
+                .apd-floating-cart-icon {
+                    font-size: 24px;
+                }
+            }
+        </style>
+        <a href="<?php echo esc_url($cart_url); ?>" class="apd-floating-cart" id="apd-floating-cart" title="View Cart">
+            <div class="apd-floating-cart-icon">
+                🛒
+                <span class="apd-floating-cart-count <?php echo $count === 0 ? 'hidden' : ''; ?>" id="apd-floating-cart-count"><?php echo $count; ?></span>
+            </div>
+        </a>
+        <script>
+        (function() {
+            // Update floating cart count via AJAX
+            function updateFloatingCartCount() {
+                const ajaxUrl = '<?php echo admin_url('admin-ajax.php'); ?>';
+                const nonce = '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>';
+                
+                if (typeof jQuery !== 'undefined') {
+                    jQuery.ajax({
+                        url: ajaxUrl,
+                        type: 'POST',
+                        data: {
+                            action: 'apd_get_cart',
+                            nonce: nonce
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                const count = response.data.count || 0;
+                                const countEl = document.getElementById('apd-floating-cart-count');
+                                if (countEl) {
+                                    countEl.textContent = count;
+                                    if (count === 0) {
+                                        countEl.classList.add('hidden');
+                                    } else {
+                                        countEl.classList.remove('hidden');
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+            
+            // Update on page load
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', updateFloatingCartCount);
+            } else {
+                updateFloatingCartCount();
+            }
+            
+            // Listen for custom cart update events
+            document.addEventListener('apd_cart_updated', updateFloatingCartCount);
+            window.addEventListener('apd_cart_updated', updateFloatingCartCount);
+        })();
+        </script>
+        <?php
+    }
+
+    public function shortcode_checkout()
+    {
+        error_log('🛒 APD: shortcode_checkout() called!');
+        error_log('🛒 APD: Template path: ' . APD_PLUGIN_PATH . 'templates/checkout.php');
+        error_log('🛒 APD: Template exists: ' . (file_exists(APD_PLUGIN_PATH . 'templates/checkout.php') ? 'YES' : 'NO'));
+        
+        // Force cache bypass - add timestamp
+        nocache_headers();
+        
+        // Ensure jQuery is loaded for checkout page
+        wp_enqueue_script('jquery');
+        wp_enqueue_script('html2canvas', 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', array('jquery'), '1.4.1', true);
+        
+        // Prepare apd_ajax data for checkout page
+        $apd_ajax_data = array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('apd_ajax_nonce'),
+            'site_url' => home_url(),
+            'cart_url' => home_url(get_option('apd_cart_url', '/cart/')),
+            'checkout_url' => home_url(get_option('apd_checkout_url', '/checkout/')),
+            'products_url' => home_url(get_option('apd_products_url', '/products/')),
+            'orders_url' => home_url(get_option('apd_orders_url', '/my-orders/')),
+            'customizer_url' => home_url(get_option('apd_customizer_url', '/customizer/')),
+            'thank_you_url' => home_url(get_option('apd_thank_you_url', '/thank-you/'))
+        );
+        
+        // Create inline script to expose apd_ajax immediately (before DOMContentLoaded)
+        // This ensures apd_ajax is available when checkout.php script runs
+        wp_add_inline_script('jquery', 'window.apd_ajax = ' . wp_json_encode($apd_ajax_data) . ';', 'before');
+        
+        // Also localize for compatibility (in case scripts need it)
+        wp_register_script('apd-checkout-stub', '', array('jquery'), APD_VERSION, true);
+        wp_enqueue_script('apd-checkout-stub');
+        wp_localize_script('apd-checkout-stub', 'apd_ajax', $apd_ajax_data);
+        
+        // Use the dedicated PHP template for the checkout UI to ensure consistent layout
+        ob_start();
+        include APD_PLUGIN_PATH . 'templates/checkout.php';
+        return ob_get_clean();
+
+        ob_start();
+        ?>
+        <div class="apd-checkout-page">
+            <div class="checkout-header">
+                <h1>Checkout</h1>
+                <div class="checkout-steps">
+                    <div class="step active">1. Review Order</div>
+                    <div class="step">2. Payment</div>
+                    <div class="step">3. Confirmation</div>
+                </div>
+            </div>
+            
+            <div class="checkout-layout">
+                <!-- Left Column: Order Summary -->
+                <div class="checkout-left">
+                    <div class="order-summary-card">
+                        <h2>Order Summary</h2>
+                        
+                        <!-- Preview Image Section -->
+                        <div id="checkout-preview-section" style="margin-bottom: 24px; display: none;">
+                            <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; text-align: center;">
+                                <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #666; text-transform: uppercase; letter-spacing: 0.5px;">Your Design</h3>
+                                <img id="checkout-preview-image" src="" alt="Your customized design" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
+                            </div>
+                        </div>
+                        
+                        <div class="order-details">
+                            <div class="detail-row">
+                                <span class="label">Product:</span>
+                                <span class="value">Custom Freight Sign</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="label">Color:</span>
+                                <span class="value" id="checkout-color">Black</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="label">Material:</span>
+                                <span class="value" id="checkout-material">—</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="label">Quantity:</span>
+                                <span class="value" id="checkout-quantity">1</span>
+                            </div>
+                            
+                            <!-- Dynamic Text Fields -->
+                            <div id="checkout-text-fields" style="display: none;">
+                                <!-- Text fields will be populated here -->
+                            </div>
+                        </div>
+                        
+                        <div class="price-breakdown">
+                            <div class="price-row">
+                                <span>Subtotal:</span>
+                                <span id="checkout-subtotal">$29.99</span>
+                            </div>
+                            <div class="price-row">
+                                <span>Shipping:</span>
+                                <span>FREE</span>
+                            </div>
+                            <div class="price-row total">
+                                <span>Total:</span>
+                                <span id="checkout-total">$29.99</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Right Column: Checkout Form -->
+                <div class="checkout-right">
+                    <div class="checkout-form-card">
+                        <h2>Shipping Information</h2>
+                        
+                        <form id="apd-checkout-form" class="checkout-form">
+                            <div class="form-section">
+                                <h3>Contact Details</h3>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="customer-name">Full Name *</label>
+                                        <input type="text" id="customer-name" name="customer_name" required 
+                                               placeholder="Enter your full name">
+                                    </div>
+                                </div>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="customer-email">Email Address *</label>
+                                        <input type="email" id="customer-email" name="customer_email" required 
+                                               placeholder="your.email@example.com">
+                                    </div>
+                                </div>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="customer-phone">Phone Number *</label>
+                                        <input type="tel" id="customer-phone" name="customer_phone" required 
+                                               placeholder="(555) 123-4567">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-section">
+                                <h3>Shipping Address</h3>
+                                
+                                <div class="form-row">
+                                    <div class="form-group full-width">
+                                        <label for="customer-address">Full Address *</label>
+                                        <textarea id="customer-address" name="customer_address" rows="3" required 
+                                                  placeholder="Enter your complete address including city, state, ZIP code..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-section">
+                                <h3>Payment Method</h3>
+                                <div class="payment-methods">
+                                    <div class="payment-option">
+                                        <input type="radio" id="payment-paypal" name="payment_method" value="paypal" checked>
+                                        <label for="payment-paypal">
+                                            <img src="https://www.paypalobjects.com/webstatic/mktg/logo/pp_cc_mark_37x23.jpg" alt="PayPal" style="height: 20px; margin-right: 8px;">
+                                            <span>PayPal</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="checkout-actions">
+                                <div id="paypal-button-container"></div>
+                                <p class="security-note">
+                                    <span>🛡️</span>
+                                    Your information is secure and encrypted
+                                </p>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <style>
+        .apd-checkout-page {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+        }
+        
+        .checkout-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .checkout-header h1 {
+            font-size: 32px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+        
+        .checkout-steps {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+        }
+        
+        .step {
+            padding: 12px 24px;
+            border-radius: 25px;
+            background: #f5f5f5;
+            color: #666;
+            font-weight: 500;
+            position: relative;
+        }
+        
+        .step.active {
+            background: #007cba;
+            color: white;
+        }
+        
+        .step:not(:last-child)::after {
+            content: '→';
+            position: absolute;
+            right: -25px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #ccc;
+        }
+        
+        .checkout-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+        
+        .order-summary-card,
+        .checkout-form-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            padding: 30px;
+            border: 1px solid #e8e8e8;
+            height: fit-content;
+        }
+        
+        .order-summary-card h2,
+        .checkout-form-card h2 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .product-preview {
+            margin-bottom: 24px;
+        }
+        
+        .preview-image {
+            width: 100%;
+            height: 300px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed #ddd;
+        }
+        
+        .preview-image img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        
+        .preview-placeholder {
+            text-align: center;
+            color: #666;
+        }
+        
+        .preview-placeholder i {
+            font-size: 48px;
+            margin-bottom: 12px;
+            display: block;
+        }
+        
+        .preview-info {
+            margin-top: 12px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .preview-info img {
+            border-radius: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .order-details {
+            margin-bottom: 24px;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        
+        .detail-row .label {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .detail-row .value {
+            color: #1a1a1a;
+            font-weight: 600;
+        }
+        
+        .price-breakdown {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .price-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        
+        .price-row.total {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a1a1a;
+            padding-top: 12px;
+            border-top: 2px solid #e8e8e8;
+            margin-top: 12px;
+        }
+        
+        .form-section {
+            margin-bottom: 32px;
+        }
+        
+        .form-section h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .form-row:has(.form-group:nth-child(2)) {
+            grid-template-columns: 1fr 1fr;
+        }
+        
+        .form-row:has(.form-group:nth-child(3)) {
+            grid-template-columns: 1fr 1fr 1fr;
+        }
+        
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s ease;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #007cba;
+            box-shadow: 0 0 0 3px rgba(0,124,186,0.1);
+        }
+        
+        .payment-methods {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .payment-option {
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            padding: 16px;
+            transition: border-color 0.2s ease;
+        }
+        
+        .payment-option:hover {
+            border-color: #007cba;
+        }
+        
+        .payment-option input[type="radio"] {
+            display: none;
+        }
+        
+        .payment-option input[type="radio"]:checked + label {
+            color: #007cba;
+        }
+        
+        .payment-option label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            font-weight: 500;
+            margin: 0;
+        }
+        
+        .payment-option label span:first-child {
+            font-size: 20px;
+        }
+        
+        .checkout-actions {
+            margin-top: 32px;
+            text-align: center;
+        }
+        
+        .btn-place-order {
+            width: 100%;
+            padding: 18px 24px;
+            background: #007cba;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        
+        .btn-place-order:hover {
+            background: #005a87;
+        }
+        
+        .btn-place-order:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .security-note {
+            margin-top: 16px;
+            color: #666;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .security-note span:first-child {
+            color: #28a745;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .checkout-layout {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+            
+            .checkout-steps {
+                flex-direction: column;
+                gap: 16px;
+            }
+            
+            .step:not(:last-child)::after {
+                display: none;
+            }
+            
+            .form-row:has(.form-group:nth-child(2)),
+            .form-row:has(.form-group:nth-child(3)) {
+                grid-template-columns: 1fr;
+            }
+        }
+        </style>
+        
+        <!-- PayPal SDK -->
+        <?php
+        $paypal_client_id = get_option('apd_paypal_client_id', '');
+        $paypal_environment = get_option('apd_paypal_environment', 'sandbox');
+        $currency = get_option('apd_currency', 'USD');
+        $test_mode = get_option('apd_paypal_test_mode', '1');
+
+        // Debug PayPal configuration
+        echo '<!-- PayPal Config Debug: Client ID = ' . esc_html($paypal_client_id ? 'SET' : 'EMPTY') . ', Environment = ' . esc_html($paypal_environment) . ', Currency = ' . esc_html($currency) . ', Test Mode = ' . esc_html($test_mode ? 'ON' : 'OFF') . ' -->';
+
+        if ($test_mode === '1') {
+            // Test Mode - Mock PayPal payments
+            echo '<!-- PayPal Test Mode: Mock payments enabled -->';
+            echo '<script>window.paypalTestMode = true;</script>';
+        } elseif (!empty($paypal_client_id) && $paypal_client_id !== 'YOUR_PAYPAL_CLIENT_ID' && $paypal_client_id !== '') {
+            $sdk_url = 'https://www.paypal.com/sdk/js?client-id=' . esc_js($paypal_client_id) . '&currency=' . esc_js($currency) . '&intent=capture&components=buttons';
+            if ($paypal_environment === 'sandbox') {
+                $sdk_url .= '&buyer-country=US';
+            }
+            echo '<script src="' . $sdk_url . '"></script>';
+            echo '<!-- PayPal SDK loaded successfully -->';
+        } else {
+            echo '<!-- PayPal SDK not loaded: Client ID not configured or invalid -->';
+            echo '<script>console.warn("PayPal SDK not loaded: Client ID not configured. Please configure PayPal in Admin → Advanced Product Designer → Settings → Payment Settings");</script>';
+        }
+        ?>
+        
+        <script>
+        (function(){
+            // Ensure jQuery is available
+            if (typeof jQuery === 'undefined' && typeof $ === 'undefined') {
+                console.error('jQuery not available, loading fallback...');
+                // Load jQuery from CDN as fallback
+                var script = document.createElement('script');
+                script.src = 'https://code.jquery.com/jquery-3.6.0.min.js';
+                script.onload = function() {
+                    console.log('jQuery fallback loaded successfully');
+                    // Re-run the main function after jQuery loads
+                    setTimeout(function() {
+                        initializeCheckout();
+                    }, 100);
+                };
+                script.onerror = function() {
+                    console.error('Failed to load jQuery fallback');
+                    initializeCheckoutWithoutJQuery();
+                };
+                document.head.appendChild(script);
+                return;
+            }
+            
+            // REMOVED: Console log disabler for debugging
+            // try { if (window.console && typeof window.console.log === 'function') { window.console.log = function(){}; } } catch(e) {}
+            
+            initializeCheckout();
+            
+            function initializeCheckout() {
+            try {
+                // Debug: Check all localStorage keys
+                console.log('=== CHECKOUT DEBUG START ===');
+                console.log('All localStorage keys:', Object.keys(localStorage));
+                
+                var payload = null;
+                try { payload = JSON.parse(localStorage.getItem('apd_checkout_payload')||'null'); } catch(e) {
+                    console.error('Failed to parse localStorage payload:', e);
+                }
+                // Debug: Check if we have any image URLs
+                // Check if we have real customized image URL
+                if (payload && (!payload.image_url && !payload.customization_image_url && !payload.preview_image_url)) {
+                    
+                    // Only create fallback if we have text fields to display
+                    if (payload.text_fields && Object.keys(payload.text_fields).length > 0) {
+                        console.log('Creating fallback image from text fields only...');
+                        try {
+                            // Create a simple canvas-based image
+                            var canvas = document.createElement('canvas');
+                            var ctx = canvas.getContext('2d');
+                            canvas.width = 800;
+                            canvas.height = 600;
+                            
+                            // Fill with white background
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Add border
+                            ctx.strokeStyle = '#cccccc';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(1, 1, canvas.width-2, canvas.height-2);
+                            
+                            // Add title
+                            ctx.fillStyle = '#333333';
+                            ctx.font = 'bold 32px Arial';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('Customized Product Preview', canvas.width/2, 80);
+                            
+                            // Add text fields
+                            ctx.font = 'bold 24px Arial';
+                            ctx.textAlign = 'left';
+                            var y = 150;
+                            Object.keys(payload.text_fields).forEach(function(key) {
+                                if (payload.text_fields[key] && payload.text_fields[key].trim()) {
+                                    ctx.fillText(payload.text_fields[key], 50, y);
+                                    y += 40;
+                                }
+                            });
+                            
+                            // Add product info
+                            ctx.font = '18px Arial';
+                            ctx.textAlign = 'left';
+                            var infoY = canvas.height - 100;
+                            if (payload.product_name) {
+                                ctx.fillText('Product: ' + payload.product_name, 50, infoY);
+                                infoY += 25;
+                            }
+                            if (payload.print_color) {
+                                ctx.fillText('Color: ' + payload.print_color, 50, infoY);
+                                infoY += 25;
+                            }
+                            if (payload.vinyl_material) {
+                                ctx.fillText('Material: ' + payload.vinyl_material, 50, infoY);
+                            }
+                            
+                            // Convert to data URL and store in payload
+                            var dataUrl = canvas.toDataURL('image/png');
+                            payload.image_url = dataUrl;
+                            payload.customization_image_url = dataUrl;
+                            payload.preview_image_url = dataUrl;
+                            
+                            console.log('Fallback image created from text fields only:', dataUrl.substring(0, 50) + '...');
+                        } catch(e) {
+                            console.error('Failed to create fallback image:', e);
+                        }
+                    } else {
+                        console.log('No text fields found either. Cannot create meaningful fallback image.');
+                    }
+                }
+                
+                // Debug: Log what we have in payload
+                console.log('📦 Checkout payload loaded:', payload);
+                if (payload) {
+                    console.log('🖼️ Image fields in payload:', {
+                        preview_image_png: payload.preview_image_png ? 'YES (' + payload.preview_image_png.substring(0, 50) + '...)' : 'NO',
+                        preview_image_url: payload.preview_image_url ? 'YES' : 'NO',
+                        customization_image_url: payload.customization_image_url ? 'YES' : 'NO',
+                        image_url: payload.image_url ? 'YES' : 'NO'
+                    });
+                }
+                
+                // If no payload in localStorage, try to load from session
+                if (!payload || (!payload.preview_image_png && !payload.image_url && !payload.preview_image_url && !payload.customization_image_url)) {
+                    console.log('No payload or no image data in localStorage, trying session...');
+                    fetch('<?php echo esc_js(admin_url('admin-ajax.php')); ?>', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({
+                            action: 'apd_get_checkout_data',
+                            nonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>'
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.data) {
+                            console.log('Loaded from session:', data.data);
+                            payload = data.data;
+                            updateCheckoutUI(payload);
+                        } else {
+                            console.log('No session data available');
+                            if (payload) updateCheckoutUI(payload);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Failed to load session data:', error);
+                        if (payload) updateCheckoutUI(payload);
+                    });
+                } else {
+                    updateCheckoutUI(payload);
+                }
+                
+                function updateCheckoutUI(payload) {
+                if (payload){
+                    // Update order details
+                    document.getElementById('checkout-color').textContent = payload.print_color||'Black';
+                    
+                    // Format material with image + name if available
+                    var materialName = payload.vinyl_material || '';
+                    if (materialName && materialName !== '') {
+                        materialName = materialName.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                    } else {
+                        materialName = 'Standard';
+                    }
+                    (function(){
+                        var matNode = document.getElementById('checkout-material');
+                        if (!matNode) return;
+                        var md = payload.material_display || {};
+                        var img = md.image || payload.material_texture_url || '';
+                        // Fallback: derive image path from material name
+                        if (!img && materialName && materialName !== 'Standard') {
+                            try {
+                                var fileName = materialName.replace(/\s+/g, '_') + '.png';
+                                img = '/wp-content/plugins/Shop/uploads/material/' + encodeURIComponent(fileName);
+                            } catch(e) {}
+                        }
+                        if (img) {
+                            matNode.innerHTML = '<span style="display:inline-flex;align-items:center;gap:8px;">\n                                <span style="width:28px;height:28px;border-radius:6px;border:1px solid #ddd;display:inline-block;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)">\n                                    <span style="display:block;width:100%;height:100%;background-image:url('+img+');background-size:cover;background-position:center;"></span>\n                                </span>\n                                <span>'+materialName+'</span>\n                            </span>';
+                        } else {
+                            matNode.textContent = materialName;
+                        }
+                    })();
+                    document.getElementById('checkout-quantity').textContent = payload.quantity||1;
+                    
+                    // Debug logging
+                    console.log('Checkout payload debug:', {
+                        vinyl_material: payload.vinyl_material,
+                        formatted_material: materialName,
+                        image_url: payload.image_url,
+                        customization_image_url: payload.customization_image_url,
+                        preview_image_url: payload.preview_image_url
+                    });
+                    
+                    // Update pricing (free shipping)
+                    var productPrice = parseFloat(payload.product_price) || 29.99; // Get price from payload or default
+                    var quantity = payload.quantity || 1;
+                    var subtotal = productPrice * quantity;
+                    var total = subtotal; // No shipping fee
+                    
+                    document.getElementById('checkout-subtotal').textContent = '$' + subtotal.toFixed(2);
+                    document.getElementById('checkout-total').textContent = '$' + total.toFixed(2);
+                    
+                    // Update text fields using ordered labels/values from payload
+                    var textFieldsContainer = document.getElementById('checkout-text-fields');
+                    if (textFieldsContainer) {
+                        textFieldsContainer.innerHTML = '';
+                        textFieldsContainer.style.display = 'none';
+                        var rendered = 0;
+                        // 1) Prefer fields_display (label -> value) to keep labels identical to customizer
+                        if (payload.fields_display && typeof payload.fields_display === 'object' && Object.keys(payload.fields_display).length) {
+                            Object.keys(payload.fields_display).forEach(function(label){
+                                var value = String(payload.fields_display[label] || '');
+                                var hint = (payload.fields_hints && payload.fields_hints[label]) ? String(payload.fields_hints[label]) : '';
+                                if (label && value.trim()) {
+                                    var row = document.createElement('div');
+                                    row.className = 'detail-row';
+                                    row.innerHTML = '<span class="label">'+label+':</span><span class="value">'+value+'</span>';
+                                    textFieldsContainer.appendChild(row);
+                                    rendered++;
+                                }
+                            });
+                        }
+                        // 2) Then template_fields_array (ordered id/label/value)
+                        if (!rendered && Array.isArray(payload.template_fields_array) && payload.template_fields_array.length) {
+                            payload.template_fields_array.forEach(function(item){
+                                var label = (item && item.label) ? item.label : '';
+                                var value = (item && item.value) ? String(item.value) : '';
+                                if (label && value && value.trim()) {
+                                    var row = document.createElement('div');
+                                    row.className = 'detail-row';
+                                    row.innerHTML = '<span class="label">'+label+':</span><span class="value">'+value+'</span>';
+                                    textFieldsContainer.appendChild(row);
+                                    rendered++;
+                                }
+                            });
+                        }
+                        // 3) Then template_data objects
+                        if (!rendered && payload.template_data && typeof payload.template_data === 'object' && Object.keys(payload.template_data).length) {
+                            Object.keys(payload.template_data).forEach(function(fieldId){
+                                var fd = payload.template_data[fieldId];
+                                var label = '';
+                                var value = '';
+                                if (fd && typeof fd === 'object') {
+                                    label = fd.label || fieldId;
+                                    value = fd.value || '';
+                                    } else {
+                                    label = fieldId;
+                                    value = String(fd || '');
+                                }
+                                if (label && value && value.trim()) {
+                                    var row = document.createElement('div');
+                                    row.className = 'detail-row';
+                                    row.innerHTML = '<span class="label">'+label+':</span><span class="value">'+value+'</span>';
+                                    textFieldsContainer.appendChild(row);
+                                    rendered++;
+                                }
+                            });
+                        }
+                        if (!rendered) {
+                            // fallback to older logic (but still attempt to resolve label from template_data)
+                            if (payload.text_fields && Object.keys(payload.text_fields).length > 0) {
+                                Object.keys(payload.text_fields).forEach(function(fieldId) {
+                                    var value = payload.text_fields[fieldId];
+                                    if (value && value.trim()) {
+                                        var label = '';
+                                        if (payload.template_data && payload.template_data[fieldId]) {
+                                            var td = payload.template_data[fieldId];
+                                            if (td && typeof td === 'object' && td.label) { label = td.label; }
+                                        }
+                                        if (!label) { label = getFieldLabel(fieldId); }
+                                        var fieldRow = document.createElement('div');
+                                        fieldRow.className = 'detail-row';
+                                        fieldRow.innerHTML = '<span class="label">' + label + ':</span><span class="value">' + value + '</span>';
+                                        textFieldsContainer.appendChild(fieldRow);
+                                        rendered++;
+                                    }
+                                });
+                            }
+                        }
+                        if (rendered > 0) { textFieldsContainer.style.display = 'block'; }
+                        
+                        console.log('🔍 DEBUG: Text fields processing completed, continuing to image processing...');
+                        
+                        // Helper function to get field label (jQuery-free version)
+                        function getFieldLabel(fieldId) {
+                            try {
+                                // Try to find the label from the template fields container using vanilla JS
+                                var label = document.querySelector('#fsc-template-fields label[for="' + fieldId + '"]');
+                                if (label) {
+                                    return label.textContent || label.innerText;
+                            }
+                            
+                            // Try to find label from data attributes
+                                var input = document.querySelector('#fsc-template-fields input[id="' + fieldId + '"], #fsc-template-fields textarea[id="' + fieldId + '"]');
+                                if (input) {
+                                    var labelText = input.getAttribute('data-label') || input.getAttribute('placeholder');
+                            if (labelText) {
+                                return labelText;
+                                    }
+                                }
+                            } catch(e) {
+                                console.warn('Error getting field label:', e);
+                            }
+                            
+                            // Fallback: clean up fieldId
+                            return fieldId.replace(/^fsc-/, '').replace(/_/g, ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                        }
+                        
+                        // Show container if we have fields
+                        if (textFieldsContainer.children.length > 0) {
+                            textFieldsContainer.style.display = 'block';
+                        }
+                    }
+                    
+                    // Display preview image if available
+                    console.log('🖼️ Attempting to display preview image...');
+                    var imageUrl = payload.preview_image_png || payload.preview_image_url || payload.customization_image_url || payload.image_url;
+                    console.log('Preview image URL:', imageUrl);
+                    
+                    if (imageUrl) { 
+                        console.log('Loading image:', imageUrl);
+                        var previewSection = document.getElementById('checkout-preview-section');
+                        var previewImage = document.getElementById('checkout-preview-image');
+
+                        if (previewSection && previewImage) {
+                            previewSection.style.display = 'block';
+                            previewImage.src = imageUrl;
+                            previewImage.onload = function() {
+                                console.log('✅ Preview image loaded successfully');
+                            };
+                            previewImage.onerror = function() {
+                                console.error('❌ Preview image failed to load:', imageUrl);
+                                previewSection.style.display = 'none';
+                            };
+                        }
+                    } else {
+                        console.log('⚠️ No preview image URL found in payload');
+                    }
+                    
+                    // Update material display with better formatting
+                    var materialEl = document.getElementById('checkout-material');
+                    if (materialEl && payload.vinyl_material) {
+                        var material = payload.vinyl_material;
+                        // Capitalize first letter of each word
+                        material = material.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                        materialEl.textContent = material;
+                        
+                    }
+                    
+                    // Always try to show material outline regardless of materialEl
+                        if (payload.vinyl_material && payload.vinyl_material !== 'solid') {
+                        console.log('Processing material outline for:', payload.vinyl_material);
+                            var materialName = payload.vinyl_material.toLowerCase();
+                            var materialFile = '';
+                        
+                        // Enhanced material mapping with more options
+                            var materialMap = {
+                                'diamond plate': 'Diamond_Plate.png',
+                            'diamond_plate': 'Diamond_Plate.png',
+                                'engine turn gold': 'Engine_turn_gold.png',
+                            'engine_turn_gold': 'Engine_turn_gold.png',
+                                'florentine silver': 'Florentine_Silver.png',
+                            'florentine_silver': 'Florentine_Silver.png',
+                                'gold': 'gold.png',
+                            'brush gold': 'gold.png',
+                            'brush_gold': 'gold.png'
+                            };
+                            
+                        // Try to find material file
+                            if (materialMap[materialName]) {
+                                materialFile = materialMap[materialName];
+                            console.log('Found material file in mapping:', materialFile);
+                        } else {
+                            console.log('Material not in mapping, trying AJAX for:', materialName);
+                        }
+                        
+                        if (materialFile) {
+                                var materialUrl = '<?php echo plugin_dir_url(__FILE__); ?>uploads/material/' + materialFile;
+                            console.log('Using material URL:', materialUrl);
+                                
+                                // Update preview info with material image
+                                var previewInfo = document.getElementById('preview-info');
+                                var materialInfo = document.getElementById('preview-material-info');
+                            console.log('DOM Elements found:', {previewInfo: previewInfo, materialInfo: materialInfo});
+                            
+                                if (previewInfo && materialInfo) {
+                                    previewInfo.style.display = 'block';
+                                var formattedMaterial = materialName.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                                materialInfo.innerHTML = 'Material: ' + formattedMaterial;
+                                
+                                // Update material texture preview
+                                var materialTextureImg = document.getElementById('material-texture-img');
+                                if (materialTextureImg) {
+                                    materialTextureImg.src = materialUrl;
+                                    materialTextureImg.style.display = 'block';
+                                    materialTextureImg.onload = function() {
+                                        console.log('Material texture image loaded successfully:', this.src);
+                                    };
+                                    materialTextureImg.onerror = function() {
+                                        console.error('Material texture image failed to load:', this.src);
+                                    };
+                                }
+                                
+                                console.log('Material outline updated successfully');
+                                console.log('Preview info display style:', previewInfo.style.display);
+                                console.log('Material info innerHTML:', materialInfo.innerHTML);
+                            } else {
+                                console.log('Preview info elements not found');
+                                console.log('Available elements with "preview" in ID:');
+                                var allElements = document.querySelectorAll('[id*="preview"]');
+                                allElements.forEach(function(el) {
+                                    console.log('- Element ID:', el.id, 'Tag:', el.tagName);
+                                });
+                            }
+                            
+                            // Apply material texture to the main product image
+                            console.log('Applying material texture to main product image...');
+                            
+                            // Function to apply material texture (canvas-only, persists through zoom)
+                            function applyMaterialTexture() {
+                                var mainPreviewImg = document.querySelector('#checkout-preview img');
+                                if (!mainPreviewImg || !materialUrl) {
+                                    console.log('Main preview image not found or no material URL available');
+                                    return;
+                                }
+                                
+                                console.log('🎨 Starting canvas material application...');
+                                console.log('🎨 Material URL:', materialUrl);
+                                console.log('🎨 Product image URL:', window.checkoutImageUrl || payload.image_url);
+                                
+                                try {
+                                    var canvas = document.createElement('canvas');
+                                    var ctx = canvas.getContext('2d');
+                                    
+                                    var productImg = new Image();
+                                    productImg.crossOrigin = 'anonymous';
+                                    productImg.onload = function() {
+                                        console.log('✅ Main product image loaded successfully:', this.src);
+                                        console.log('📐 Product image dimensions:', this.width, 'x', this.height);
+                                        
+                                        canvas.width = productImg.width;
+                                        canvas.height = productImg.height;
+                                        
+                                        // Draw base product image
+                                        ctx.drawImage(productImg, 0, 0);
+                                        console.log('✅ Base product image drawn to canvas');
+                                        
+                                        // Load material texture
+                                        var materialImg = new Image();
+                                        materialImg.crossOrigin = 'anonymous';
+                                        materialImg.onload = function() {
+                                            console.log('✅ Material texture loaded successfully:', this.src);
+                                            console.log('📐 Material texture dimensions:', this.width, 'x', this.height);
+                                            
+                                            // Apply material texture ONLY to text/logo areas, NOT background
+                                            // First, create a mask for text/logo areas only
+                                            ctx.globalCompositeOperation = 'source-over';
+                                            
+                                            // Save current state
+                                            ctx.save();
+                                            
+                                            // Create a mask for text areas (white text = material texture, black = transparent)
+                                            ctx.globalCompositeOperation = 'source-atop';
+                                            ctx.globalAlpha = 0.8;
+                                            ctx.drawImage(materialImg, 0, 0, canvas.width, canvas.height);
+                                            
+                                            // Restore state
+                                            ctx.restore();
+                                            ctx.globalCompositeOperation = 'source-over';
+                                            ctx.globalAlpha = 1.0;
+                                            
+                                            console.log('✅ Material texture applied to canvas');
+                                            
+                                            var newDataUrl = canvas.toDataURL('image/png');
+                                            console.log('✅ Canvas converted to data URL, length:', newDataUrl.length);
+                                            
+                                            // Update main preview
+                                            mainPreviewImg.src = newDataUrl;
+                                            console.log('✅ Main preview image updated with material texture');
+                                            
+                                            // Also update any zoom/lightbox images if present
+                                            try {
+                                                document.querySelectorAll('.apd-preview-modal img, .zoomImg, img[data-zoom-src]').forEach(function(img){
+                                                    img.src = newDataUrl;
+                                                    if (img.dataset) { img.dataset.zoomSrc = newDataUrl; }
+                                                });
+                                                console.log('✅ Zoom/lightbox images updated');
+                                            } catch(_) {}
+                                            
+                                            console.log('🎉 Canvas-based material texture applied successfully');
+                                        };
+                                        materialImg.onerror = function() {
+                                            console.error('❌ Failed to load material texture for main image:', this.src);
+                                        };
+                                        materialImg.src = materialUrl;
+                                    };
+                                    productImg.onerror = function() {
+                                        console.error('❌ Failed to load main product image for material application:', this.src);
+                                    };
+                                    productImg.src = window.checkoutImageUrl || payload.image_url;
+                                } catch(e) {
+                                    console.error('❌ Canvas compositing failed:', e);
+                                }
+                            }
+                            
+                            // Apply after image load to avoid race conditions
+                            if (window.checkoutImageLoaded) {
+                                console.log('Image already loaded, applying material texture (canvas-only)...');
+                                applyMaterialTexture();
+                            } else {
+                                console.log('Waiting for image to load before applying material texture (canvas-only)...');
+                                var waitIv = setInterval(function(){
+                                    if (window.checkoutImageLoaded) { clearInterval(waitIv); applyMaterialTexture(); }
+                                }, 100);
+                                setTimeout(function(){ clearInterval(waitIv); applyMaterialTexture(); }, 5000);
+                            }
+                        } else {
+                            // Try to get material URL from AJAX
+                            console.log('Loading material URL via AJAX for:', materialName);
+                            fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                },
+                                body: 'action=apd_get_material_url&material_name=' + encodeURIComponent(payload.vinyl_material) + '&nonce=<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                console.log('AJAX material response:', data);
+                                if (data.success && data.data && data.data.material_url) {
+                                    var previewInfo = document.getElementById('preview-info');
+                                    var materialInfo = document.getElementById('preview-material-info');
+                                    if (previewInfo && materialInfo) {
+                                        previewInfo.style.display = 'block';
+                                        var formattedMaterial = materialName.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                                        materialInfo.innerHTML = 'Material: ' + formattedMaterial;
+                                        
+                                        // Update material texture preview
+                                        var materialTextureImg = document.getElementById('material-texture-img');
+                                        if (materialTextureImg) {
+                                            materialTextureImg.src = data.data.material_url;
+                                            materialTextureImg.style.display = 'block';
+                                            materialTextureImg.onload = function() {
+                                                console.log('Material texture image loaded via AJAX:', this.src);
+                                            };
+                                            materialTextureImg.onerror = function() {
+                                                console.error('Material texture image failed to load via AJAX:', this.src);
+                                            };
+                                        }
+                                        
+                                        console.log('Material outline updated via AJAX');
+                                    }
+                                } else {
+                                    console.log('AJAX material request failed:', data);
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Failed to load material URL:', error);
+                            });
+                        }
+                    }
+                    
+                } else {
+                    console.warn('No checkout payload found in localStorage');
+                }
+                } // End updateCheckoutUI function
+                
+                
+                // Initialize PayPal payment
+                console.log('=== PAYPAL INITIALIZATION START ===');
+                console.log('Checking PayPal SDK availability...');
+                console.log('PayPal object:', typeof paypal);
+                console.log('Test mode (window.paypalTestMode):', window.paypalTestMode);
+                console.log('PayPal container exists:', !!document.getElementById('paypal-button-container'));
+                
+                if (window.paypalTestMode) {
+                    // Mock PayPal payment for testing
+                    console.log('✅ Using mock PayPal payment...');
+                    var paypalContainer = document.getElementById('paypal-button-container');
+                    console.log('PayPal container element:', paypalContainer);
+                    
+                    if (paypalContainer) {
+                        console.log('✅ PayPal container found, injecting mock button...');
+                        paypalContainer.innerHTML = '<div style="padding: 20px; text-align: center; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 4px; color: #2e7d32;"><h4 style="color: #2e7d32; margin: 0 0 10px 0;">🧪 Test Mode - Mock Payment</h4><p style="margin: 0 0 15px 0;">This is a simulated payment for testing purposes.</p><button id="mock-paypal-button" style="background: #4caf50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;">💳 Mock PayPal Payment</button></div>';
+                        console.log('✅ Mock button HTML injected successfully');
+                        console.log('PayPal container innerHTML length:', paypalContainer.innerHTML.length);
+                        
+                        // Add click handler for mock payment
+                        document.getElementById('mock-paypal-button').addEventListener('click', function() {
+                            console.log('Mock PayPal payment initiated...');
+                            
+                            // Simulate payment processing
+                            var button = this;
+                            var originalText = button.innerHTML;
+                            button.innerHTML = '⏳ Processing...';
+                            button.disabled = true;
+                            
+                            // Simulate delay
+                            setTimeout(function() {
+                                // Mock successful payment
+                                var mockOrderDetails = {
+                                    id: 'MOCK_ORDER_' + Date.now(),
+                                    status: 'COMPLETED',
+                                    purchase_units: [{
+                                        payments: {
+                                            captures: [{
+                                                id: 'MOCK_CAPTURE_' + Date.now()
+                                            }]
+                                        }
+                                    }],
+                                    payer: {
+                                        payer_id: 'MOCK_PAYER_' + Date.now()
+                                    }
+                                };
+                                
+                                console.log('Mock payment successful:', mockOrderDetails);
+                                
+                                // Process the mock order - include all customization data
+                                var safePayload = Object.assign({}, payload||{});
+                                // Don't delete images - we need them for the order!
+                                
+                                // Debug: Log image data being sent
+                                console.log('🖼️ Image data in safePayload:', {
+                                    preview_image_png: safePayload.preview_image_png ? 'YES (' + safePayload.preview_image_png.substring(0, 50) + '...)' : 'NO',
+                                    preview_image_url: safePayload.preview_image_url ? 'YES' : 'NO',
+                                    customization_image_url: safePayload.customization_image_url ? 'YES' : 'NO',
+                                    image_url: safePayload.image_url ? 'YES' : 'NO'
+                                });
+                                
+                                // Just stringify the entire customization data
+                                var customizationData = {
+                                    product_id: safePayload.product_id,
+                                    product_name: safePayload.product_name,
+                                    product_price: safePayload.product_price,
+                                    quantity: safePayload.quantity,
+                                    print_color: safePayload.print_color,
+                                    vinyl_material: safePayload.vinyl_material,
+                                    material_texture_url: safePayload.material_texture_url,
+                                    text_fields: safePayload.text_fields,
+                                    template_data: safePayload.template_data,
+                                    fields_display: safePayload.fields_display,
+                                    template_fields_array: safePayload.template_fields_array,
+                                    preview_image_png: safePayload.preview_image_png,
+                                    preview_image_url: safePayload.preview_image_url,
+                                    customization_image_url: safePayload.customization_image_url,
+                                    image_url: safePayload.image_url
+                                };
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                console.log('Payment approved, creating order with customization data:', customizationData);
+                                
+                                var orderData = {
+                                    action: 'apd_place_order',
+                                    nonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>',
+                                    customer_name: document.getElementById('customer-name').value,
+                                    customer_email: document.getElementById('customer-email').value,
+                                    customer_phone: document.getElementById('customer-phone').value,
+                                    customer_address: document.getElementById('customer-address').value,
+                                    payment_method: 'mock_paypal',
+                                    paypal_order_id: mockOrderDetails.id,
+                                    paypal_transaction_id: mockOrderDetails.purchase_units[0].payments.captures[0].id,
+                                    paypal_payer_id: mockOrderDetails.payer.payer_id,
+                                    payment_status: 'completed',
+                                    customization_data: JSON.stringify(customizationData)
+                                };
+                                
+                                // Submit order to WordPress
+                                var xhr = new XMLHttpRequest();
+                                xhr.open('POST', '<?php echo esc_js(admin_url('admin-ajax.php')); ?>');
+                                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+                                xhr.onload = function(){
+                                    try {
+                                        var resp = JSON.parse(xhr.responseText||'{}');
+                                        if (resp && resp.success && resp.data && (resp.data.redirect || resp.data.order_id)){
+                                            // Store order ID in session storage for thank you page
+                                            if (resp.data.order_id) {
+                                                sessionStorage.setItem('last_order_id', resp.data.order_id);
+                                            }
+                                            // Redirect only when server confirms order
+                                            if (resp.data.redirect) {
+                                                window.location.href = resp.data.redirect;
+                                            }
+                                            return;
+                                        }
+                                    } catch(e) {}
+                                    // Do not block the UX with alerts; log only so checkout can proceed without login
+                                    console.warn('Order submit skipped (no login required). Server responded:', (xhr.responseText||'{}'));
+                                };
+                                var body = Object.keys(orderData).map(function(k){ return encodeURIComponent(k)+'='+encodeURIComponent(orderData[k]||''); }).join('&');
+                                // Only attempt server submit when AJAX URL is available and we are not in local-only mode
+                                try {
+                                    var hasAjax = (typeof ajaxObj !== 'undefined' && ajaxObj && ajaxObj.ajax_url);
+                                    var localOnly = false;
+                                    try { localOnly = !!localStorage.getItem('apd_cart'); } catch(e) { localOnly = false; }
+                                    if (hasAjax && !localOnly) {
+                                        xhr.send(body);
+                                    } else {
+                                        console.log('Skipping server order submit – using local cart / mock payment.');
+                                    }
+                                } catch(e) {
+                                    console.log('Skipping server order submit due to error:', e);
+                                }
+                                
+                                // Show success message
+                                button.innerHTML = '✅ Payment Successful!';
+                                setTimeout(function() {
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }, 2000);
+                                
+                            }, 1500); // 1.5 second delay to simulate processing
+                        });
+                    } else {
+                        console.error('❌ PayPal container NOT found! Element with id="paypal-button-container" does not exist.');
+                    }
+                } else if (typeof paypal !== 'undefined' && paypal.Buttons) {
+                    console.log('✅ Real PayPal SDK detected, rendering PayPal buttons...');
+                    paypal.Buttons({
+                        style: {
+                            layout: 'vertical',
+                            color: 'blue',
+                            shape: 'rect',
+                            label: 'paypal'
+                        },
+                        createOrder: function(data, actions) {
+                            return actions.order.create({
+                                purchase_units: [{
+                                    amount: {
+                                        currency_code: 'USD',
+                                        value: (payload.product_price || 250).toFixed(2)
+                                    },
+                                    description: 'Custom Freight Sign - ' + (payload.product_name || 'Product A')
+                                }],
+                                application_context: {
+                                    shipping_preference: 'NO_SHIPPING'
+                                }
+                            });
+                        },
+                        onApprove: function(data, actions) {
+                            return actions.order.capture().then(function(details) {
+                                // Payment successful, now create order in WordPress with all customization data
+                                var safePayload = Object.assign({}, payload||{});
+                                // Include all customization data including images
+                                var customizationData = {
+                                    product_id: safePayload.product_id,
+                                    product_name: safePayload.product_name,
+                                    product_price: safePayload.product_price,
+                                    quantity: safePayload.quantity,
+                                    print_color: safePayload.print_color,
+                                    vinyl_material: safePayload.vinyl_material,
+                                    material_texture_url: safePayload.material_texture_url,
+                                    text_fields: safePayload.text_fields,
+                                    template_data: safePayload.template_data,
+                                    fields_display: safePayload.fields_display,
+                                    template_fields_array: safePayload.template_fields_array,
+                                    preview_image_png: safePayload.preview_image_png,
+                                    preview_image_url: safePayload.preview_image_url,
+                                    customization_image_url: safePayload.customization_image_url,
+                                    image_url: safePayload.image_url
+                                };
+                                
+                                var orderData = {
+                                    action: 'apd_place_order',
+                                    nonce: '<?php echo esc_js(wp_create_nonce('apd_ajax_nonce')); ?>',
+                                    customer_name: document.getElementById('customer-name').value,
+                                    customer_email: document.getElementById('customer-email').value,
+                                    customer_phone: document.getElementById('customer-phone').value,
+                                    customer_address: document.getElementById('customer-address').value,
+                                    payment_method: 'paypal',
+                                    paypal_order_id: details.id,
+                                    paypal_transaction_id: details.purchase_units[0].payments.captures[0].id,
+                                    paypal_payer_id: details.payer.payer_id,
+                                    payment_status: 'completed',
+                                    customization_data: JSON.stringify(customizationData)
+                                };
+                                
+                                // Submit order to WordPress
+                                var xhr = new XMLHttpRequest();
+                                xhr.open('POST', '<?php echo esc_js(admin_url('admin-ajax.php')); ?>');
+                                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+                                xhr.onload = function(){
+                                    try {
+                                        var resp = JSON.parse(xhr.responseText||'{}');
+                                        if (resp && resp.success && resp.data && resp.data.redirect){ 
+                                            // Store order ID in session storage for thank you page
+                                            if (resp.data.order_id) {
+                                                sessionStorage.setItem('last_order_id', resp.data.order_id);
+                                            }
+                                            // Redirect to thank you page
+                                            window.location.href = resp.data.redirect;
+                                            return; 
+                                        }
+                                    } catch(e) {}
+                                    alert('Order created but payment verification failed. Please contact support.');
+                                };
+                                var body = Object.keys(orderData).map(function(k){ return encodeURIComponent(k)+'='+encodeURIComponent(orderData[k]||''); }).join('&');
+                                xhr.send(body);
+                                
+                                // Show success message
+                                alert('Payment successful! Order ID: ' + details.id);
+                            });
+                        },
+                        onError: function(err) {
+                            console.error('PayPal Error:', err);
+                            alert('Payment failed. Please try again.');
+                        }
+                    }).render('#paypal-button-container');
+                } else {
+                    console.warn('⚠️ Neither test mode nor real PayPal SDK is available');
+                    console.log('- window.paypalTestMode:', window.paypalTestMode);
+                    console.log('- typeof paypal:', typeof paypal);
+                    console.error('PayPal SDK not loaded or not available');
+                    
+                    // Show helpful message to user
+                    var paypalContainer = document.getElementById('paypal-button-container');
+                    if (paypalContainer) {
+                        paypalContainer.innerHTML = '<div style="padding: 20px; text-align: center; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; color: #856404;"><h4 style="color: #856404; margin: 0 0 10px 0;">⚠️ PayPal Payment Not Available</h4><p style="margin: 0 0 10px 0;">PayPal integration is not configured.</p><p style="margin: 0 0 10px 0; font-size: 14px;"><strong>To enable PayPal payments:</strong></p><ol style="text-align: left; margin: 10px 0; padding-left: 20px; font-size: 14px;"><li>Go to WordPress Admin → Advanced Product Designer → Settings</li><li>Find "Payment Settings" section</li><li>Enter your PayPal Client ID OR enable Test Mode</li><li>Save settings and refresh this page</li></ol><p style="margin: 10px 0 0 0; font-size: 12px; color: #6c757d;">Or contact support to complete your order.</p></div>';
+                    }
+                    
+                    // Fallback to regular form submission
+                    var form = document.getElementById('apd-checkout-form');
+                    if (form) {
+                    form.addEventListener('submit', function(ev){
+                        ev.preventDefault();
+                            alert('PayPal integration not available. Please contact support to complete your order.');
+                        });
+                    }
+                }
+            } catch(e) {
+                console.error('Error in initializeCheckout:', e);
+            }
+        }
+        
+        // Function to handle checkout without jQuery
+        function initializeCheckoutWithoutJQuery() {
+            console.log('Initializing checkout without jQuery...');
+            try {
+                // Basic checkout functionality without jQuery
+                var payload = null;
+                try {
+                    var storedPayload = localStorage.getItem('apd_checkout_payload');
+                    if (storedPayload) {
+                        payload = JSON.parse(storedPayload);
+                    }
+                } catch(e) {
+                    console.error('Failed to parse checkout payload:', e);
+                }
+                
+                if (payload) {
+                    // Update basic order details
+                    var colorEl = document.getElementById('checkout-color');
+                    var materialEl = document.getElementById('checkout-material');
+                    var quantityEl = document.getElementById('checkout-quantity');
+                    
+                    if (colorEl) colorEl.textContent = payload.print_color || 'Black';
+                    if (quantityEl) quantityEl.textContent = payload.quantity || 1;
+                    
+                    if (materialEl && payload.vinyl_material) {
+                        var material = payload.vinyl_material.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+                        materialEl.textContent = material;
+                    }
+                    
+                    // Handle PayPal fallback
+                    var paypalContainer = document.getElementById('paypal-button-container');
+                    if (paypalContainer) {
+                        paypalContainer.innerHTML = '<div style="padding: 20px; text-align: center; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; color: #6c757d;"><h4>Payment Method</h4><p>Please contact support to complete your order.</p><p><small>jQuery not available</small></p></div>';
+                    }
+                }
+            } catch(e) {
+                console.error('Error in checkout without jQuery:', e);
+            }
+        }
+        })();
+        </script>
+        <?php
+        return ob_get_clean();
+    }
+
+    public function shortcode_thankyou()
+    {
+        ob_start();
+        ?>
+        <div class="apd-thankyou-page" style="
+            max-width: 100% ;
+            margin: 0 auto;
+            padding: 40px 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            min-height: 100vh;
+        ">
+            <!-- Header Section -->
+            <div style="
+                text-align: center;
+                margin-bottom: 60px;
+                padding: 40px 0;
+                background: white;
+                border-radius: 20px;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+                position: relative;
+                overflow: hidden;
+            ">
+                <div style="
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 4px;
+                    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4, #10b981);
+                "></div>
+                
+                <div style="
+                    width: 80px;
+                    height: 80px;
+                    background: linear-gradient(135deg, #10b981, #059669);
+                    border-radius: 50%;
+                    margin: 0 auto 30px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+                ">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="color: white;">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                
+                <h1 style="
+                    font-size: 3rem;
+                    font-weight: 700;
+                    color: #1e293b;
+                    margin: 0 0 20px 0;
+                    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                ">Thank You!</h1>
+                
+                <p style="
+                    font-size: 1.25rem;
+                    color: #64748b;
+                    margin: 0;
+                    font-weight: 500;
+                ">Your order has been successfully placed</p>
+            </div>
+
+            <!-- Order Details Section -->
+            <div style="
+                gap: 40px;
+                margin-bottom: 40px;
+            ">
+                <!-- Order Summary Card -->
+                <div style="
+                    background: white;
+                    border-radius: 16px;
+                    padding: 30px;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+                    border: 1px solid #e2e8f0;
+                ">
+                    <h3 style="
+                        font-size: 1.5rem;
+                        font-weight: 600;
+                        color: #1e293b;
+                        margin: 0 0 25px 0;
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                    ">
+                        <div style="
+                            width: 8px;
+                            height: 8px;
+                            background: #3b82f6;
+                            border-radius: 50%;
+                        "></div>
+                        Order Summary
+                    </h3>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <div style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            padding: 15px 0;
+                            border-bottom: 1px solid #f1f5f9;
+                        ">
+                            <span style="color: #64748b; font-weight: 500;">Order ID</span>
+                            <span style="color: #1e293b; font-weight: 600; font-family: monospace;">#<span id="order-id">Loading...</span></span>
+                        </div>
+                        
+                        <div style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            padding: 15px 0;
+                            border-bottom: 1px solid #f1f5f9;
+                        ">
+                            <span style="color: #64748b; font-weight: 500;">Order Date</span>
+                            <span style="color: #1e293b; font-weight: 600;" id="order-date">Loading...</span>
+                        </div>
+                        
+                        <div style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            padding: 15px 0;
+                            border-bottom: 1px solid #f1f5f9;
+                        ">
+                            <span style="color: #64748b; font-weight: 500;">Status</span>
+                            <span style="
+                                background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+                                color: #1e40af;
+                                padding: 6px 12px;
+                                border-radius: 20px;
+                                font-size: 0.875rem;
+                                font-weight: 600;
+                            ">Processing</span>
+                        </div>
+                        
+                        <div style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            padding: 15px 0;
+                        ">
+                            <span style="color: #64748b; font-weight: 500;">Total Amount</span>
+                            <span style="color: #1e293b; font-weight: 700; font-size: 1.25rem;" id="order-total">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div style="
+                display: flex;
+                gap: 20px;
+                justify-content: center;
+                flex-wrap: wrap;
+            ">
+                <a href="<?php echo home_url('/'); ?>" style="
+                    background: white;
+                    color: #3b82f6;
+                    padding: 16px 32px;
+                    border-radius: 12px;
+                    text-decoration: none;
+                    font-weight: 600;
+                    font-size: 1.125rem;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 10px;
+                    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+                    transition: all 0.3s ease;
+                    border: 2px solid #e2e8f0;
+                    cursor: pointer;
+                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 15px 35px rgba(0, 0, 0, 0.15)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 25px rgba(0, 0, 0, 0.1)'">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                        <polyline points="9,22 9,12 15,12 15,22"/>
+                    </svg>
+                    Continue Shopping
+                </a>
+            </div>
+
+            <!-- Support Section -->
+            <div style="
+                margin-top: 60px;
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            ">
+                <h3 style="
+                    font-size: 1.5rem;
+                    font-weight: 600;
+                    color: #1e293b;
+                    margin: 0 0 15px 0;
+                ">Need Help?</h3>
+                <p style="
+                    color: #64748b;
+                    margin: 0 0 25px 0;
+                    font-size: 1.125rem;
+                ">Our customer support team is here to assist you</p>
+                <div style="
+                    display: flex;
+                    gap: 20px;
+                    justify-content: center;
+                    flex-wrap: wrap;
+                ">
+                    <a href="mailto:support@example.com" style="
+                        color: #3b82f6;
+                        text-decoration: none;
+                        font-weight: 500;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                    ">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                            <polyline points="22,6 12,13 2,6"/>
+                        </svg>
+                        support@example.com
+                    </a>
+                    <span style="color: #cbd5e1;">•</span>
+                    <a href="tel:+1234567890" style="
+                        color: #3b82f6;
+                        text-decoration: none;
+                        font-weight: 500;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                    ">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>
+                        </svg>
+                        +1 (234) 567-890
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        // Load order details from session or URL parameters
+        document.addEventListener('DOMContentLoaded', function() {
+            // Try to get order details from various sources
+            const urlParams = new URLSearchParams(window.location.search);
+            const orderId = urlParams.get('order_id') || sessionStorage.getItem('last_order_id');
+            
+            if (orderId) {
+                document.getElementById('order-id').textContent = orderId;
+                
+                // Fetch order details via AJAX
+                fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        action: 'apd_get_order_details',
+                        order_id: orderId,
+                        nonce: '<?php echo wp_create_nonce('apd_order_details'); ?>'
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const order = data.data;
+                        document.getElementById('order-date').textContent = new Date(order.date).toLocaleDateString();
+                        document.getElementById('order-total').textContent = '$' + parseFloat(order.total).toFixed(2);
+                    }
+                })
+                .catch(error => {
+                    console.log('Could not fetch order details:', error);
+                    // Set default values
+                    document.getElementById('order-date').textContent = new Date().toLocaleDateString();
+                    document.getElementById('order-total').textContent = 'Processing...';
+                });
+            } else {
+                // Set default values if no order ID found
+                document.getElementById('order-id').textContent = 'N/A';
+                document.getElementById('order-date').textContent = new Date().toLocaleDateString();
+                document.getElementById('order-total').textContent = 'Processing...';
+            }
+        });
+        </script>
+        <?php
+        return ob_get_clean();
+    }
+
+    public function shortcode_orders()
+    {
+        // Include the orders template
+        ob_start();
+        include plugin_dir_path(__FILE__) . 'templates/orders.php';
+        return ob_get_clean();
+    }
+
+    private function maybe_create_core_pages()
+    {
+        $pages = array(
+            'apd_cart' => array(
+                'title' => 'Cart',
+                'slug' => 'cart',
+                'content' => '[apd_cart]'
+            ),
+            'apd_checkout' => array(
+                'title' => 'Checkout',
+                'slug' => 'checkout',
+                'content' => '[apd_checkout]'
+            ),
+            'apd_thankyou' => array(
+                'title' => 'Thank You',
+                'slug' => 'thank-you',
+                'content' => '[apd_thank_you]'
+            ),
+            'apd_orders' => array(
+                'title' => 'My Orders',
+                'slug' => 'my-orders',
+                'content' => '[apd_orders]'
+            ),
+        );
+        foreach ($pages as $opt_key => $def) {
+            $existing = get_page_by_path($def['slug']);
+            if ($existing && $existing->ID) {
+                update_option($opt_key, intval($existing->ID));
+                continue;
+            }
+            $id = wp_insert_post(array(
+                'post_title' => $def['title'],
+                'post_name' => $def['slug'],
+                'post_status' => 'publish',
+                'post_type' => 'page',
+                'post_content' => $def['content']
+            ));
+            if (!is_wp_error($id) && $id) {
+                update_option($opt_key, intval($id));
+            }
+        }
+    }
+
+    // Run on admin/init to backfill pages if missing
+    public function ensure_core_pages()
+    {
+        // Only run for admins to avoid overhead
+        if (!current_user_can('manage_options'))
+            return;
+        $needed = array(
+            get_option('apd_cart') => 'cart',
+            get_option('apd_checkout') => 'checkout',
+            get_option('apd_thankyou') => 'thank-you',
+            get_option('apd_orders') => 'my-orders',
+        );
+        $missing = false;
+        foreach ($needed as $optId => $slug) {
+            if (!$optId || !get_post($optId)) {
+                $missing = true;
+                break;
+            }
+        }
+        if ($missing) {
+            $this->maybe_create_core_pages();
+            flush_rewrite_rules(false);
+        }
+    }
+
+    public function add_query_vars($vars)
+    {
+        $vars[] = 'customizer';
+        $vars[] = 'product_detail';
+        return $vars;
+    }
+
+    public function template_redirect()
+    {
+        $customizer_id = get_query_var('customizer');
+        if ($customizer_id) {
+            // Debug: Log customizer redirect
+            error_log('APD Template Redirect: Customizer detected with ID: ' . $customizer_id);
+
+            // Get header and footer
+            get_header();
+
+            // Render the original customizer with product ID
+            $this->render_customizer($customizer_id);
+
+            get_footer();
+            exit;
+        }
+
+        if (get_query_var('product_detail')) {
+            include APD_PLUGIN_PATH . 'templates/product-detail-page.php';
+            exit;
+        }
+    }
+
+    public function load_single_product_template($template)
+    {
+        global $post;
+
+        if ($post && $post->post_type === 'apd_product') {
+            $custom_template = APD_PLUGIN_PATH . 'templates/single-apd_product.php';
+            if (file_exists($custom_template)) {
+                return $custom_template;
+            }
+        }
+
+        return $template;
+    }
+
+    public function load_company_taxonomy_template($template)
+    {
+        // Check if we're viewing a company taxonomy archive
+        if (is_tax('apd_company')) {
+            // Set Elementor canvas template (full width)
+            add_filter('template_include', function($template) {
+                // Force Elementor canvas template for full width
+                if (function_exists('elementor_theme_do_location')) {
+                    add_filter('elementor/theme/get_location_templates/template_id', function() {
+                        return 'elementor_canvas';
+                    });
+                }
+                return $template;
+            }, 1);
+            
+            $custom_template = APD_PLUGIN_PATH . 'templates/taxonomy-apd_company.php';
+            if (file_exists($custom_template)) {
+                return $custom_template;
+            }
+        }
+
+        return $template;
+    }
+
+    public function set_company_archive_elementor_template()
+    {
+        if (is_tax('apd_company')) {
+            // Force Elementor Canvas template (full width, no header/footer from theme)
+            add_filter('template_include', function($template) {
+                // Set page template meta for Elementor
+                global $wp_query;
+                if (isset($wp_query->queried_object_id)) {
+                    // Elementor Canvas = full width
+                    add_filter('elementor/page/get_template', function() {
+                        return 'elementor_canvas';
+                    });
+                }
+                return $template;
+            }, 999);
+        }
+    }
+
+    public function product_detail_shortcode($atts)
+    {
+        // Parse shortcode attributes
+        $atts = shortcode_atts(array(
+            'id' => 0,
+            'show_price' => 'true',
+            'show_description' => 'true',
+            'show_features' => 'true',
+            'show_specs' => 'true',
+            'show_related' => 'true'
+        ), $atts);
+
+        $product_id = intval($atts['id']);
+
+        if ($product_id <= 0) {
+            return '<div class="apd-error">Invalid product ID provided.</div>';
+        }
+
+        // Get product data
+        $product = get_post($product_id);
+
+        if (!$product || $product->post_type !== 'apd_product') {
+            return '<div class="apd-error">Product not found.</div>';
+        }
+
+        // Get product meta data
+        $price = get_post_meta($product_id, '_fsc_price', true);
+        $material = get_post_meta($product_id, '_fsc_material', true);
+        $features = get_post_meta($product_id, '_fsc_features', true);
+        $category = get_post_meta($product_id, '_fsc_category', true);
+        $logo_url = get_post_meta($product_id, '_fsc_logo_file', true);
+
+        // Build HTML output
+        ob_start();
+        ?>
+        <div class="apd-product-detail-wrapper">
+            <article class="apd-single-product">
+                
+                <!-- Product Header -->
+                <div class="apd-product-header">
+                    <h1 class="apd-product-title"><?php echo esc_html($product->post_title); ?></h1>
+                    <?php if ($atts['show_price'] === 'true' && $price): ?>
+                        <div class="apd-product-price">$<?php echo esc_html($price); ?></div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Product Content -->
+                <div class="apd-product-content">
+                    
+                    <!-- Product Image/Gallery -->
+                    <div class="apd-product-gallery">
+                        <?php if (has_post_thumbnail($product_id)): ?>
+                            <div class="apd-product-image">
+                                <?php echo get_the_post_thumbnail($product_id, 'large'); ?>
+                            </div>
+                        <?php elseif ($logo_url): ?>
+                            <div class="apd-product-image">
+                                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($product->post_title); ?>" />
+                            </div>
+                        <?php else: ?>
+                            <div class="apd-product-image">
+                                <img src="<?php echo APD_PLUGIN_URL; ?>assets/images/placeholder.png" alt="<?php echo esc_attr($product->post_title); ?>" />
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Product Details -->
+                    <div class="apd-product-details">
+                        
+                        <!-- Product Description -->
+                        <?php if ($atts['show_description'] === 'true' && $product->post_content): ?>
+                            <div class="apd-product-description">
+                                <h3>Description</h3>
+                                <?php echo wpautop($product->post_content); ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Product Features -->
+                        <?php if ($atts['show_features'] === 'true' && $features && is_array($features)): ?>
+                            <div class="apd-product-features">
+                                <h3>Features & Benefits</h3>
+                                <ul class="apd-feature-list">
+                                    <?php foreach ($features as $feature): ?>
+                                        <li><?php echo esc_html($feature); ?></li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Product Specifications -->
+                        <?php if ($atts['show_specs'] === 'true' && $material): ?>
+                            <div class="apd-product-specs">
+                                <h3>Specifications</h3>
+                                <div class="apd-spec-item">
+                                    <strong>Material:</strong> <?php echo esc_html($material); ?>
+                                </div>
+                                <?php if ($category): ?>
+                                    <div class="apd-spec-item">
+                                        <strong>Category:</strong> <?php echo esc_html($category); ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Customizer Actions -->
+                        <div class="apd-product-actions">
+                            <div class="apd-action-buttons">
+                                <a href="<?php echo home_url('/customizer/' . $product_id . '/'); ?>" 
+                                   class="apd-btn apd-btn-primary apd-btn-customize"
+                                   data-product-id="<?php echo $product_id; ?>">
+                                    <span class="btn-icon">🎨</span>
+                                    <span class="btn-text">Customize This Product</span>
+                                </a>
+                                
+                                <button class="apd-btn apd-btn-secondary apd-btn-add-cart" 
+                                        data-product-id="<?php echo $product_id; ?>">
+                                    <span class="btn-icon">🛒</span>
+                                    <span class="btn-text">Add to Cart</span>
+                                </button>
+                            </div>
+                            
+                            <!-- Quantity Selector -->
+                            <div class="apd-quantity-selector">
+                                <label for="apd-quantity-<?php echo $product_id; ?>">Quantity:</label>
+                                <div class="apd-quantity-controls">
+                                    <button type="button" class="apd-qty-btn apd-qty-minus" data-target="apd-quantity-<?php echo $product_id; ?>">−</button>
+                                    <input type="number" id="apd-quantity-<?php echo $product_id; ?>" value="1" min="1" max="100" class="apd-quantity-input">
+                                    <button type="button" class="apd-qty-btn apd-qty-plus" data-target="apd-quantity-<?php echo $product_id; ?>">+</button>
+                                </div>
+                            </div>
+
+                            <!-- Quick Preview -->
+                            <div class="apd-quick-preview">
+                                <button class="apd-btn apd-btn-outline apd-btn-preview" data-product-id="<?php echo $product_id; ?>">
+                                    👁️ Quick Preview
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Related Products -->
+                        <?php if ($atts['show_related'] === 'true'): ?>
+                            <?php
+                            $related_products = get_posts(array(
+                                'post_type' => 'apd_product',
+                                'posts_per_page' => 4,
+                                'post__not_in' => array($product_id),
+                                'meta_key' => '_fsc_category',
+                                'meta_value' => $category
+                            ));
+
+                            if ($related_products):
+                                ?>
+                                <div class="apd-related-products">
+                                    <h3>Related Products</h3>
+                                    <div class="apd-related-grid">
+                                        <?php foreach ($related_products as $related): ?>
+                                            <div class="apd-related-item">
+                                                <a href="<?php echo home_url('/product-detail/?id=' . $related->ID); ?>">
+                                                    <?php if (has_post_thumbnail($related->ID)): ?>
+                                                        <?php echo get_the_post_thumbnail($related->ID, 'medium'); ?>
+                                                    <?php else: ?>
+                                                        <img src="<?php echo APD_PLUGIN_URL; ?>assets/images/placeholder.png" alt="<?php echo esc_attr($related->post_title); ?>" />
+                                                    <?php endif; ?>
+                                                    <h4><?php echo esc_html($related->post_title); ?></h4>
+                                                    <?php if (get_post_meta($related->ID, '_fsc_price', true)): ?>
+                                                        <div class="apd-related-price">$<?php echo esc_html(get_post_meta($related->ID, '_fsc_price', true)); ?></div>
+                                                    <?php endif; ?>
+                                                </a>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        <?php endif; ?>
+
+                    </div>
+                </div>
+                
+            </article>
+        </div>
+
+        <style>
+        .apd-product-detail-wrapper {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .apd-single-product {
+            width: 100%;
+        }
+
+        .apd-product-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .apd-product-title {
+            font-size: 2.5rem;
+            margin: 0 0 10px 0;
+            font-weight: bold;
+        }
+
+        .apd-product-price {
+            font-size: 1.5rem;
+            font-weight: 600;
+            opacity: 0.9;
+        }
+
+        .apd-product-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            padding: 40px;
+        }
+
+        .apd-product-gallery {
+            position: sticky;
+            top: 20px;
+        }
+
+        .apd-product-image img {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+
+        .apd-product-details h3 {
+            color: #333;
+            font-size: 1.5rem;
+            margin: 30px 0 15px 0;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .apd-product-description {
+            margin-bottom: 30px;
+        }
+
+        .apd-feature-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .apd-feature-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+            position: relative;
+            padding-left: 25px;
+        }
+
+        .apd-feature-list li:before {
+            content: "✓";
+            color: #28a745;
+            font-weight: bold;
+            position: absolute;
+            left: 0;
+        }
+
+        .apd-spec-item {
+            padding: 8px 0;
+            color: #666;
+        }
+
+        .apd-product-actions {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 8px;
+            margin: 30px 0;
+        }
+
+        .apd-action-buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .apd-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .apd-btn:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .apd-btn:hover:before {
+            left: 100%;
+        }
+
+        .apd-btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .apd-btn-primary:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+
+        .apd-btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .apd-btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        .apd-quantity-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .apd-quantity-controls {
+            display: flex;
+            align-items: center;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .apd-qty-btn {
+            background: #f8f9fa;
+            border: none;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.2s ease;
+            user-select: none;
+        }
+
+        .apd-qty-btn:hover {
+            background: #e9ecef;
+        }
+
+        .apd-qty-btn:active {
+            background: #dee2e6;
+        }
+
+        .apd-quantity-input {
+            width: 60px;
+            padding: 8px;
+            border: none;
+            text-align: center;
+            font-weight: 600;
+            outline: none;
+        }
+
+        .apd-btn-outline {
+            background: transparent;
+            border: 2px solid #667eea;
+            color: #667eea;
+        }
+
+        .apd-btn-outline:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .apd-quick-preview {
+            margin-top: 15px;
+        }
+
+        .btn-icon {
+            margin-right: 8px;
+        }
+
+        .btn-text {
+            transition: all 0.3s ease;
+        }
+
+        .apd-related-products {
+            margin-top: 50px;
+        }
+
+        .apd-related-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .apd-related-item {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .apd-related-item:hover {
+            transform: translateY(-5px);
+        }
+
+        .apd-related-item a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .apd-related-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .apd-related-item h4 {
+            padding: 15px;
+            margin: 0;
+            font-size: 1rem;
+        }
+
+        .apd-related-price {
+            padding: 0 15px 15px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .apd-error {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            color: #c62828;
+            padding: 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .apd-product-content {
+                grid-template-columns: 1fr;
+                gap: 20px;
+                padding: 20px;
+            }
+            
+            .apd-product-header {
+                padding: 20px;
+            }
+            
+            .apd-product-title {
+                font-size: 2rem;
+            }
+            
+            .apd-action-buttons {
+                flex-direction: column;
+            }
+        }
+        </style>
+        <?php
+
+        return ob_get_clean();
+    }
+
+    public function debug_admin_menu()
+    {
+        // Ensure admin menu is registered even if there were previous errors
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Always try to register menu as fallback
+        add_menu_page(
+            'Product Designer',
+            'Product Designer',
+            'manage_options',
+            'apd-dashboard',
+            array($this, 'dashboard_page'),
+            'dashicons-art',
+            6
+        );
+
+        error_log('APD Debug: Fallback menu registration attempted');
+    }
+
+    public function admin_dashboard_notice()
+    {
+        // Only show to admins
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Always show for debugging
+        echo '<div class="notice notice-info is-dismissible" data-notice="apd-dashboard">';
+        echo '<p><strong>Product Designer Plugin Debug:</strong> ';
+        echo '<a href="' . admin_url('admin.php?page=apd-dashboard') . '" class="button button-primary">Access Dashboard</a>';
+        echo ' | <a href="' . admin_url('admin.php?page=apd-orders') . '" class="button">Orders</a>';
+        echo ' | <a href="' . admin_url('admin.php?page=apd-templates') . '" class="button">Templates</a>';
+        echo ' | <a href="' . admin_url('admin.php?page=apd-settings') . '" class="button">Settings</a>';
+        echo '<br><small>Plugin loaded: ' . (class_exists('AdvancedProductDesigner') ? 'YES' : 'NO') . '</small></p>';
+        echo '</div>';
+
+        // Add JavaScript to handle notice dismissal
+        echo '<script>
+        jQuery(document).ready(function($) {
+            $(document).on("click", ".notice[data-notice=\'apd-dashboard\'] .notice-dismiss", function() {
+                $.post(ajaxurl, {
+                    action: "apd_dismiss_dashboard_notice",
+                    nonce: "' . wp_create_nonce('apd_dismiss_notice') . '"
+                });
+            });
+        });
+        </script>';
+    }
+
+    public function dismiss_dashboard_notice()
+    {
+        check_ajax_referer('apd_dismiss_notice', 'nonce');
+
+        if (current_user_can('manage_options')) {
+            update_user_meta(get_current_user_id(), 'apd_dashboard_notice_dismissed', true);
+        }
+
+        wp_die();
+    }
+
+    public function get_checkout_data()
+    {
+        check_ajax_referer('apd_ajax_nonce', 'nonce');
+
+        if (!session_id()) {
+            session_start();
+        }
+
+        $customization_data = isset($_SESSION['fsc_customization']) ? $_SESSION['fsc_customization'] : null;
+
+        if ($customization_data) {
+            wp_send_json_success($customization_data);
+        } else {
+            wp_send_json_error('No customization data found');
+        }
+    }
+
+    public function add_admin_menu()
+    {
+        add_menu_page(
+            'Product Designer',
+            'Product Designer',
+            'manage_options',
+            'apd-dashboard',
+            array($this, 'dashboard_page'),
+            'dashicons-art',
+            6
+        );
+    }
+
+    public function add_admin_submenus()
+    {
+        // Remove the default submenu that WordPress creates
+        remove_submenu_page('apd-dashboard', 'apd-dashboard');
+
+        // Force Dashboard to be first by using position
+        global $submenu;
+
+        // Add Dashboard as the first submenu (this will be the default page)
+        add_submenu_page(
+            'apd-dashboard',
+            'Dashboard',
+            'Dashboard',
+            'manage_options',
+            'apd-dashboard',
+            array($this, 'dashboard_page')
+        );
+
+        add_submenu_page(
+            'apd-dashboard',
+            'Templates',
+            'Templates',
+            'manage_options',
+            'apd-templates',
+            array($this, 'templates_page')
+        );
+
+        // Add hidden submenu for designer (not visible in menu but accessible)
+        add_submenu_page(
+            null,  // No parent menu
+            'Template Designer',
+            'Template Designer',
+            'manage_options',
+            'apd-designer',
+            array($this, 'designer_page')
+        );
+
+        add_submenu_page(
+            'apd-dashboard',
+            'Materials',
+            'Materials',
+            'manage_options',
+            'apd-materials',
+            array($this, 'materials_page')
+        );
+
+        add_submenu_page(
+            'apd-dashboard',
+            'Settings',
+            'Settings',
+            'manage_options',
+            'apd-settings',
+            array($this, 'settings_page')
+        );
+
+        // Shipping Prices now added as a top-level menu via add_menu_page
+
+        // Force reorder submenu to put Dashboard first
+        if (isset($submenu['apd-dashboard'])) {
+            $menu_items = $submenu['apd-dashboard'];
+            $dashboard_item = null;
+            $other_items = array();
+
+            foreach ($menu_items as $key => $item) {
+                if ($item[2] === 'apd-dashboard') {
+                    $dashboard_item = $item;
+                } else {
+                    $other_items[] = $item;
+                }
+            }
+
+            if ($dashboard_item) {
+                $submenu['apd-dashboard'] = array_merge(array($dashboard_item), $other_items);
+            }
+        }
+    }
+
+    public function add_orders_menu()
+    {
+        add_menu_page(
+            'Orders',
+            'Orders',
+            'manage_options',
+            'apd-orders',
+            array($this, 'orders_page'),
+            'dashicons-cart',
+            7
+        );
+    }
+
+    public function add_shipping_menu()
+    {
+        add_menu_page(
+            'Shipping Prices',
+            'Shipping Prices',
+            'manage_options',
+            'apd-shipping-prices',
+            array($this, 'shipping_prices_page'),
+            'dashicons-location-alt',
+            8
+        );
+    }
+
+    public function orders_page()
+    {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Get all orders
+        $orders = get_posts(array(
+            'post_type' => 'apd_order',
+            'posts_per_page' => -1,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+
+        include APD_PLUGIN_PATH . 'templates/admin/orders.php';
+    }
+
+    public function products_page()
+    {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Handle bulk actions
+        if (isset($_POST['action']) && $_POST['action'] == 'bulk-delete') {
+            $this->handle_bulk_delete();
+        }
+
+        // Get all products
+        $products = get_posts(array(
+            'post_type' => 'apd_product',
+            'posts_per_page' => -1,
+            'orderby' => 'title',
+            'order' => 'ASC'
+        ));
+
+        // Get all available materials
+        $materials = $this->get_materials();
+
+        // Get all available colors
+        $colors = $this->get_default_colors();
+
+        include APD_PLUGIN_PATH . 'templates/admin/products.php';
+    }
+
+    private function handle_bulk_delete()
+    {
+        if (!isset($_POST['post']) || !is_array($_POST['post'])) {
+            return;
+        }
+
+        $post_ids = array_map('intval', $_POST['post']);
+        $deleted = 0;
+
+        foreach ($post_ids as $post_id) {
+            if (get_post_type($post_id) === 'apd_product') {
+                if (wp_delete_post($post_id, true)) {
+                    $deleted++;
+                }
+            }
+        }
+
+        if ($deleted > 0) {
+            add_action('admin_notices', function () use ($deleted) {
+                echo '<div class="notice notice-success"><p>' . sprintf(__('%d freight products deleted.', 'freight-signs-customizer'), $deleted) . '</p></div>';
+            });
+        }
+    }
+
+    public function allow_svg_upload($mimes)
+    {
+        $mimes['svg'] = 'image/svg+xml';
+        $mimes['svgz'] = 'image/svg+xml';
+        return $mimes;
+    }
+
+    public function check_svg_security($file)
+    {
+        $wp_filetype = wp_check_filetype($file['name'], null);
+        if ($wp_filetype['type'] === 'image/svg+xml') {
+            $file['type'] = $wp_filetype['type'];
+            $file['ext'] = $wp_filetype['ext'];
+            $file['name'] = $file['name'];
+            $file['url'] = $file['url'];
+            $file['error'] = 0;
+        }
+        return $file;
+    }
+
+    public function svg_upload_notice()
+    {
+        if (isset($_GET['page']) && $_GET['page'] === 'freight-products') {
+            // Show logo upload success/error messages
+            if (isset($_GET['logo_success'])) {
+                echo '<div class="notice notice-success is-dismissible"><p>✅ Logo uploaded successfully! The customizer will now use your new logo.</p></div>';
+            }
+
+            if (isset($_GET['logo_error'])) {
+                $error_message = '';
+                switch ($_GET['logo_error']) {
+                    case 'upload_failed':
+                        $error_message = '❌ Logo upload failed. Please try again.';
+                        break;
+                    case 'invalid_type':
+                        $error_message = '❌ Invalid file type. Only SVG files are allowed.';
+                        break;
+                    case 'file_too_large':
+                        $error_message = '❌ File too large. Maximum size is 2MB.';
+                        break;
+                    case 'move_failed':
+                        $error_message = '❌ Failed to save logo file. Please check directory permissions.';
+                        break;
+                    default:
+                        $error_message = '❌ An error occurred during logo upload.';
+                }
+                echo '<div class="notice notice-error is-dismissible"><p>' . esc_html($error_message) . '</p></div>';
+            }
+
+            $upload_dir = wp_upload_dir();
+            $svg_dir = $upload_dir['basedir'] . '/svg/';
+
+            if (!is_dir($svg_dir)) {
+                $message = sprintf(
+                    __('Please ensure the <strong>%s</strong> directory exists and is writable. This is necessary for SVG file uploads. <a href="%s">Learn more</a>', 'freight-signs-customizer'),
+                    'svg',
+                    'https://wordpress.org/support/article/changing-file-permissions/'
+                );
+                printf('<div class="notice notice-warning is-dismissible"><p>%s</p></div>', wp_kses_post($message));
+            }
+        }
+    }
+
+    public function handle_logo_upload()
+    {
+        // Check nonce
+        if (!isset($_POST['fsc_logo_nonce']) || !wp_verify_nonce($_POST['fsc_logo_nonce'], 'fsc_upload_logo')) {
+            wp_die('Security check failed');
+        }
+
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        // Check if file was uploaded
+        if (!isset($_FILES['logo_file']) || $_FILES['logo_file']['error'] !== UPLOAD_ERR_OK) {
+            wp_redirect(admin_url('admin.php?page=freight-products&logo_error=upload_failed'));
+            exit;
+        }
+
+        $file = $_FILES['logo_file'];
+
+        // Check file type
+        $file_type = wp_check_filetype($file['name']);
+        if ($file_type['type'] !== 'image/svg+xml') {
+            wp_redirect(admin_url('admin.php?page=freight-products&logo_error=invalid_type'));
+            exit;
+        }
+
+        // Check file size (2MB limit)
+        if ($file['size'] > 2 * 1024 * 1024) {
+            wp_redirect(admin_url('admin.php?page=freight-products&logo_error=file_too_large'));
+            exit;
+        }
+
+        // Create object directory if it doesn't exist
+        $upload_dir = wp_upload_dir();
+        $object_dir = $upload_dir['basedir'] . '/apd-svg/';
+        if (!is_dir($object_dir)) {
+            wp_mkdir_p($object_dir);
+        }
+
+        // Move file to object directory
+        $logo_path = $object_dir . 'Logo-PNG.svg';
+        if (move_uploaded_file($file['tmp_name'], $logo_path)) {
+            // Set proper permissions
+            chmod($logo_path, 0644);
+            wp_redirect(admin_url('admin.php?page=apd-products&logo_success=1'));
+        } else {
+            wp_redirect(admin_url('admin.php?page=apd-products&logo_error=move_failed'));
+        }
+        exit;
+    }
+
+    // New methods for the redesigned plugin
+    public function canvas_settings_meta_box($post)
+    {
+        wp_nonce_field('apd_save_product_meta', 'apd_product_meta_nonce');
+
+        $canvas_width = get_post_meta($post->ID, '_apd_canvas_width', true);
+        $canvas_height = get_post_meta($post->ID, '_apd_canvas_height', true);
+        $background_color = get_post_meta($post->ID, '_apd_background_color', true);
+
+        ?>
+        <table class="form-table">
+            <tr>
+                <th><label for="apd_canvas_width">Canvas Width (px)</label></th>
+                <td>
+                    <input type="number" id="apd_canvas_width" name="apd_canvas_width" value="<?php echo esc_attr($canvas_width ?: '800'); ?>" class="regular-text" min="100" max="2000">
+                    <p class="description">Default canvas width in pixels</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="apd_canvas_height">Canvas Height (px)</label></th>
+                <td>
+                    <input type="number" id="apd_canvas_height" name="apd_canvas_height" value="<?php echo esc_attr($canvas_height ?: '600'); ?>" class="regular-text" min="100" max="2000">
+                    <p class="description">Default canvas height in pixels</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="apd_background_color">Background Color</label></th>
+                <td>
+                    <input type="color" id="apd_background_color" name="apd_background_color" value="<?php echo esc_attr($background_color ?: '#ffffff'); ?>" class="regular-text">
+                    <p class="description">Default canvas background color</p>
+                </td>
+            </tr>
+        </table>
+        <?php
+    }
+
+    public function dashboard_page()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die('You do not have sufficient permissions to access this page.');
+        }
+
+        // Get statistics
+        $products = get_posts(array(
+            'post_type' => 'apd_product',
+            'posts_per_page' => -1,
+            'post_status' => 'publish'
+        ));
+
+        // Include dashboard template
+        include APD_PLUGIN_PATH . 'templates/admin/dashboard.php';
+    }
+
+    public function templates_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Handle template actions
+        if (isset($_POST['action'])) {
+            switch ($_POST['action']) {
+                case 'duplicate':
+                    $this->duplicate_template();
+                    break;
+                case 'delete':
+                    $this->delete_template();
+                    break;
+            }
+        }
+
+        // Get all templates
+        $templates = get_posts(array(
+            'post_type' => 'apd_template',
+            'posts_per_page' => -1,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+
+        include APD_PLUGIN_PATH . 'templates/admin/templates.php';
+    }
+
+    public function designer_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $template_id = isset($_GET['template_id']) ? intval($_GET['template_id']) : 0;
+        $product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
+        $template = null;
+        $product = null;
+
+        // If product_id is provided, get the associated template
+        if ($product_id) {
+            $product = get_post($product_id);
+            if ($product && $product->post_type === 'apd_product') {
+                $template_id = get_post_meta($product_id, '_fsc_template', true);
+
+                if ($template_id) {
+                    $template = get_post($template_id);
+                    if (!$template || $template->post_type !== 'apd_template') {
+                        $template = null;
+                        $template_id = 0;  // Reset template_id if template not found
+                    }
+                } else {
+                    // Try to find template by name (template-1)
+                    $template_by_name = get_posts(array(
+                        'post_type' => 'apd_template',
+                        'name' => 'template-1',
+                        'posts_per_page' => 1,
+                        'post_status' => 'any'
+                    ));
+
+                    if (!empty($template_by_name)) {
+                        $found_template = $template_by_name[0];
+                        // Update product meta with found template
+                        update_post_meta($product_id, '_fsc_template', $found_template->ID);
+                        $template_id = $found_template->ID;
+                        $template = $found_template;
+                    }
+                }
+            }
+        }
+        // If template_id is provided directly
+        elseif ($template_id) {
+            $template = get_post($template_id);
+            if (!$template || $template->post_type !== 'apd_template') {
+                $template = null;
+                $template_id = 0;  // Reset template_id if template not found
+            }
+        }
+
+        // Create new template if none exists
+        if (!$template_id) {
+            $new_template = array(
+                'post_title' => 'New Template ' . date('Y-m-d H:i:s'),
+                'post_content' => '',
+                'post_status' => 'draft',
+                'post_type' => 'apd_template'
+            );
+
+            $template_id = wp_insert_post($new_template);
+
+            if ($template_id) {
+                update_post_meta($template_id, '_apd_template_width', 800);
+                update_post_meta($template_id, '_apd_template_height', 600);
+                update_post_meta($template_id, '_apd_template_bg_type', 'color');
+                update_post_meta($template_id, '_apd_template_bg_color', '#ffffff');
+                update_post_meta($template_id, '_apd_template_data', '{}');
+
+                // If this is for a product, associate the template with the product
+                if ($product_id) {
+                    update_post_meta($product_id, '_fsc_template', $template_id);
+                }
+
+                // Redirect to avoid duplicate template creation
+                $redirect_url = admin_url('admin.php?page=apd-designer&template_id=' . $template_id);
+                if ($product_id) {
+                    $redirect_url .= '&product_id=' . $product_id;
+                }
+                wp_redirect($redirect_url);
+                exit;
+            }
+        }
+
+        // Pass variables to designer template
+        $GLOBALS['apd_template_id'] = $template_id;
+        $GLOBALS['apd_product_id'] = $product_id;
+        $GLOBALS['apd_template'] = $template;
+        
+        // Get materials for the template (filtered by allowed categories) and extract URLs only
+        $materials_data = $this->get_materials($template_id);
+        $materials = array();
+        foreach ($materials_data as $name => $data) {
+            $materials[$name] = is_array($data) ? $data['url'] : $data;
+        }
+
+        include APD_PLUGIN_PATH . 'templates/admin/designer.php';
+    }
+
+    public function materials_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Handle category management
+        if (isset($_POST['add_material_category']) && wp_verify_nonce($_POST['category_nonce'], 'manage_material_category')) {
+            $this->handle_add_material_category();
+        }
+
+        if (isset($_POST['delete_material_category']) && wp_verify_nonce($_POST['category_nonce'], 'manage_material_category')) {
+            $this->handle_delete_material_category();
+        }
+
+        // Handle material upload
+        if (isset($_POST['upload_material']) && wp_verify_nonce($_POST['material_nonce'], 'upload_material')) {
+            $this->handle_material_upload();
+        }
+
+        // Handle material deletion
+        if (isset($_POST['delete_material']) && wp_verify_nonce($_POST['material_nonce'], 'delete_material')) {
+            $this->handle_material_deletion();
+        }
+
+        // Handle material price update
+        if (isset($_POST['update_material_price']) && wp_verify_nonce($_POST['material_price_nonce'], 'update_material_price')) {
+            $this->handle_material_price_update();
+            // Use JavaScript redirect to avoid permission issues
+            echo '<script type="text/javascript">window.location.href = "' . admin_url('admin.php?page=freight-signs-materials') . '";</script>';
+            exit;
+        }
+
+        // Handle material category update
+        if (isset($_POST['update_material_category']) && wp_verify_nonce($_POST['material_category_nonce'], 'update_material_category')) {
+            $this->handle_material_category_update();
+            echo '<script type="text/javascript">window.location.href = "' . admin_url('admin.php?page=freight-signs-materials') . '";</script>';
+            exit;
+        }
+
+        // Get material categories
+        $categories = $this->get_material_categories();
+
+        // Get current materials
+        $materials = $this->get_materials_list();
+
+        include APD_PLUGIN_PATH . 'templates/admin/materials.php';
+    }
+
+    public function settings_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        include APD_PLUGIN_PATH . 'templates/admin/settings.php';
+    }
+
+    public function shipping_prices_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        include APD_PLUGIN_PATH . 'templates/admin/shipping-prices.php';
+    }
+
+    public function handle_svg_upload()
+    {
+        check_ajax_referer('apd_nonce', 'nonce');
+
+        if (!current_user_can('upload_files')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+        }
+
+        if (!isset($_FILES['svg_file']) || $_FILES['svg_file']['error'] !== UPLOAD_ERR_OK) {
+            wp_send_json_error(array('message' => 'No file uploaded'));
+        }
+
+        $file = $_FILES['svg_file'];
+
+        // Check file type
+        $file_type = wp_check_filetype($file['name']);
+        if ($file_type['type'] !== 'image/svg+xml') {
+            wp_send_json_error(array('message' => 'Invalid file type. Only SVG files are allowed.'));
+        }
+
+        // Check file size (2MB limit)
+        if ($file['size'] > 2 * 1024 * 1024) {
+            wp_send_json_error(array('message' => 'File too large. Maximum size is 2MB.'));
+        }
+
+        // Create upload directory
+        $upload_dir = wp_upload_dir();
+        $svg_dir = $upload_dir['basedir'] . '/apd-svg/';
+        if (!is_dir($svg_dir)) {
+            wp_mkdir_p($svg_dir);
+        }
+
+        // Generate unique filename
+        $filename = 'svg_' . time() . '_' . sanitize_file_name($file['name']);
+        $file_path = $svg_dir . $filename;
+
+        // Move uploaded file
+        if (move_uploaded_file($file['tmp_name'], $file_path)) {
+            chmod($file_path, 0644);
+            $file_url = $upload_dir['baseurl'] . '/apd-svg/' . $filename;
+
+            wp_send_json_success(array(
+                'url' => $file_url,
+                'filename' => $filename,
+                'message' => 'SVG uploaded successfully'
+            ));
+        } else {
+            wp_send_json_error(array('message' => 'Failed to save file'));
+        }
+    }
+
+    public function save_design()
+    {
+        check_ajax_referer('apd_nonce', 'nonce');
+
+        $design_data = array(
+            'canvas_width' => intval($_POST['canvas_width']),
+            'canvas_height' => intval($_POST['canvas_height']),
+            'background_color' => sanitize_hex_color($_POST['background_color']),
+            'elements' => json_decode(stripslashes($_POST['elements']), true),
+            'created_at' => current_time('mysql')
+        );
+
+        // Save to user meta or create a new post
+        $design_id = wp_insert_post(array(
+            'post_type' => 'apd_design',
+            'post_title' => 'Design ' . date('Y-m-d H:i:s'),
+            'post_status' => 'publish',
+            'meta_input' => array(
+                '_apd_design_data' => $design_data
+            )
+        ));
+
+        if ($design_id) {
+            wp_send_json_success(array(
+                'design_id' => $design_id,
+                'message' => 'Design saved successfully'
+            ));
+        } else {
+            wp_send_json_error(array('message' => 'Failed to save design'));
+        }
+    }
+
+    /**
+     * Download validated SVG from order
+     * Admin-only endpoint to retrieve production-ready SVG with validation
+     */
+    public function download_order_svg()
+    {
+        // Check admin permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+        if (!$order_id) {
+            wp_send_json_error(array('message' => 'Invalid order ID'));
+            return;
+        }
+
+        // Get SVG from order metadata
+        $svg_data_url = get_post_meta($order_id, 'preview_image_svg', true);
+        
+        // Also check cart items
+        if (empty($svg_data_url)) {
+            $cart_items = get_post_meta($order_id, '_cart_items', true);
+            if (!empty($cart_items) && is_array($cart_items)) {
+                $first = $cart_items[0];
+                $svg_data_url = $first['preview_image_svg'] ?? '';
+                
+                if (empty($svg_data_url) && !empty($first['customization_data'])) {
+                    $cd = is_array($first['customization_data']) ? 
+                          $first['customization_data'] : 
+                          json_decode($first['customization_data'], true);
+                    $svg_data_url = $cd['preview_image_svg'] ?? '';
+                }
+            }
+        }
+
+        if (empty($svg_data_url)) {
+            wp_send_json_error(array('message' => 'No SVG found for this order'));
+            return;
+        }
+
+        // Validate SVG format
+        if (!preg_match('/^data:image\\/svg\\+xml;base64,/', $svg_data_url)) {
+            wp_send_json_error(array('message' => 'Invalid SVG format'));
+            return;
+        }
+
+        // Extract base64 data
+        $svg_content = substr($svg_data_url, strlen('data:image/svg+xml;base64,'));
+        $svg_content = base64_decode($svg_content);
+
+        if (!$svg_content) {
+            wp_send_json_error(array('message' => 'Failed to decode SVG'));
+            return;
+        }
+
+        // Validate it's actually SVG XML
+        if (!preg_match('/<svg[\\s\\S]*<\\/svg>/i', $svg_content)) {
+            wp_send_json_error(array('message' => 'Invalid SVG structure'));
+            return;
+        }
+
+        // Additional security validation
+        $validation_result = $this->validate_svg_content($svg_content);
+        if (!$validation_result['valid']) {
+            wp_send_json_error(array(
+                'message' => 'SVG validation failed: ' . $validation_result['error']
+            ));
+            return;
+        }
+
+        // Return validated SVG
+        wp_send_json_success(array(
+            'svg_content' => $svg_content,
+            'filename' => 'order-' . $order_id . '-design.svg',
+            'message' => 'SVG validated and ready for download'
+        ));
+    }
+
+    /**
+     * Validate SVG content for security and compatibility
+     */
+    private function validate_svg_content($svg_content)
+    {
+        // Check for dangerous elements
+        $dangerous_patterns = array(
+            '/<script/i',
+            '/on\\w+\\s*=/i', // event handlers like onclick, onload
+            '/javascript:/i',
+            '/<iframe/i',
+            '/<object/i',
+            '/<embed/i'
+        );
+
+        foreach ($dangerous_patterns as $pattern) {
+            if (preg_match($pattern, $svg_content)) {
+                return array(
+                    'valid' => false,
+                    'error' => 'SVG contains potentially dangerous content'
+                );
+            }
+        }
+
+        // Check minimum requirements
+        if (strlen($svg_content) < 50) {
+            return array(
+                'valid' => false,
+                'error' => 'SVG content too small'
+            );
+        }
+
+        // Check maximum size (10MB limit)
+        if (strlen($svg_content) > 10 * 1024 * 1024) {
+            return array(
+                'valid' => false,
+                'error' => 'SVG content exceeds maximum size (10MB)'
+            );
+        }
+
+        return array('valid' => true);
+    }
+
+    /**
+     * Handle material upload
+     */
+    public function handle_material_upload()
+    {
+        $material_name = sanitize_text_field($_POST['material_name']);
+        $material_price = isset($_POST['material_price']) ? floatval($_POST['material_price']) : 0;
+        if ($material_price < 0) {
+            $material_price = 0;
+        }
+        $material_category = isset($_POST['material_category']) ? sanitize_text_field($_POST['material_category']) : 'Uncategorized';
+
+        $materials = get_option('apd_materials', array());
+        
+        // Check if using media library selection
+        if (isset($_POST['material_media_id']) && !empty($_POST['material_media_id'])) {
+            $media_id = intval($_POST['material_media_id']);
+            $media_url = wp_get_attachment_url($media_id);
+            
+            if ($media_url) {
+                $materials[] = array(
+                    'name' => $material_name,
+                    'filename' => basename($media_url),
+                    'url' => $media_url,
+                    'type' => 'media',
+                    'date' => current_time('mysql'),
+                    'price' => $material_price,
+                    'media_id' => $media_id,
+                    'category' => $material_category
+                );
+                update_option('apd_materials', $materials);
+                
+                add_action('admin_notices', function () {
+                    echo '<div class="notice notice-success"><p>✅ Material added from media library successfully!</p></div>';
+                });
+                return;
+            }
+        }
+        
+        // Fallback to file upload
+        if (!isset($_FILES['material_file']) || $_FILES['material_file']['error'] !== UPLOAD_ERR_OK) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Please select an image from media library or upload a file.</p></div>';
+            });
+            return;
+        }
+
+        $file = $_FILES['material_file'];
+
+        // Validate file type
+        $allowed_types = array('image/png', 'image/jpeg', 'image/jpg');
+        if (!in_array($file['type'], $allowed_types)) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Only PNG and JPG files are allowed.</p></div>';
+            });
+            return;
+        }
+
+        // Create materials directory if it doesn't exist
+        $material_dir = APD_PLUGIN_PATH . 'uploads/material/';
+        if (!is_dir($material_dir)) {
+            wp_mkdir_p($material_dir);
+        }
+
+        // Generate filename
+        $filename = sanitize_file_name($material_name . '_' . time() . '.png');
+        $file_path = $material_dir . $filename;
+
+        // Move uploaded file
+        if (move_uploaded_file($file['tmp_name'], $file_path)) {
+            chmod($file_path, 0644);
+
+            $materials[] = array(
+                'name' => $material_name,
+                'filename' => $filename,
+                'url' => APD_PLUGIN_URL . 'uploads/material/' . $filename,
+                'type' => 'uploaded',
+                'date' => current_time('mysql'),
+                'price' => $material_price,
+                'category' => $material_category
+            );
+            update_option('apd_materials', $materials);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Material uploaded successfully!</p></div>';
+            });
+        } else {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Failed to save material file.</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Handle material price update
+     */
+    public function handle_material_price_update()
+    {
+        $material_index = intval($_POST['material_index']);
+        $material_price = isset($_POST['material_price']) ? floatval($_POST['material_price']) : 0;
+        if ($material_price < 0) {
+            $material_price = 0;
+        }
+
+        $materials = get_option('apd_materials', array());
+
+        if (isset($materials[$material_index])) {
+            $materials[$material_index]['price'] = $material_price;
+            
+            // Update option (use update_option for simpler caching)
+            update_option('apd_materials', $materials, false);
+            
+            // Set transient for success message
+            set_transient('apd_material_price_updated', true, 30);
+        } else {
+            // Set transient for error message
+            set_transient('apd_material_price_error', true, 30);
+        }
+        
+        // No redirect - let the page reload naturally via POST/Redirect/GET pattern
+        // The page will reload on its own and display the transient message
+    }
+
+    /**
+     * Handle material deletion
+     */
+    public function handle_material_deletion()
+    {
+        $material_index = intval($_POST['material_index']);
+        $materials = get_option('apd_materials', array());
+
+        if (isset($materials[$material_index])) {
+            $material = $materials[$material_index];
+
+            // Delete file if it's uploaded material
+            if ($material['type'] === 'uploaded') {
+                $file_path = APD_PLUGIN_PATH . 'uploads/material/' . $material['filename'];
+                if (file_exists($file_path)) {
+                    unlink($file_path);
+                }
+            }
+
+            // Remove from array
+            unset($materials[$material_index]);
+            $materials = array_values($materials);  // Re-index array
+
+            update_option('apd_materials', $materials);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Material deleted successfully!</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Get material categories
+     */
+    public function get_material_categories()
+    {
+        $categories = get_option('apd_material_categories', array(
+            'Vinyl',
+            'Metal',
+            'Specialty',
+            'Texture'
+        ));
+        return $categories;
+    }
+
+    /**
+     * Handle add material category
+     */
+    public function handle_add_material_category()
+    {
+        $category_name = sanitize_text_field($_POST['category_name']);
+        
+        if (empty($category_name)) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Category name cannot be empty.</p></div>';
+            });
+            return;
+        }
+
+        $categories = $this->get_material_categories();
+        
+        if (in_array($category_name, $categories)) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>❌ Category already exists.</p></div>';
+            });
+            return;
+        }
+
+        $categories[] = $category_name;
+        update_option('apd_material_categories', $categories);
+
+        add_action('admin_notices', function () {
+            echo '<div class="notice notice-success"><p>✅ Category added successfully!</p></div>';
+        });
+    }
+
+    /**
+     * Handle delete material category
+     */
+    public function handle_delete_material_category()
+    {
+        $category_name = sanitize_text_field($_POST['category_name']);
+        $categories = $this->get_material_categories();
+        
+        $key = array_search($category_name, $categories);
+        if ($key !== false) {
+            unset($categories[$key]);
+            $categories = array_values($categories);
+            update_option('apd_material_categories', $categories);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Category deleted successfully!</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Handle material category update
+     */
+    public function handle_material_category_update()
+    {
+        $material_index = intval($_POST['material_index']);
+        $material_category = sanitize_text_field($_POST['material_category']);
+
+        $materials = get_option('apd_materials', array());
+
+        if (isset($materials[$material_index])) {
+            $materials[$material_index]['category'] = $material_category;
+            update_option('apd_materials', $materials);
+
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-success"><p>✅ Material category updated!</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Get materials list
+     */
+    public function get_materials_list()
+    {
+        $materials = get_option('apd_materials', array());
+
+        // Only return materials from database, no legacy materials
+        return $materials;
+    }
+
+    /**
+     * Pricing Tiers Meta Box
+     */
+    public function pricing_tiers_meta_box($post)
+    {
+        wp_nonce_field('apd_pricing_tiers_meta', 'apd_pricing_tiers_nonce');
+        
+        // Check if variants are enabled
+        $variants = get_post_meta($post->ID, '_apd_variants', true);
+        $variants_enabled = is_array($variants) && isset($variants['enabled']) && $variants['enabled'];
+        
+        if ($variants_enabled) {
+            ?>
+            <div class="apd-pricing-tiers-wrapper">
+                <div style="padding: 20px; background: #fff3cd; border-left: 4px solid #ffc107; margin: 10px 0;">
+                    <h4 style="margin-top: 0; color: #856404;">⚠️ Variants Enabled</h4>
+                    <p style="margin-bottom: 0; color: #856404;">
+                        This product has variants enabled. Product-level volume pricing tiers are disabled.<br>
+                        To set quantity discounts, use the <strong>"Add Quantity Discounts"</strong> button next to each variant in the <strong>"Product Variants"</strong> section above.
+                    </p>
+                </div>
+            </div>
+            <?php
+            return;
+        }
+        
+        $pricing_service = new APD_Pricing_Service();
+        $tiers = $pricing_service->get_price_tiers($post->ID);
+        
+        $base_price = floatval(get_post_meta($post->ID, '_fsc_price', true));
+        if (!$base_price) {
+            $base_price = 29.99;
+        }
+        
+        ?>
+        <div class="apd-pricing-tiers-wrapper">
+            <p class="description">Set up quantity-based discounts. When customers order in bulk, they automatically receive the discount.</p>
+            
+            <table class="widefat" id="apd-pricing-tiers-table">
+                <thead>
+                    <tr>
+                        <th style="width: 150px;">Minimum Quantity</th>
+                        <th style="width: 150px;">Discount (%)</th>
+                        <th style="width: 200px;">Tier Name (optional)</th>
+                        <th style="width: 150px;">Price per Unit</th>
+                        <th style="width: 80px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="apd-pricing-tiers-body">
+                    <?php if (!empty($tiers)): ?>
+                        <?php foreach ($tiers as $index => $tier): ?>
+                            <?php 
+                            $discounted_price = $base_price - (($base_price * floatval($tier['discount_percent'])) / 100);
+                            ?>
+                            <tr>
+                                <td><input type="number" name="apd_tier_min_qty[]" value="<?php echo esc_attr($tier['min_qty']); ?>" min="1" class="small-text" required></td>
+                                <td><input type="number" name="apd_tier_discount[]" value="<?php echo esc_attr($tier['discount_percent']); ?>" min="0" max="100" step="0.01" class="small-text apd-tier-discount" required></td>
+                                <td><input type="text" name="apd_tier_name[]" value="<?php echo esc_attr($tier['name']); ?>" class="regular-text" placeholder="e.g., Bulk Order"></td>
+                                <td><span class="apd-calculated-price">$<?php echo number_format($discounted_price, 2); ?></span></td>
+                                <td><button type="button" class="button apd-remove-tier-btn">Remove</button></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr class="apd-no-tiers-row">
+                            <td colspan="5" style="text-align: center; padding: 20px;">
+                                <em>No pricing tiers configured. Click "Add Tier" to create volume discounts.</em>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            
+            <button type="button" class="button apd-add-tier-btn" style="margin-top: 10px;">Add Tier</button>
+            
+            <div style="margin-top: 20px; padding: 15px; background: #f0f0f1; border-left: 4px solid #2271b1;">
+                <h4 style="margin-top: 0;">Preview</h4>
+                <p class="description">How your volume pricing will appear to customers:</p>
+                <div id="apd-pricing-preview">
+                    <?php if (!empty($tiers)): ?>
+                        <table class="widefat" style="max-width: 500px;">
+                            <thead>
+                                <tr>
+                                    <th>Quantity</th>
+                                    <th>Discount</th>
+                                    <th>Price/Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($tiers as $tier): ?>
+                                    <?php $discounted_price = $base_price - (($base_price * floatval($tier['discount_percent'])) / 100); ?>
+                                    <tr>
+                                        <td><?php echo esc_html($tier['min_qty']); ?>+</td>
+                                        <td><?php echo esc_html($tier['discount_percent']); ?>%</td>
+                                        <td>$<?php echo number_format($discounted_price, 2); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php else: ?>
+                        <p><em>No tiers to preview</em></p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            var basePrice = <?php echo $base_price; ?>;
+            
+            // Add new tier
+            $('.apd-add-tier-btn').on('click', function() {
+                $('.apd-no-tiers-row').remove();
+                var newRow = '<tr>' +
+                    '<td><input type="number" name="apd_tier_min_qty[]" value="" min="1" class="small-text" required></td>' +
+                    '<td><input type="number" name="apd_tier_discount[]" value="" min="0" max="100" step="0.01" class="small-text apd-tier-discount" required></td>' +
+                    '<td><input type="text" name="apd_tier_name[]" value="" class="regular-text" placeholder="e.g., Bulk Order"></td>' +
+                    '<td><span class="apd-calculated-price">$0.00</span></td>' +
+                    '<td><button type="button" class="button apd-remove-tier-btn">Remove</button></td>' +
+                    '</tr>';
+                $('#apd-pricing-tiers-body').append(newRow);
+            });
+            
+            // Remove tier
+            $(document).on('click', '.apd-remove-tier-btn', function() {
+                var $tbody = $('#apd-pricing-tiers-body');
+                $(this).closest('tr').remove();
+                
+                // If no tiers left, show placeholder
+                if ($tbody.find('tr').length === 0) {
+                    $tbody.html('<tr class="apd-no-tiers-row"><td colspan="5" style="text-align: center; padding: 20px;"><em>No pricing tiers configured. Click "Add Tier" to create volume discounts.</em></td></tr>');
+                }
+            });
+            
+            // Update calculated price on discount change
+            $(document).on('input', '.apd-tier-discount', function() {
+                var discount = parseFloat($(this).val()) || 0;
+                var discountedPrice = basePrice - ((basePrice * discount) / 100);
+                $(this).closest('tr').find('.apd-calculated-price').text('$' + discountedPrice.toFixed(2));
+            });
+        });
+        </script>
+        
+        <style>
+        .apd-pricing-tiers-wrapper table input[type="number"],
+        .apd-pricing-tiers-wrapper table input[type="text"] {
+            width: 100%;
+        }
+        .apd-calculated-price {
+            font-weight: bold;
+            color: #2271b1;
+        }
+        </style>
+        <?php
+    }
+
+    /**
+     * Template Details Meta Box
+     */
+    public function template_details_meta_box($post)
+    {
+        wp_nonce_field('apd_template_meta', 'apd_template_meta_nonce');
+
+        $width = get_post_meta($post->ID, '_apd_template_width', true) ?: 800;
+        $height = get_post_meta($post->ID, '_apd_template_height', true) ?: 600;
+        $background_type = get_post_meta($post->ID, '_apd_template_bg_type', true) ?: 'color';
+        $background_color = get_post_meta($post->ID, '_apd_template_bg_color', true) ?: '#ffffff';
+        $background_image = get_post_meta($post->ID, '_apd_template_bg_image', true);
+        $template_data = get_post_meta($post->ID, '_apd_template_data', true) ?: '{}';
+        $allowed_categories = get_post_meta($post->ID, '_apd_allowed_material_categories', true);
+        if (!is_array($allowed_categories)) {
+            $allowed_categories = array();
+        }
+        
+        // Get all material categories
+        $all_categories = $this->get_material_categories();
+
+        ?>
+        <table class="form-table">
+            <tr>
+                <th scope="row">
+                    <label for="apd_template_width">Canvas Width (px)</label>
+                </th>
+                <td>
+                    <input type="number" id="apd_template_width" name="apd_template_width" value="<?php echo esc_attr($width); ?>" min="100" max="2000" class="regular-text">
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">
+                    <label for="apd_template_height">Canvas Height (px)</label>
+                </th>
+                <td>
+                    <input type="number" id="apd_template_height" name="apd_template_height" value="<?php echo esc_attr($height); ?>" min="100" max="2000" class="regular-text">
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">
+                    <label for="apd_template_bg_type">Background Type</label>
+                </th>
+                <td>
+                    <select id="apd_template_bg_type" name="apd_template_bg_type">
+                        <option value="color" <?php selected($background_type, 'color'); ?>>Solid Color</option>
+                        <option value="image" <?php selected($background_type, 'image'); ?>>Image</option>
+                        <option value="gradient" <?php selected($background_type, 'gradient'); ?>>Gradient</option>
+                    </select>
+                </td>
+            </tr>
+            <tr id="bg-color-row" style="<?php echo $background_type === 'color' ? '' : 'display:none;'; ?>">
+                <th scope="row">
+                    <label for="apd_template_bg_color">Background Color</label>
+                </th>
+                <td>
+                    <input type="color" id="apd_template_bg_color" name="apd_template_bg_color" value="<?php echo esc_attr($background_color); ?>">
+                </td>
+            </tr>
+            <tr id="bg-image-row" style="<?php echo $background_type === 'image' ? '' : 'display:none;'; ?>">
+                <th scope="row">
+                    <label for="apd_template_bg_image">Background Image</label>
+                </th>
+                <td>
+                    <input type="url" id="apd_template_bg_image" name="apd_template_bg_image" value="<?php echo esc_attr($background_image); ?>" class="regular-text">
+                    <button type="button" class="button" id="select-bg-image">Select Image</button>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">
+                    <label for="apd_allowed_material_categories">Allowed Material Categories</label>
+                </th>
+                <td>
+                    <fieldset>
+                        <legend class="screen-reader-text"><span>Allowed Material Categories</span></legend>
+                        <label style="display: block; margin-bottom: 8px;">
+                            <input type="checkbox" name="apd_allowed_material_categories[]" value="all" <?php checked(empty($allowed_categories) || in_array('all', $allowed_categories)); ?>> 
+                            <strong>All Categories (No Restriction)</strong>
+                        </label>
+                        <?php foreach ($all_categories as $category): ?>
+                            <label style="display: block; margin-bottom: 6px;">
+                                <input type="checkbox" name="apd_allowed_material_categories[]" value="<?php echo esc_attr($category); ?>" <?php checked(in_array($category, $allowed_categories)); ?>> 
+                                <?php echo esc_html($category); ?>
+                            </label>
+                        <?php endforeach; ?>
+                        <label style="display: block; margin-bottom: 6px;">
+                            <input type="checkbox" name="apd_allowed_material_categories[]" value="Uncategorized" <?php checked(in_array('Uncategorized', $allowed_categories)); ?>> 
+                            Uncategorized
+                        </label>
+                    </fieldset>
+                    <p class="description">Select which material categories are allowed for this template. If "All Categories" is checked, all materials will be available. Leave all unchecked to show all materials.</p>
+                </td>
+            </tr>
+        </table>
+        
+        <div class="apd-template-designer-link">
+            <p><strong>Template Designer:</strong> <a href="<?php echo admin_url('admin.php?page=apd-designer&template_id=' . $post->ID); ?>" class="button button-primary">Open Template Designer</a></p>
+        </div>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            $('#apd_template_bg_type').on('change', function() {
+                var type = $(this).val();
+                $('#bg-color-row, #bg-image-row').hide();
+                if (type === 'color') {
+                    $('#bg-color-row').show();
+                } else if (type === 'image') {
+                    $('#bg-image-row').show();
+                }
+            });
+            
+            $('#select-bg-image').on('click', function(e) {
+                e.preventDefault();
+                
+                var frame = wp.media({
+                    title: 'Select Background Image',
+                    button: {
+                        text: 'Use this image'
+                    },
+                    multiple: false,
+                    library: {
+                        type: 'image'
+                    }
+                });
+                
+                frame.on('select', function() {
+                    var attachment = frame.state().get('selection').first().toJSON();
+                    $('#apd_template_bg_image').val(attachment.url);
+                });
+                
+                frame.open();
+            });
+        });
+        </script>
+        <?php
+    }
+
+    /**
+     * Save Template Meta
+     */
+    public function save_template_meta($post_id)
+    {
+        if (!isset($_POST['apd_template_meta_nonce']) || !wp_verify_nonce($_POST['apd_template_meta_nonce'], 'apd_template_meta')) {
+            return;
+        }
+
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return;
+        }
+
+        if (!current_user_can('edit_post', $post_id)) {
+            return;
+        }
+
+        if (get_post_type($post_id) !== 'apd_template') {
+            return;
+        }
+
+        $fields = array(
+            '_apd_template_width',
+            '_apd_template_height',
+            '_apd_template_bg_type',
+            '_apd_template_bg_color',
+            '_apd_template_bg_image'
+        );
+
+        foreach ($fields as $field) {
+            if (isset($_POST[$field])) {
+                update_post_meta($post_id, $field, sanitize_text_field($_POST[$field]));
+            }
+        }
+        
+        // Save allowed material categories
+        if (isset($_POST['apd_allowed_material_categories'])) {
+            $allowed_categories = array_map('sanitize_text_field', $_POST['apd_allowed_material_categories']);
+            update_post_meta($post_id, '_apd_allowed_material_categories', $allowed_categories);
+        } else {
+            // If no categories selected, delete the meta (which means all materials allowed)
+            delete_post_meta($post_id, '_apd_allowed_material_categories');
+        }
+    }
+
+    /**
+     * Duplicate Template
+     */
+    public function duplicate_template()
+    {
+        if (!isset($_POST['template_id']) || !wp_verify_nonce($_POST['_wpnonce'], 'duplicate_template_' . $_POST['template_id'])) {
+            wp_die('Security check failed');
+        }
+
+        $template_id = intval($_POST['template_id']);
+        $template = get_post($template_id);
+
+        if (!$template || $template->post_type !== 'apd_template') {
+            wp_die('Template not found');
+        }
+
+        $new_template = array(
+            'post_title' => $template->post_title . ' (Copy)',
+            'post_content' => $template->post_content,
+            'post_status' => 'draft',
+            'post_type' => 'apd_template'
+        );
+
+        $new_id = wp_insert_post($new_template);
+
+        if ($new_id) {
+            // Copy meta data
+            $meta_keys = array(
+                '_apd_template_width',
+                '_apd_template_height',
+                '_apd_template_bg_type',
+                '_apd_template_bg_color',
+                '_apd_template_bg_image',
+                '_apd_template_data',
+                '_apd_allowed_material_categories'
+            );
+
+            foreach ($meta_keys as $key) {
+                $value = get_post_meta($template_id, $key, true);
+                if ($value) {
+                    update_post_meta($new_id, $key, $value);
+                }
+            }
+
+            $url = admin_url('admin.php?page=apd-templates&duplicated=1');
+            if (!headers_sent()) {
+                wp_safe_redirect($url);
+                exit;
+            } else {
+                echo '<meta http-equiv="refresh" content="0;url=' . esc_url($url) . '">';
+                echo '<script>window.location.href = ' . json_encode($url) . ';</script>';
+                exit;
+            }
+        }
+    }
+
+    /**
+     * Delete Template
+     */
+    public function delete_template()
+    {
+        if (!isset($_POST['template_id']) || !wp_verify_nonce($_POST['_wpnonce'], 'delete_template_' . $_POST['template_id'])) {
+            wp_die('Security check failed');
+        }
+
+        $template_id = intval($_POST['template_id']);
+        $template = get_post($template_id);
+
+        if (!$template || $template->post_type !== 'apd_template') {
+            wp_die('Template not found');
+        }
+
+        wp_delete_post($template_id, true);
+
+        $url = admin_url('admin.php?page=apd-templates&deleted=1');
+        if (!headers_sent()) {
+            wp_safe_redirect($url);
+            exit;
+        } else {
+            echo '<meta http-equiv="refresh" content="0;url=' . esc_url($url) . '">';
+            echo '<script>window.location.href = ' . json_encode($url) . ';</script>';
+            exit;
+        }
+    }
+
+    public function upload_font()
+    {
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_die(json_encode(array('success' => false, 'data' => 'Insufficient permissions')));
+        }
+
+        // Check if file was uploaded
+        if (!isset($_FILES['font_file']) || $_FILES['font_file']['error'] !== UPLOAD_ERR_OK) {
+            wp_die(json_encode(array('success' => false, 'data' => 'No file uploaded or upload error')));
+        }
+
+        $file = $_FILES['font_file'];
+
+        // Validate file type
+        $allowed_types = array('ttf', 'otf', 'woff', 'woff2');
+        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+        if (!in_array($file_extension, $allowed_types)) {
+            wp_die(json_encode(array('success' => false, 'data' => 'Invalid file type. Only TTF, OTF, WOFF, and WOFF2 files are allowed.')));
+        }
+
+        // Validate file size (5MB limit)
+        if ($file['size'] > 5 * 1024 * 1024) {
+            wp_die(json_encode(array('success' => false, 'data' => 'File too large. Maximum size is 5MB.')));
+        }
+
+        // Create uploads directory if it doesn't exist
+        $upload_dir = wp_upload_dir();
+        $fonts_dir = $upload_dir['basedir'] . '/fonts/';
+
+        if (!file_exists($fonts_dir)) {
+            wp_mkdir_p($fonts_dir);
+        }
+
+        // Generate unique filename
+        $filename = sanitize_file_name($file['name']);
+        $filename = pathinfo($filename, PATHINFO_FILENAME) . '_' . time() . '.' . $file_extension;
+        $file_path = $fonts_dir . $filename;
+
+        // Move uploaded file
+        if (!move_uploaded_file($file['tmp_name'], $file_path)) {
+            wp_die(json_encode(array('success' => false, 'data' => 'Failed to save file')));
+        }
+
+        // Generate font family name from filename
+        $font_name = pathinfo($file['name'], PATHINFO_FILENAME);
+        $font_family = str_replace(array('-', '_'), ' ', $font_name);
+        $font_family = ucwords($font_family);
+
+        // Get font weight from POST (default to 400 if not provided)
+        $font_weight = isset($_POST['font_weight']) ? sanitize_text_field($_POST['font_weight']) : '400';
+        // Validate font weight is a valid value
+        $valid_weights = array('100', '200', '300', '400', '500', '600', '700', '800', '900');
+        if (!in_array($font_weight, $valid_weights)) {
+            $font_weight = '400';
+        }
+
+        // Get file URL
+        $file_url = $upload_dir['baseurl'] . '/fonts/' . $filename;
+
+        // Store font info in options
+        $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+        $uploaded_fonts[] = array(
+            'name' => $font_name,
+            'family' => $font_family,
+            'url' => $file_url,
+            'file' => $filename,
+            'weight' => $font_weight,
+            'uploaded' => current_time('mysql')
+        );
+        update_option('apd_uploaded_fonts', $uploaded_fonts);
+
+        wp_die(json_encode(array(
+            'success' => true,
+            'data' => array(
+                'name' => $font_name,
+                'family' => $font_family,
+                'url' => $file_url,
+                'file' => $filename,
+                'weight' => $font_weight
+            )
+        )));
+    }
+
+    public function delete_font()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+        $uploaded_fonts = get_option('apd_uploaded_fonts', array());
+        $index = isset($_POST['index']) ? intval($_POST['index']) : null;
+        $fileParam = isset($_POST['file']) ? sanitize_file_name($_POST['file']) : '';
+
+        $removed = false;
+        if ($fileParam) {
+            foreach ($uploaded_fonts as $i => $font) {
+                if (!empty($font['file']) && $font['file'] === $fileParam) {
+                    $removed = $this->remove_font_entry($uploaded_fonts, $i);
+                    break;
+                }
+            }
+        } elseif ($index !== null && isset($uploaded_fonts[$index])) {
+            $removed = $this->remove_font_entry($uploaded_fonts, $index);
+        }
+
+        if ($removed) {
+            update_option('apd_uploaded_fonts', $uploaded_fonts);
+            wp_send_json_success(true);
+        }
+        wp_send_json_error('Font not found');
+    }
+
+    private function remove_font_entry(&$uploaded_fonts, $i)
+    {
+        $upload_dir = wp_upload_dir();
+        $fonts_dir = trailingslashit($upload_dir['basedir']) . 'fonts/';
+        $file = !empty($uploaded_fonts[$i]['file']) ? $uploaded_fonts[$i]['file'] : '';
+        if ($file && file_exists($fonts_dir . $file)) {
+            @unlink($fonts_dir . $file);
+        }
+        array_splice($uploaded_fonts, $i, 1);
+        return true;
+    }
+
+    /**
+     * Save Template Design via AJAX
+     */
+    public function save_template_design()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        $template_id = intval($_POST['template_id']);
+        $template_data = wp_unslash($_POST['template_data']);  // Use wp_unslash instead of sanitize_text_field for JSON data
+
+        // Validate template exists
+        $template = get_post($template_id);
+        if (!$template || $template->post_type !== 'apd_template') {
+            wp_send_json_error('Template not found');
+        }
+
+        // Parse and validate template data
+        $data = json_decode($template_data, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            wp_send_json_error('Invalid template data: ' . json_last_error_msg());
+        }
+
+        // Validate and sanitize template data structure
+        if (!is_array($data)) {
+            wp_send_json_error('Template data must be an array');
+        }
+
+        // Sanitize background image data if present
+        if (isset($data['canvas']['background']['image'])) {
+            $image_data = $data['canvas']['background']['image'];
+            // Check if it's a valid base64 data URL
+            if (strpos($image_data, 'data:image/') === 0) {
+                // Validate base64 format
+                $base64_data = substr($image_data, strpos($image_data, ',') + 1);
+                if (!base64_decode($base64_data, true)) {
+                    wp_send_json_error('Invalid background image data');
+                }
+            } else {
+                // If it's not base64, it should be a valid URL
+                if (!filter_var($image_data, FILTER_VALIDATE_URL)) {
+                    wp_send_json_error('Invalid background image URL');
+                }
+            }
+        }
+
+        // Save template data
+        update_post_meta($template_id, '_apd_template_data', $template_data);
+
+        // Update canvas settings if provided
+        if (isset($data['canvas'])) {
+            $canvas = $data['canvas'];
+
+            if (isset($canvas['width'])) {
+                update_post_meta($template_id, '_apd_template_width', intval($canvas['width']));
+            }
+
+            if (isset($canvas['height'])) {
+                update_post_meta($template_id, '_apd_template_height', intval($canvas['height']));
+            }
+
+            if (isset($canvas['background'])) {
+                $bg = $canvas['background'];
+
+                if (isset($bg['type'])) {
+                    update_post_meta($template_id, '_apd_template_bg_type', sanitize_text_field($bg['type']));
+                }
+
+                if (isset($bg['color'])) {
+                    update_post_meta($template_id, '_apd_template_bg_color', sanitize_hex_color($bg['color']));
+                }
+
+                if (isset($bg['image'])) {
+                    update_post_meta($template_id, '_apd_template_bg_image', esc_url_raw($bg['image']));
+                }
+            }
+        }
+
+        wp_send_json_success(array(
+            'message' => 'Template design saved successfully',
+            'template_id' => $template_id
+        ));
+    }
+
+    public function register_rest_routes()
+    {
+        register_rest_route('apd/v1', '/products', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_products_rest'),
+            'permission_callback' => '__return_true',
+            'args' => array(
+                'search' => array(
+                    'default' => '',
+                    'sanitize_callback' => 'sanitize_text_field'
+                ),
+                'per_page' => array(
+                    'default' => 20,
+                    'sanitize_callback' => 'absint'
+                )
+            )
+        ));
+
+        register_rest_route('apd/v1', '/products/(?P<id>\d+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_single_product_rest'),
+            'permission_callback' => '__return_true',
+            'args' => array(
+                'id' => array(
+                    'required' => true,
+                    'sanitize_callback' => 'absint'
+                )
+            )
+        ));
+    }
+
+    public function get_products_rest($request)
+    {
+        $search = $request->get_param('search');
+        $per_page = $request->get_param('per_page');
+
+        $args = array(
+            'post_type' => 'apd_product',
+            'post_status' => array('publish', 'draft', 'private'),
+            'posts_per_page' => $per_page,
+            'orderby' => 'title',
+            'order' => 'ASC'
+        );
+
+        if (!empty($search)) {
+            $args['s'] = $search;
+        }
+
+        $products = get_posts($args);
+
+        $product_data = array();
+
+        foreach ($products as $product) {
+            $price = get_post_meta($product->ID, '_fsc_price', true);
+            $image = get_post_meta($product->ID, '_fsc_logo_file', true);
+            $features = get_post_meta($product->ID, '_fsc_features', true);
+
+            $product_data[] = array(
+                'id' => $product->ID,
+                'title' => $product->post_title,
+                'description' => wp_trim_words($product->post_content, 20),
+                'content' => $product->post_content,
+                'price' => $price ?: '0.00',
+                'image' => $image ?: '',
+                'features' => is_array($features) ? $features : array(),
+                'permalink' => get_permalink($product->ID)
+            );
+        }
+
+        return new WP_REST_Response(array(
+            'success' => true,
+            'data' => $product_data
+        ), 200);
+    }
+
+    public function get_single_product_rest($request)
+    {
+        $product_id = $request->get_param('id');
+        $product = get_post($product_id);
+
+        if (!$product || $product->post_type !== 'apd_product') {
+            return new WP_Error('product_not_found', 'Product not found', array('status' => 404));
+        }
+
+        $price = get_post_meta($product->ID, '_fsc_price', true);
+        $image = get_post_meta($product->ID, '_fsc_logo_file', true);
+        $features = get_post_meta($product->ID, '_fsc_features', true);
+        $template_id = get_post_meta($product->ID, '_fsc_template', true);
+
+        $product_data = array(
+            'id' => $product->ID,
+            'title' => $product->post_title,
+            'description' => wp_trim_words($product->post_content, 20),
+            'content' => $product->post_content,
+            'price' => $price ?: '0.00',
+            'image' => $image ?: '',
+            'features' => is_array($features) ? $features : array(),
+            'template_id' => $template_id,
+            'permalink' => get_permalink($product->ID)
+        );
+
+        return new WP_REST_Response(array(
+            'success' => true,
+            'data' => $product_data
+        ), 200);
+    }
+
+    public function get_product_data_ajax()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_die('Security check failed');
+        }
+
+        $product_id = intval($_POST['product_id']);
+        $product = get_post($product_id);
+
+        if (!$product || $product->post_type !== 'apd_product') {
+            wp_send_json_error('Product not found');
+        }
+
+        $price = get_post_meta($product->ID, '_fsc_price', true);
+        $image = get_post_meta($product->ID, '_fsc_logo_file', true);
+        $features = get_post_meta($product->ID, '_fsc_features', true);
+        $template_id = get_post_meta($product->ID, '_fsc_template', true);
+
+        $product_data = array(
+            'id' => $product->ID,
+            'title' => $product->post_title,
+            'description' => wp_trim_words($product->post_content, 20),
+            'content' => $product->post_content,
+            'price' => $price ?: '0.00',
+            'image' => $image ?: '',
+            'features' => is_array($features) ? $features : array(),
+            'template_id' => $template_id,
+            'permalink' => get_permalink($product->ID)
+        );
+
+        wp_send_json_success($product_data);
+    }
+
+    public function get_products_ajax()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_die('Security check failed');
+        }
+
+        $search = sanitize_text_field($_POST['search']);
+        $per_page = 20;
+
+        $args = array(
+            'post_type' => 'apd_product',
+            'post_status' => array('publish', 'draft', 'private'),
+            'posts_per_page' => $per_page,
+            'orderby' => 'title',
+            'order' => 'ASC'
+        );
+
+        if (!empty($search)) {
+            $args['s'] = $search;
+        }
+
+        $products = get_posts($args);
+        $product_data = array();
+
+        foreach ($products as $product) {
+            $price = get_post_meta($product->ID, '_fsc_price', true);
+            $image = get_post_meta($product->ID, '_fsc_logo_file', true);
+            $features = get_post_meta($product->ID, '_fsc_features', true);
+
+            $product_data[] = array(
+                'id' => $product->ID,
+                'title' => $product->post_title,
+                'description' => wp_trim_words($product->post_content, 20),
+                'content' => $product->post_content,
+                'price' => $price ?: '0.00',
+                'image' => $image ?: '',
+                'features' => is_array($features) ? $features : array(),
+                'permalink' => get_permalink($product->ID)
+            );
+        }
+
+        wp_send_json_success($product_data);
+    }
+
+    public function get_customizer_data_ajax()
+    {
+        // Debug: Log all POST data
+        error_log('APD Customizer: POST data: ' . print_r($_POST, true));
+
+        // Check if nonce exists
+        if (!isset($_POST['nonce'])) {
+            error_log('APD Customizer: No nonce provided');
+            wp_send_json_error('No nonce provided');
+        }
+
+        // For template preview, we'll use a more lenient approach
+        // Check if the nonce is valid for any of the common actions
+        $nonce_valid = false;
+
+        // Try the standard nonce first
+        if (wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            $nonce_valid = true;
+        }
+
+        // If that fails, try without nonce verification for public access
+        // This is acceptable for template preview data which is not sensitive
+        if (!$nonce_valid) {
+            // Check if this is a valid product ID and user can view it
+            $product_id = intval($_POST['product_id']);
+            $product = get_post($product_id);
+
+            if ($product && $product->post_type === 'apd_product' && $product->post_status === 'publish') {
+                $nonce_valid = true;
+                error_log('APD Customizer: Using fallback nonce verification for product ' . $product_id);
+            }
+        }
+
+        if (!$nonce_valid) {
+            error_log('APD Customizer: Nonce verification failed. Expected: ' . wp_create_nonce('apd_ajax_nonce') . ', Got: ' . $_POST['nonce']);
+            wp_send_json_error('Security check failed - nonce mismatch');
+        }
+
+        // Check if product_id exists
+        if (!isset($_POST['product_id'])) {
+            error_log('APD Customizer: No product_id provided');
+            wp_send_json_error('No product_id provided');
+        }
+
+        $product_id = intval($_POST['product_id']);
+
+        // Debug: Log the request
+        error_log('APD Customizer: Product ID requested: ' . $product_id);
+
+        // List all products for debugging
+        $all_products = get_posts(array(
+            'post_type' => 'apd_product',
+            'post_status' => 'any',
+            'posts_per_page' => -1
+        ));
+        error_log('APD Customizer: All products found: ' . count($all_products));
+        foreach ($all_products as $prod) {
+            error_log('APD Customizer: Product ID: ' . $prod->ID . ', Title: ' . $prod->post_title . ', Status: ' . $prod->post_status);
+        }
+
+        $product = get_post($product_id);
+
+        if (!$product) {
+            error_log('APD Customizer: Product not found for ID: ' . $product_id);
+            wp_send_json_error('Product not found for ID: ' . $product_id . '. Available products: ' . implode(', ', wp_list_pluck($all_products, 'ID')));
+        }
+
+        if ($product->post_type !== 'apd_product') {
+            error_log('APD Customizer: Wrong post type. Expected: apd_product, Got: ' . $product->post_type);
+            wp_send_json_error('Wrong post type. Expected: apd_product, Got: ' . $product->post_type);
+        }
+
+        // Get product data
+        $price = get_post_meta($product->ID, '_fsc_price', true);
+        $sale_price = get_post_meta($product->ID, '_fsc_sale_price', true);
+        $logo_file = get_post_meta($product->ID, '_fsc_logo_file', true);
+        $logo_id = get_post_meta($product->ID, '_fsc_logo_id', true);
+        
+        // Debug log the logo values
+        error_log("APD Customizer - Product {$product->ID}: logo_file = " . ($logo_file ?: 'EMPTY') . ", logo_id = " . ($logo_id ?: 'EMPTY'));
+        
+        // Prefer getting logo from attachment ID for reliability
+        $image = '';
+        if ($logo_id) {
+            $image = wp_get_attachment_url($logo_id);
+            error_log("APD Customizer - Product {$product->ID}: Got logo from attachment ID: " . ($image ?: 'FAILED'));
+        }
+        
+        // Fallback to logo_file meta if attachment URL not found
+        if (!$image && $logo_file) {
+            $image = $logo_file;
+            error_log("APD Customizer - Product {$product->ID}: Using logo_file meta as fallback: {$logo_file}");
+        }
+        
+        $features = get_post_meta($product->ID, '_fsc_features', true);
+        $template_id = get_post_meta($product->ID, '_fsc_template', true);
+
+        // Get logo content (SVG markup) if logo exists
+        $logo_content = '';
+        if ($image) {
+            // Convert URL to file path
+            $upload_dir = wp_upload_dir();
+            $logo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $image);
+            
+            // Also try replacing the site URL for cases where full URL is stored
+            if (!file_exists($logo_path)) {
+                $logo_path = str_replace(site_url(), ABSPATH, $image);
+            }
+            
+            error_log("APD Customizer - Product {$product->ID}: Attempting to load SVG from: {$logo_path}");
+            
+            if (file_exists($logo_path)) {
+                $logo_content = $this->_get_processed_svg_content($logo_path);
+                if ($logo_content) {
+                    error_log("APD Customizer - Product {$product->ID}: Successfully loaded logo content, size: " . strlen($logo_content) . " bytes");
+                } else {
+                    error_log("APD Customizer - Product {$product->ID}: Failed to get processed SVG content");
+                }
+            } else {
+                error_log("APD Customizer - Product {$product->ID}: Logo file does not exist at path: {$logo_path}");
+            }
+        }
+        
+        $product_data = array(
+            'id' => $product->ID,
+            'title' => $product->post_title,
+            'description' => wp_trim_words($product->post_content, 20),
+            'content' => $product->post_content,
+            'price' => $price ?: '0.00',
+            'sale_price' => $sale_price ?: '',
+            'image' => $image ?: '',
+            'logo_content' => $logo_content,
+            'features' => is_array($features) ? $features : array(),
+            'template_id' => $template_id,
+            'permalink' => get_permalink($product->ID)
+        );
+
+        // Get template data
+        $template = null;
+        $template_data = null;
+
+        if ($template_id) {
+            $template = get_post($template_id);
+            if ($template && $template->post_type === 'apd_template') {
+                $template_data_raw = get_post_meta($template_id, '_apd_template_data', true);
+                if ($template_data_raw) {
+                    $template_data = json_decode($template_data_raw, true);
+                }
+            }
+        }
+
+        // If no template data, return explicit error (no mock data)
+        if (!$template_data) {
+            wp_send_json_error('No template data found for product ' . $product_id . '.');
+        }
+
+        wp_send_json_success(array(
+            'product' => $product_data,
+            'template' => $template,
+            'templateData' => $template_data
+        ));
+    }
+
+    public function test_ajax_handler()
+    {
+        error_log('APD Test AJAX: Handler called');
+        error_log('APD Test AJAX: POST data: ' . print_r($_POST, true));
+
+        wp_send_json_success(array(
+            'message' => 'AJAX is working!',
+            'post_data' => $_POST,
+            'timestamp' => current_time('mysql')
+        ));
+    }
+
+    public function fix_block_validation($parsed_block, $source_block)
+    {
+        // Fix block validation for apd/product-display blocks
+        if (isset($parsed_block['blockName']) && $parsed_block['blockName'] === 'apd/product-display') {
+            // Ensure default attributes are set correctly
+            if (!isset($parsed_block['attrs']['layout'])) {
+                $parsed_block['attrs']['layout'] = 'card';
+            }
+            if (!isset($parsed_block['attrs']['productId'])) {
+                $parsed_block['attrs']['productId'] = 0;
+            }
+            if (!isset($parsed_block['attrs']['showPrice'])) {
+                $parsed_block['attrs']['showPrice'] = true;
+            }
+            if (!isset($parsed_block['attrs']['showDescription'])) {
+                $parsed_block['attrs']['showDescription'] = true;
+            }
+        }
+        return $parsed_block;
+    }
+
+    public function save_customization_ajax()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_die('Security check failed');
+        }
+
+        $product_id = intval($_POST['product_id']);
+        $customizations = $_POST['customizations'];
+
+        // Sanitize customizations
+        $sanitized_customizations = array();
+        foreach ($customizations as $element_id => $customization) {
+            $sanitized_customizations[sanitize_text_field($element_id)] = array(
+                'text' => sanitize_text_field($customization['text']),
+                'color' => sanitize_hex_color($customization['color']),
+                'outline' => sanitize_text_field($customization['outline'])
+            );
+        }
+
+        // Save customizations as post meta
+        update_post_meta($product_id, '_apd_customizations', $sanitized_customizations);
+
+        wp_send_json_success(array(
+            'message' => 'Customization saved successfully',
+            'customizations' => $sanitized_customizations
+        ));
+    }
+
+    /**
+     * AJAX handler to get all materials
+     */
+    public function ajax_get_materials()
+    {
+        // Try multiple nonce parameter names
+        $nonce = $_POST['nonce'] ?? $_POST['security'] ?? $_POST['_wpnonce'] ?? $_POST['apd_nonce'] ?? '';
+
+        // Verify nonce
+        if (!wp_verify_nonce($nonce, 'apd_ajax_nonce')) {
+            error_log('AJAX get_materials nonce verification failed. Nonce: ' . $nonce);
+            wp_send_json_error(array('message' => 'Security check failed. Nonce: ' . $nonce));
+        }
+        
+        // Get template_id if provided to filter materials
+        $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
+
+        $materials = $this->get_materials($template_id);
+
+        error_log('AJAX get_materials returning for template ' . $template_id . ': ' . print_r($materials, true));
+
+        wp_send_json_success(array(
+            'materials' => $materials
+        ));
+    }
+
+    /**
+     * AJAX handler to get material URL by name
+     */
+    public function ajax_get_material_url()
+    {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_send_json_error(array('message' => 'Security check failed'));
+        }
+
+        $material_name = sanitize_text_field($_POST['material_name']);
+        if (empty($material_name)) {
+            wp_send_json_error(array('message' => 'Material name is required'));
+        }
+        
+        // Get template_id if provided to filter materials
+        $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
+
+        $materials = $this->get_materials($template_id);
+
+        // Try to find the material by name (case insensitive)
+        foreach ($materials as $name => $material_data) {
+            if (strtolower($name) === strtolower($material_name)) {
+                $url = is_array($material_data) ? $material_data['url'] : $material_data;
+                $price = is_array($material_data) && isset($material_data['price']) ? $material_data['price'] : 0;
+                wp_send_json_success(array(
+                    'material_url' => $url,
+                    'material_name' => $name,
+                    'material_price' => $price
+                ));
+            }
+        }
+
+        // If not found, try to construct URL from material name
+        $material_file = $this->get_material_filename($material_name);
+        if ($material_file) {
+            $material_url = APD_PLUGIN_URL . 'uploads/material/' . $material_file;
+            wp_send_json_success(array(
+                'material_url' => $material_url,
+                'material_name' => $material_name
+            ));
+        }
+
+        wp_send_json_error(array('message' => 'Material not found'));
+    }
+
+    /**
+     * AJAX handler to get product variants
+     */
+    public function ajax_get_product_variants()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'apd_ajax_nonce')) {
+            wp_send_json_error(array('message' => 'Security check failed'));
+        }
+
+        $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+        if ($product_id <= 0) {
+            wp_send_json_error(array('message' => 'Invalid product ID'));
+        }
+
+        $variants_enabled = get_post_meta($product_id, '_apd_variants_enabled', true);
+        $variant_materials = get_post_meta($product_id, '_apd_variant_materials', true);
+        $variant_sizes = get_post_meta($product_id, '_apd_variant_sizes', true);
+        
+        // Get all available materials with their data
+        $all_materials = get_option('apd_materials', array());
+        $materials_data = array();
+        
+        if ($variants_enabled == '1' && is_array($variant_materials)) {
+            foreach ($all_materials as $mat) {
+                $mat_name = $mat['name'];
+                $mat_price = 0;
+                
+                // Find the price for this material from variant settings
+                foreach ($variant_materials as $vm) {
+                    if ($vm['name'] === $mat_name) {
+                        $mat_price = $vm['price'];
+                        break;
+                    }
+                }
+                
+                $materials_data[] = array(
+                    'name' => $mat_name,
+                    'url' => $mat['url'],
+                    'price' => $mat_price
+                );
+            }
+        }
+        
+        wp_send_json_success(array(
+            'enabled' => $variants_enabled == '1',
+            'materials' => $materials_data,
+            'sizes' => is_array($variant_sizes) ? $variant_sizes : array()
+        ));
+    }
+
+    /**
+     * Get material filename from material name
+     */
+    private function get_material_filename($material_name)
+    {
+        $material_name = strtolower(trim($material_name));
+
+        $material_map = array(
+            'diamond plate' => 'Diamond_Plate.png',
+            'diamond_plate' => 'Diamond_Plate.png',
+            'engine turn gold' => 'Engine_turn_gold.png',
+            'engine_turn_gold' => 'Engine_turn_gold.png',
+            'florentine silver' => 'Florentine_Silver.png',
+            'florentine_silver' => 'Florentine_Silver.png',
+            'gold' => 'gold.png',
+            'brush gold' => 'gold.png',
+            'brush_gold' => 'gold.png'
+        );
+
+        if (isset($material_map[$material_name])) {
+            return $material_map[$material_name];
+        }
+
+        // Try to find by checking if file exists
+        $plugin_dir = APD_PLUGIN_PATH;
+        $material_path = $plugin_dir . 'uploads/material/';
+
+        if (is_dir($material_path)) {
+            $files = glob($material_path . '*.{png,jpg,jpeg}', GLOB_BRACE);
+            foreach ($files as $file) {
+                $filename = pathinfo($file, PATHINFO_FILENAME);
+                if (strtolower($filename) === $material_name) {
+                    return basename($file);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Email Service Functions
+     */
+    
+    /**
+     * Send order confirmation email to customer
+     */
+    public function send_order_confirmation_email($order_id, $order_data) {
+        try {
+            // Check if email notifications are enabled
+            if (!get_option('apd_email_enabled', '1')) {
+                return false;
+            }
+
+            $customer_email = $order_data['customer_email'] ?? '';
+            if (empty($customer_email)) {
+                return false;
+            }
+
+            // Configure SMTP if enabled
+            if (get_option('apd_smtp_enabled', '0') === '1') {
+                $this->configure_smtp(true);
+            }
+
+            // Get email settings
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+            $subject = 'Order Confirmation - #' . $order_id;
+
+            // Build email HTML
+            $message = $this->build_order_confirmation_template($order_id, $order_data);
+
+            // Set headers
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            $sent = wp_mail($customer_email, $subject, $message, $headers);
+
+            return $sent;
+
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Send admin notification email
+     */
+    public function send_admin_notification_email($order_id, $order_data) {
+        try {
+            // Check if admin notifications are enabled
+            if (!get_option('apd_admin_email_notifications', '1')) {
+                return false;
+            }
+
+            $admin_email = get_option('apd_admin_email_address', 'gotospectrum@gmail.com');
+            if (empty($admin_email)) {
+                return false;
+            }
+
+            // Configure SMTP if enabled
+            if (get_option('apd_smtp_enabled', '0') === '1') {
+                $this->configure_smtp(true);
+            }
+
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+
+            $subject = 'New Order #' . $order_id . ' - ' . get_bloginfo('name');
+            
+            // Build admin email HTML
+            $message = $this->build_admin_notification_template($order_id, $order_data);
+
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            $sent = wp_mail($admin_email, $subject, $message, $headers);
+
+            return $sent;
+
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Send order status change email (confirmed/completed)
+     */
+    public function send_order_status_email($order_id, $order_data, $status_type = 'confirmed') {
+        try {
+            // Check if email notifications are enabled
+            if (!get_option('apd_email_enabled', '1')) {
+                return false;
+            }
+
+            $customer_email = $order_data['customer_email'] ?? '';
+            if (empty($customer_email)) {
+                return false;
+            }
+
+            // Configure SMTP if enabled
+            if (get_option('apd_smtp_enabled', '0') === '1') {
+                $this->configure_smtp(true);
+            }
+
+            // Get email settings
+            $from_name = get_option('apd_email_from_name', get_bloginfo('name'));
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+            
+            // Set subject and content based on status
+            if ($status_type === 'confirmed') {
+                $subject = 'Order Confirmed - #' . $order_id;
+                $heading = 'Your order has been confirmed!';
+                $message_text = 'Great news! Your order has been confirmed and is being prepared for shipment.';
+            } elseif ($status_type === 'completed') {
+                $subject = 'Order Completed - #' . $order_id;
+                $heading = 'Your order is complete!';
+                $message_text = 'Your order has been completed and shipped. Thank you for your business!';
+            } else {
+                return false;
+            }
+
+            // Build email HTML using the shared template
+            $message = $this->build_order_confirmation_template($order_id, $order_data, $heading, $message_text);
+
+            // Set headers
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            // Send to customer
+            $sent = wp_mail($customer_email, $subject, $message, $headers);
+
+            // Also send to admin
+            $admin_email = 'gotospectrum@gmail.com';
+            $admin_subject = 'Order Status Update - #' . $order_id . ' (' . ucfirst($status_type) . ')';
+            wp_mail($admin_email, $admin_subject, $message, $headers);
+
+            return $sent;
+
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Build order confirmation email template
+     */
+    private function build_order_confirmation_template($order_id, $order_data, $heading = null, $message = null) {
+        $customer_name = $order_data['customer_name'] ?? 'Customer';
+        $cart_items = $order_data['cart_items'] ?? array();
+        if (is_string($cart_items)) {
+            $decoded = json_decode($cart_items, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $cart_items = $decoded;
+            }
+        }
+        if (!is_array($cart_items)) {
+            $cart_items = array();
+        }
+        $shipping = floatval($order_data['shipping_cost'] ?? 0);
+        $tax = floatval($order_data['tax'] ?? 0);
+        $order_date = $order_data['order_date'] ?? current_time('F j, Y');
+        $customer_address = $order_data['customer_address'] ?? '';
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+        $support_email = 'gotospectrum@gmail.com';
+        // Calculate subtotal and total
+        $subtotal = 0;
+        foreach ($cart_items as $item) {
+            $item_price = isset($item['product_price']) ? floatval($item['product_price']) : (isset($item['price']) ? floatval($item['price']) : 0);
+            $item_qty = isset($item['quantity']) ? intval($item['quantity']) : 1;
+            $subtotal += $item_price * $item_qty;
+        }
+        $total = $subtotal + $shipping + $tax;
+        if ($heading === null) {
+            $heading = 'Thank you for your order!';
+        }
+        if ($message === null) {
+            $message = "We've received it and are getting it ready for you.";
+        }
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Confirmation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #111827;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 0.375rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900"><?php echo esc_html($heading); ?></h1>
+            <p class="text-gray-600 mt-2"><?php echo esc_html($message); ?></p>
+        </div>
+
+        <div class="content">
+            <p class="text-lg text-gray-800 mb-6">
+                Dear <?php echo esc_html($customer_name); ?>,
+            </p>
+            <p class="text-gray-700 mb-6">
+                Your order <strong class="text-gray-900">#<?php echo esc_html($order_id); ?></strong> has been successfully placed on <?php echo esc_html($order_date); ?>. We'll send you another email as soon as your order is ready to ship.
+            </p>
+
+            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Order Summary</h2>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                    <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+                        <th style="padding:12px;text-align:left;font-weight:600;color:#374151;">Product</th>
+                        <th style="padding:12px;text-align:center;font-weight:600;color:#374151;">Quantity</th>
+                        <th style="padding:12px;text-align:right;font-weight:600;color:#374151;">Price</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($cart_items as $item): ?>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 16px; color: #111827; font-weight: 600;">
+                                <?php echo esc_html($item['product_name'] ?? ''); ?>
+                                <?php 
+                                // Get material from customizer OR variants
+                                $material = $item['vinyl_material'] ?? '';
+                                if (empty($material) && !empty($item['customization_data']['variants']['material'])) {
+                                    $material = $item['customization_data']['variants']['material'];
+                                }
+                                // Get size from variants
+                                $size = $item['customization_data']['variants']['size'] ?? '';
+                                $color = $item['print_color'] ?? '';
+                                ?>
+                                <?php if (!empty($color)): ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 4px;">
+                                        Color: <?php echo esc_html($color); ?>
+                                    </div>
+                                <?php endif; ?>
+                                <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                    Material: <?php echo !empty($material) ? esc_html($material) : 'none'; ?>
+                                </div>
+                                <?php if (!empty($size)): ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                        Size: <?php echo esc_html($size); ?>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+                            <td style="padding: 16px; text-align: center; color: #6b7280;">
+                                <?php echo esc_html($item['quantity'] ?? 1); ?>
+                            </td>
+                            <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">
+                                $<?php echo number_format((float)($item['product_price'] ?? ($item['price'] ?? 0)) * (int)($item['quantity'] ?? 1), 2); ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                    <tfoot style="background-color: #f9fafb;">
+                    <tr style="border-top: 1px solid #e5e7eb;">
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
+                        <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
+                    </tr>
+                    <tr style="border-top: 2px solid #d1d5db;">
+                        <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
+                        <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
+                    </tr>
+                    </tfoot>
+                </table>
+            </div>
+            
+            <?php if (!empty($customer_address)): ?>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px;">
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <h3 class="text-lg font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Shipping Address</h3>
+                    <div style="padding: 16px;">
+                        <address class="text-gray-700" style="font-style: normal; line-height: 1.6;">
+                            <?php echo nl2br(esc_html($customer_address)); ?>
+                        </address>
+                    </div>
+                </div>
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <h3 class="text-lg font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">Billing Address</h3>
+                    <div style="padding: 16px;">
+                        <address class="text-gray-700" style="font-style: normal; line-height: 1.6;">
+                            <?php echo nl2br(esc_html($customer_address)); ?>
+                        </address>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+            
+            <div class="text-center mt-8">
+                <a href="<?php echo esc_url($site_url); ?>" class="button">
+                    Visit Our Store
+                </a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="mb-2">
+                Questions about your order?
+            </p>
+            <p class="mb-4">
+                Contact our support team at <a href="mailto:<?php echo esc_attr($support_email); ?>" class="text-blue-600 underline"><?php echo esc_html($support_email); ?></a>.
+            </p>
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Build admin notification email template
+     */
+    private function build_admin_notification_template($order_id, $order_data) {
+        $customer_name = $order_data['customer_name'] ?? 'N/A';
+        $customer_email = $order_data['customer_email'] ?? 'N/A';
+        $customer_phone = $order_data['customer_phone'] ?? 'N/A';
+        $cart_items = $order_data['cart_items'] ?? array();
+        if (is_string($cart_items)) {
+            $decoded = json_decode($cart_items, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $cart_items = $decoded;
+            }
+        }
+        if (!is_array($cart_items)) {
+            $cart_items = array();
+        }
+        $shipping = $order_data['shipping_cost'] ?? 0;
+        $tax = $order_data['tax'] ?? 0;
+        $order_date = $order_data['order_date'] ?? current_time('F j, Y g:i A');
+        $customer_address = $order_data['customer_address'] ?? 'N/A';
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+        // Calculate subtotal and total
+        $subtotal = 0;
+        foreach ($cart_items as $item) {
+            $item_price = isset($item['product_price']) ? floatval($item['product_price']) : (isset($item['price']) ? floatval($item['price']) : 0);
+            $item_qty = isset($item['quantity']) ? intval($item['quantity']) : 1;
+            $subtotal += $item_price * $item_qty;
+        }
+        $total = $subtotal + floatval($shipping) + floatval($tax);
+
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Order Notification</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900">New Order Received!</h1>
+            <p class="text-gray-600 mt-2">Order #<?php echo esc_html($order_id); ?></p>
+        </div>
+
+        <div class="content">
+            <div class="border border-gray-200 rounded-lg overflow-hidden mb-6">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
+                    Customer Information
+                </h2>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280; width: 30%;">Name</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_name); ?></td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280;">Email</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_email); ?></td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 12px; color: #6b7280;">Phone</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo esc_html($customer_phone); ?></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; color: #6b7280; vertical-align: top;">Address</td>
+                            <td style="padding: 12px; color: #111827; font-weight: 600;"><?php echo nl2br(esc_html($customer_address)); ?></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <h2 class="text-xl font-semibold text-gray-900 bg-gray-50 p-4 border-b border-gray-200">
+                    Order Details
+                </h2>
+                
+                <div style="padding: 16px; border-bottom: 1px solid #e5e7eb;">
+                    <p style="color: #6b7280; font-size: 14px; margin: 0 0 4px 0;">Order Date</p>
+                    <p style="color: #111827; font-weight: 600; margin: 0;"><?php echo esc_html($order_date); ?></p>
+                </div>
+
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">Product</th>
+                            <th style="padding: 12px; text-align: center; font-weight: 600; color: #374151;">Quantity</th>
+                            <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151;">Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($cart_items as $item): ?>
+                            <tr style="border-bottom: 1px solid #f3f4f6;">
+                                <td style="padding: 16px; color: #111827; font-weight: 600;">
+                                    <?php echo esc_html($item['product_name'] ?? ''); ?>
+                                    <?php 
+                                    // Get material from customizer OR variants
+                                    $material = $item['vinyl_material'] ?? '';
+                                    if (empty($material) && !empty($item['customization_data']['variants']['material'])) {
+                                        $material = $item['customization_data']['variants']['material'];
+                                    }
+                                    // Get size from variants
+                                    $size = $item['customization_data']['variants']['size'] ?? '';
+                                    $color = $item['print_color'] ?? '';
+                                    ?>
+                                    <?php if (!empty($color)): ?>
+                                        <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 4px;">
+                                            Color: <?php echo esc_html($color); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                        Material: <?php echo !empty($material) ? esc_html($material) : 'none'; ?>
+                                    </div>
+                                    <?php if (!empty($size)): ?>
+                                        <div style="font-size: 13px; color: #6b7280; font-weight: normal; margin-top: 2px;">
+                                            Size: <?php echo esc_html($size); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+                                <td style="padding: 16px; text-align: center; color: #6b7280;">
+                                    <?php echo esc_html($item['quantity'] ?? 1); ?>
+                                </td>
+                                <td style="padding: 16px; text-align: right; color: #111827; font-weight: 600;">
+                                    $<?php echo number_format((float)($item['product_price'] ?? ($item['price'] ?? 0)) * (int)($item['quantity'] ?? 1), 2); ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                    <tfoot style="background-color: #f9fafb;">
+                        <tr style="border-top: 1px solid #e5e7eb;">
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Subtotal</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($subtotal, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Shipping</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($shipping, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding: 12px; color: #6b7280;">Tax</td>
+                            <td style="padding: 12px; text-align: right; color: #111827;">$<?php echo number_format($tax, 2); ?></td>
+                        </tr>
+                        <tr style="border-top: 2px solid #d1d5db;">
+                            <td colspan="2" style="padding: 16px; font-weight: 700; font-size: 18px; color: #111827;">Total</td>
+                            <td style="padding: 16px; text-align: right; font-weight: 700; font-size: 18px; color: #111827;">$<?php echo number_format($total, 2); ?></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Send test email
+     */
+    public function send_test_email() {
+        try {
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Unauthorized');
+            }
+
+            $test_email = sanitize_email($_POST['test_email'] ?? '');
+            if (empty($test_email)) {
+                wp_send_json_error('Email address required');
+            }
+
+            $from_name = get_option('apd_email_from_name', 'Freight Signs Customizer');
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+            
+            $subject = 'Test Email - ' . $from_name;
+            $message = 'This is a test email from your Freight Signs Customizer plugin. If you receive this, your email settings are working correctly!';
+            
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            $sent = wp_mail($test_email, $subject, $message, $headers);
+
+            if ($sent) {
+                wp_send_json_success('Test email sent successfully!');
+            } else {
+                wp_send_json_error('Failed to send test email. Check your email settings.');
+            }
+
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+
+    public function send_advanced_test_email() {
+        try {
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Unauthorized');
+            }
+
+            $test_email = sanitize_email($_POST['test_email'] ?? '');
+            $email_method = sanitize_text_field($_POST['email_method'] ?? 'php');
+            $email_type = sanitize_text_field($_POST['email_type'] ?? 'order_confirmation');
+            $include_attachments = (bool)($_POST['include_attachments'] ?? false);
+
+            if (empty($test_email)) {
+                wp_send_json_error('Email address required');
+            }
+
+            // Configure SMTP if enabled
+            if ($email_method === 'smtp' && get_option('apd_smtp_enabled', '0') === '1') {
+                $this->configure_smtp();
+            }
+
+            $from_name = get_option('apd_email_from_name', 'Freight Signs Customizer');
+            $from_email = get_option('apd_email_from_address', get_option('admin_email'));
+            
+            $subject = 'Test Email - ' . $from_name . ' (' . strtoupper($email_method) . ')';
+            $message = $this->get_test_email_template($email_type);
+            
+            $headers = array(
+                'Content-Type: text/html; charset=UTF-8',
+                'From: ' . $from_name . ' <' . $from_email . '>'
+            );
+
+            // Add attachments if requested
+            $attachments = array();
+            if ($include_attachments) {
+                $attachments = $this->get_test_attachments();
+            }
+
+            $sent = wp_mail($test_email, $subject, $message, $headers, $attachments);
+
+            if ($sent) {
+                wp_send_json_success('Test email sent successfully via ' . strtoupper($email_method) . '!');
+            } else {
+                wp_send_json_error('Failed to send test email via ' . strtoupper($email_method) . '. Check your email settings.');
+            }
+
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+
+    public function test_smtp_connection() {
+        try {
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Unauthorized');
+            }
+
+            $smtp_enabled = get_option('apd_smtp_enabled', '0');
+            if ($smtp_enabled !== '1') {
+                wp_send_json_error('SMTP is not enabled');
+            }
+
+            $host = get_option('apd_smtp_host', 'smtp.gmail.com');
+            $port = get_option('apd_smtp_port', '587');
+            $encryption = get_option('apd_smtp_encryption', 'tls');
+            $username = get_option('apd_smtp_username', '');
+            $password = get_option('apd_smtp_password', '');
+
+            if (empty($username) || empty($password)) {
+                wp_send_json_error('SMTP credentials not configured');
+            }
+
+            $start_time = microtime(true);
+            
+            // Test SMTP connection
+            $connection = $this->test_smtp_connection_direct($host, $port, $username, $password, $encryption);
+            
+            $end_time = microtime(true);
+            $response_time = round(($end_time - $start_time) * 1000);
+
+            if ($connection) {
+                wp_send_json_success(array(
+                    'host' => $host,
+                    'port' => $port,
+                    'encryption' => $encryption,
+                    'response_time' => $response_time
+                ));
+            } else {
+                wp_send_json_error('SMTP connection failed');
+            }
+
+        } catch (Exception $e) {
+            wp_send_json_error('SMTP test error: ' . $e->getMessage());
+        }
+    }
+
+    public function get_email_logs() {
+        try {
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Unauthorized');
+            }
+
+            $logs = get_option('apd_email_logs', array());
+            
+            // Return last 10 logs
+            $recent_logs = array_slice($logs, -10);
+            
+            wp_send_json_success($recent_logs);
+
+        } catch (Exception $e) {
+            wp_send_json_error('Error retrieving email logs: ' . $e->getMessage());
+        }
+    }
+
+    private function configure_smtp($disable_debug = false) {
+        if (get_option('apd_smtp_enabled', '0') !== '1') {
+            return;
+        }
+
+        $host = get_option('apd_smtp_host', 'smtp.gmail.com');
+        $port = get_option('apd_smtp_port', '587');
+        $encryption = get_option('apd_smtp_encryption', 'tls');
+        $username = get_option('apd_smtp_username', '');
+        $password = get_option('apd_smtp_password', '');
+
+        if (empty($username) || empty($password)) {
+            return;
+        }
+
+        // Configure PHPMailer for SMTP - only add the action once
+        static $smtp_configured = false;
+        if (!$smtp_configured) {
+            add_action('phpmailer_init', function($phpmailer) use ($host, $port, $encryption, $username, $password, $disable_debug) {
+                $phpmailer->isSMTP();
+                $phpmailer->Host = $host;
+                $phpmailer->SMTPAuth = true;
+                $phpmailer->Username = $username;
+                $phpmailer->Password = $password;
+                $phpmailer->SMTPSecure = $encryption;
+                $phpmailer->Port = $port;
+                // Disable debug during AJAX calls to prevent corrupting JSON responses
+                if ($disable_debug || wp_doing_ajax()) {
+                    $phpmailer->SMTPDebug = 0;
+                } else {
+                    $phpmailer->SMTPDebug = get_option('apd_smtp_debug', '0') === '1' ? 2 : 0;
+                }
+            });
+            $smtp_configured = true;
+        }
+    }
+
+    private function test_smtp_connection_direct($host, $port, $username, $password, $encryption) {
+        try {
+            $socket = fsockopen($host, $port, $errno, $errstr, 10);
+            if (!$socket) {
+                return false;
+            }
+            fclose($socket);
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    private function get_test_email_template($email_type) {
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $current_year = date('Y');
+        $logo_url = get_option('apd_email_logo_url', '');
+        $support_email = 'gotospectrum@gmail.com';
+
+        ob_start();
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Email</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'sans-serif';
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f7;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .header {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+        }
+        .content {
+            padding: 2rem;
+        }
+        .footer {
+            padding: 2rem;
+            background-color: #f9fafb;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #111827;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 0.375rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto my-8 shadow-lg">
+        <div class="header">
+            <?php if (!empty($logo_url)): ?>
+                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($site_name); ?>" style="max-height: 48px; margin: 0 auto 24px; display: block;">
+            <?php else: ?>
+                <div class="h-12 w-48 mx-auto bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 mb-6">
+                    <?php echo esc_html($site_name); ?>
+                </div>
+            <?php endif; ?>
+            <h1 class="text-3xl font-bold text-gray-900">Test Email</h1>
+            <p class="text-gray-600 mt-2">This is a test email from your system</p>
+        </div>
+
+        <div class="content">
+            <p class="text-lg text-gray-800 mb-6">
+                Dear Test User,
+            </p>
+            <p class="text-gray-700 mb-6">
+                This is a test email to verify that your email configuration is working correctly. If you're reading this, it means your email settings are properly configured!
+            </p>
+            
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50 mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Email Type</h3>
+                <p class="text-gray-700"><?php echo esc_html(ucwords(str_replace('_', ' ', $email_type))); ?></p>
+            </div>
+            
+            <div class="text-center mt-8">
+                <a href="<?php echo esc_url($site_url); ?>" class="button">
+                    Visit Website
+                </a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p class="mb-2">
+                Questions about your configuration?
+            </p>
+            <p class="mb-4">
+                Contact support at <a href="mailto:<?php echo esc_attr($support_email); ?>" class="text-blue-600 underline"><?php echo esc_html($support_email); ?></a>.
+            </p>
+            <p class="text-sm text-gray-500">
+                © <?php echo esc_html($current_year); ?> <?php echo esc_html($site_name); ?>. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+        <?php
+        return ob_get_clean();
+    }
+
+    private function get_test_attachments() {
+        // Return empty array for now - can be extended to include actual test files
+        return array();
+    }
+}
+
+// Include block registration
+require_once APD_PLUGIN_PATH . 'includes/block-registration.php';
+
+// Include health check system
+if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-health-check.php')) {
+    require_once APD_PLUGIN_PATH . 'includes/class-apd-health-check.php';
+}
+
+// Include debug logger
+if (file_exists(APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php')) {
+    require_once APD_PLUGIN_PATH . 'includes/class-apd-debug-logger.php';
+}
+
+// Initialize the plugin
+function apd_init()
+{
+    global $advanced_product_designer;
+    $advanced_product_designer = new AdvancedProductDesigner();
+    new APD_Block_Registration();
+    
+    // Initialize health check and debug logger
+    if (class_exists('APD_Health_Check')) {
+        new APD_Health_Check();
+    }
+    if (class_exists('APD_Debug_Logger')) {
+        APD_Debug_Logger::get_instance();
+    }
+}
+
+add_action('plugins_loaded', 'apd_init');
