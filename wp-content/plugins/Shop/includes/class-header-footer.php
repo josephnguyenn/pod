@@ -1,8 +1,8 @@
 <?php
 /**
  * Site header and footer output for APD page templates.
- * Outputs same Elementor header/footer as company taxonomy (IDs configurable via options).
- * Can inject header/footer globally on pages that don't include them (e.g. Elementor Canvas).
+ * Outputs same Elementor header/footer (IDs configurable via options).
+ * Injects header/footer on ALL front-end pages by default; use filter to opt out.
  *
  * @package AdvancedProductDesigner
  */
@@ -96,8 +96,9 @@ class APD_Header_Footer
     }
 
     /**
-     * Determine if this request should get header/footer injected (e.g. Elementor Canvas, homepage).
-     * Runs on front-end only. Uses filter so theme/plugins can force inject.
+     * Determine if this request should get header/footer injected.
+     * By default inject on ALL front-end pages (except when inside APD wrapper).
+     * Use filter 'apd_inject_header_footer' to disable for specific cases (e.g. double header).
      *
      * @return bool
      */
@@ -109,26 +110,12 @@ class APD_Header_Footer
         if (self::is_in_wrapper()) {
             return false;
         }
-        // Always inject on homepage (front page) so header/footer show there
-        if (is_front_page()) {
-            return true;
-        }
-        // Inject on any page/post using Elementor Canvas (no theme header/footer)
-        $post_id = 0;
-        if (is_singular()) {
-            $post_id = get_queried_object_id();
-        }
-        if ($post_id) {
-            $template = get_post_meta($post_id, '_wp_page_template', true);
-            if ($template === 'elementor_canvas' || $template === 'elementor_canvas.php') {
-                return true;
-            }
-        }
-        return apply_filters('apd_inject_header_footer', false);
+        // Apply to all front-end pages by default; filter can opt out (e.g. return false for specific pages)
+        return apply_filters('apd_inject_header_footer', true);
     }
 
     /**
-     * Register hooks to inject header/footer on pages that don't have them (e.g. Canvas, homepage).
+     * Register hooks to inject header/footer on all front-end pages (except APD wrapper pages).
      */
     public static function init_global_injector()
     {
