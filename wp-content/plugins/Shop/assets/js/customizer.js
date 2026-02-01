@@ -1415,6 +1415,13 @@ jQuery(document).ready(function($) {
                     el._computedY = accY;
                     accY = accY + rowHeight + rowGapPx;
                 });
+            } else {
+                // Line height = 0: use original template y; clear any stale _computedY from previous non-zero value
+                (elements || []).forEach(function(el) {
+                    if (el && el.type === 'text' && el.hasOwnProperty('_computedY')) {
+                        delete el._computedY;
+                    }
+                });
             }
 
             (elements || []).forEach(function(el) {
