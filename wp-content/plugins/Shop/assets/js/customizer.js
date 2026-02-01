@@ -1399,20 +1399,23 @@ jQuery(document).ready(function($) {
                 }
             }
 
-            // Precompute Y positions for text elements: "Line height" = gap between custom text rows (px)
-            const rowGapPx = Math.max(0, Number(templateData.lineHeight) || 20);
-            const textElsOrdered = (elements || []).map(function(el, idx) { return { el: el, idx: idx }; }).filter(function(o) { return o.el && o.el.type === 'text'; });
-            let accY = null;
-            textElsOrdered.forEach(function(o) {
-                const el = o.el;
-                const fontSize = Number(el.properties && el.properties.fontSize) || 18;
-                const rowHeight = Math.max(Number(el.height) || 0, fontSize * 1.5);
-                if (accY === null) {
-                    accY = Number(el.y) || 0;
-                }
-                el._computedY = accY;
-                accY = accY + rowHeight + rowGapPx;
-            });
+            // Precompute Y positions for text elements: "Line height" = gap between custom text rows (px). 0 = use original template y; negative allowed.
+            const rowGapPx = Number(templateData.lineHeight);
+            const useComputedY = !isNaN(rowGapPx) && rowGapPx !== 0;
+            if (useComputedY) {
+                const textElsOrdered = (elements || []).map(function(el, idx) { return { el: el, idx: idx }; }).filter(function(o) { return o.el && o.el.type === 'text'; });
+                let accY = null;
+                textElsOrdered.forEach(function(o) {
+                    const el = o.el;
+                    const fontSize = Number(el.properties && el.properties.fontSize) || 18;
+                    const rowHeight = Math.max(Number(el.height) || 0, fontSize * 1.5);
+                    if (accY === null) {
+                        accY = Number(el.y) || 0;
+                    }
+                    el._computedY = accY;
+                    accY = accY + rowHeight + rowGapPx;
+                });
+            }
 
             (elements || []).forEach(function(el) {
                 const x = Number(el.x) || 0;
@@ -1839,15 +1842,16 @@ jQuery(document).ready(function($) {
             const $group = $('.fsc-form-group:has(h4:contains("Custom Text"))');
             if ($group.length) {
                 const $container = $('<div class="fsc-inputs-dynamic" />');
-                // Line height = khoảng cách giữa các row Custom Text (gap in px)
-                const globalLineHeight = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 20;
+                // Line height = khoảng cách giữa các row Custom Text (px). 0 = original spacing; negative allowed
+                const globalLineHeight = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 0;
                 const $lineHeightRow = $('<div class="fsc-input-group fsc-line-height-group" />');
                 $lineHeightRow.append('<label for="fsc-line-height-global">Line height (row spacing)</label>');
-                const $lineHeightGlobal = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', 'fsc-line-height-global').val(String(globalLineHeight)).attr('placeholder', '20');
+                const $lineHeightGlobal = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', 'fsc-line-height-global').val(String(globalLineHeight)).attr('placeholder', '0 = original');
                 $lineHeightRow.append($lineHeightGlobal);
                 $lineHeightGlobal.on('input change', function() {
                     const lhVal = $(this).val();
-                    const gapPx = (lhVal === '' || lhVal == null) ? 20 : (isNaN(parseFloat(lhVal)) ? 20 : Math.max(0, parseFloat(lhVal)));
+                    // 0 = original row spacing; negative allowed
+                    const gapPx = (lhVal === '' || lhVal == null) ? 0 : (isNaN(parseFloat(lhVal)) ? 0 : parseFloat(lhVal));
                     if (FSC._cachedTemplateData) FSC._cachedTemplateData.lineHeight = gapPx;
                     // Sync current text input values into cached template so content is not lost on re-render
                     try {
@@ -3117,9 +3121,9 @@ jQuery(document).ready(function($) {
                     }
                 }
             });
-            // Line height = gap between custom text rows (px)
+            // Line height = gap between custom text rows (px); 0 = original, negative allowed
             const globalLhVal = $('#fsc-line-height-global').val();
-            templateData.lineHeight = (globalLhVal !== undefined && globalLhVal !== '') ? (isNaN(parseFloat(globalLhVal)) ? 20 : Math.max(0, parseFloat(globalLhVal))) : 20;
+            templateData.lineHeight = (globalLhVal !== undefined && globalLhVal !== '') ? (isNaN(parseFloat(globalLhVal)) ? 0 : parseFloat(globalLhVal)) : 0;
 
             $('[data-element-id]').each(function() {
                 const $el = $(this);
