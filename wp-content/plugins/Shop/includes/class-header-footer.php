@@ -2,7 +2,7 @@
 /**
  * Site header and footer output for APD page templates.
  * Outputs same Elementor header/footer (IDs configurable via options).
- * Injects header/footer on ALL front-end pages by default; use filter to opt out.
+ * Injects only on homepage and Elementor Canvas pages (no theme header/footer) to avoid duplicate.
  *
  * @package AdvancedProductDesigner
  */
@@ -97,8 +97,9 @@ class APD_Header_Footer
 
     /**
      * Determine if this request should get header/footer injected.
-     * By default inject on ALL front-end pages (except when inside APD wrapper).
-     * Use filter 'apd_inject_header_footer' to disable for specific cases (e.g. double header).
+     * Only inject when theme does not output them: homepage or Elementor Canvas template.
+     * This avoids duplicate header/footer on pages that already have theme header/footer.
+     * Filter 'apd_inject_header_footer' can override (e.g. force true/false).
      *
      * @return bool
      */
@@ -110,12 +111,23 @@ class APD_Header_Footer
         if (self::is_in_wrapper()) {
             return false;
         }
-        // Apply to all front-end pages by default; filter can opt out (e.g. return false for specific pages)
-        return apply_filters('apd_inject_header_footer', true);
+        $inject = false;
+        if (is_front_page()) {
+            $inject = true;
+        } else {
+            $post_id = is_singular() ? get_queried_object_id() : 0;
+            if ($post_id) {
+                $template = get_post_meta($post_id, '_wp_page_template', true);
+                if ($template === 'elementor_canvas' || $template === 'elementor_canvas.php') {
+                    $inject = true;
+                }
+            }
+        }
+        return apply_filters('apd_inject_header_footer', $inject);
     }
 
     /**
-     * Register hooks to inject header/footer on all front-end pages (except APD wrapper pages).
+     * Register hooks to inject header/footer (only on homepage and Canvas pages to avoid duplicate).
      */
     public static function init_global_injector()
     {
