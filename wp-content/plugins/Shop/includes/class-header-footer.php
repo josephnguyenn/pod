@@ -109,11 +109,14 @@ class APD_Header_Footer
         if (self::is_in_wrapper()) {
             return false;
         }
+        // Always inject on homepage (front page) so header/footer show there
+        if (is_front_page()) {
+            return true;
+        }
+        // Inject on any page/post using Elementor Canvas (no theme header/footer)
         $post_id = 0;
         if (is_singular()) {
             $post_id = get_queried_object_id();
-        } elseif (is_front_page() && get_option('show_on_front') === 'page') {
-            $post_id = (int) get_option('page_on_front');
         }
         if ($post_id) {
             $template = get_post_meta($post_id, '_wp_page_template', true);
