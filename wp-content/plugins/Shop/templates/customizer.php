@@ -6,9 +6,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Close PHP block
+// Close PHP block (viewport is output by wp_head() when using page wrapper)
 ?>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <script type="module">
 /**
  * Convert SVG element to data URL with embedded fonts
@@ -216,6 +215,7 @@ if (!empty($uploaded_fonts)) {
 }
 ?>
 
+<div class="fsc-page-content">
 <div class="fsc-container">
     <div class="fsc-customizer-wrapper">
         
@@ -322,6 +322,7 @@ if (!empty($uploaded_fonts)) {
         </div>
         
     </div>
+</div>
 </div>
 
 <!-- Hidden form for AJAX submissions -->

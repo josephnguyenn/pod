@@ -1,11 +1,19 @@
-/* Freight Signs Customizer Styles */
-.fsc-container {
-    max-width: 1400px;
+/* Freight Signs Customizer Styles - consistent with other APD pages */
+.fsc-page-content {
+    max-width: 1200px;
     margin: 0 auto;
-    padding: 0;
+    padding: 24px 20px;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.fsc-container {
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
     background: #f8f9fa;
-    min-height: 100vh;
+    min-height: 60vh;
+    border-radius: 8px;
+    overflow: hidden;
 }
 
 /* Input validation styles */
@@ -745,15 +753,18 @@ input.error:focus {
     font-style: italic;
 }
 
-/* One Line height field for all custom text rows */
-.fsc-inputs-dynamic .fsc-line-height-group {
-    margin-bottom: 12px;
+/* Per-element line height and letter spacing (Custom Text group) */
+.fsc-inputs-dynamic .fsc-line-height-group,
+.fsc-inputs-dynamic .fsc-letter-spacing-group {
+    margin-top: 4px;
 }
-.fsc-inputs-dynamic .fsc-line-height-group label {
+.fsc-inputs-dynamic .fsc-line-height-group label,
+.fsc-inputs-dynamic .fsc-letter-spacing-group label {
     font-size: 0.7rem;
     text-transform: none;
 }
-.fsc-inputs-dynamic .fsc-line-height-group input {
+.fsc-inputs-dynamic .fsc-line-height-group input,
+.fsc-inputs-dynamic .fsc-letter-spacing-group input {
     max-width: 120px;
 }
 
@@ -924,6 +935,9 @@ input.error:focus {
 
 /* Responsive Design */
 @media (max-width: 992px) {
+    .fsc-page-content {
+        padding: 20px 16px;
+    }
     .fsc-customizer-wrapper {
         flex-direction: column;
     }
@@ -945,6 +959,9 @@ input.error:focus {
 }
 
 @media (max-width: 768px) {
+    .fsc-page-content {
+        padding: 16px 12px;
+    }
     .fsc-color-grid {
         grid-template-columns: repeat(4, 1fr);
         gap: 8px;

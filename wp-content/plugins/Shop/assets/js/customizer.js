@@ -1399,9 +1399,24 @@ jQuery(document).ready(function($) {
                 }
             }
 
+            // Precompute Y positions for text elements: "Line height" = gap between custom text rows (px)
+            const rowGapPx = Math.max(0, Number(templateData.lineHeight) || 20);
+            const textElsOrdered = (elements || []).map(function(el, idx) { return { el: el, idx: idx }; }).filter(function(o) { return o.el && o.el.type === 'text'; });
+            let accY = null;
+            textElsOrdered.forEach(function(o) {
+                const el = o.el;
+                const fontSize = Number(el.properties && el.properties.fontSize) || 18;
+                const rowHeight = Math.max(Number(el.height) || 0, fontSize * 1.5);
+                if (accY === null) {
+                    accY = Number(el.y) || 0;
+                }
+                el._computedY = accY;
+                accY = accY + rowHeight + rowGapPx;
+            });
+
             (elements || []).forEach(function(el) {
                 const x = Number(el.x) || 0;
-                const y = Number(el.y) || 0;
+                const y = (el.type === 'text' && el._computedY !== undefined) ? el._computedY : (Number(el.y) || 0);
                 const w = Number(el.width) || 0;
                 const h = Number(el.height) || 0;
                 const minW = 1000;
@@ -1651,10 +1666,7 @@ jQuery(document).ready(function($) {
                     textEl.setAttribute('font-size', String(sizePx));
                     textEl.setAttribute('font-family', family);
                     textEl.setAttribute('font-weight', weight);
-                    // Line height: one value for ALL custom text (global)
-                    const lineHeightRaw = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 1.2;
-                    const lh = typeof lineHeightRaw === 'number' ? String(lineHeightRaw) : String(lineHeightRaw).trim();
-                    if (lh) textEl.style.lineHeight = lh;
+                    // Row gap (Line height) is applied via group Y positions above, not CSS
                     // Letter spacing: per-element (each custom text row)
                     const letterSpacingRaw = (el.properties && el.properties.letterSpacing !== undefined) ? el.properties.letterSpacing : null;
                     if (letterSpacingRaw != null && letterSpacingRaw !== '') {
@@ -1827,21 +1839,22 @@ jQuery(document).ready(function($) {
             const $group = $('.fsc-form-group:has(h4:contains("Custom Text"))');
             if ($group.length) {
                 const $container = $('<div class="fsc-inputs-dynamic" />');
-                // One Line height field for ALL custom text (applies to every row)
-                const globalLineHeight = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 1.2;
+                // Line height = khoảng cách giữa các row Custom Text (gap in px)
+                const globalLineHeight = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 20;
                 const $lineHeightRow = $('<div class="fsc-input-group fsc-line-height-group" />');
-                $lineHeightRow.append('<label for="fsc-line-height-global">Line height</label>');
-                const $lineHeightGlobal = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', 'fsc-line-height-global').val(String(globalLineHeight)).attr('placeholder', '1.2');
+                $lineHeightRow.append('<label for="fsc-line-height-global">Line height (row spacing)</label>');
+                const $lineHeightGlobal = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', 'fsc-line-height-global').val(String(globalLineHeight)).attr('placeholder', '20');
                 $lineHeightRow.append($lineHeightGlobal);
                 $lineHeightGlobal.on('input change', function() {
                     const lhVal = $(this).val();
-                    const lh = (lhVal === '' || lhVal == null) ? 1.2 : (isNaN(parseFloat(lhVal)) ? lhVal : parseFloat(lhVal));
-                    if (FSC._cachedTemplateData) FSC._cachedTemplateData.lineHeight = lh;
-                    const lhForStyle = (lhVal === '' || lhVal == null) ? '1.2' : (isNaN(parseFloat(lhVal)) ? lhVal : String(lhVal));
-                    $('.apd-template-canvas-full .apd-text-el').each(function() {
-                        const $svgText = $(this).find('svg text').first();
-                        if ($svgText.length) $svgText[0].style.lineHeight = lhForStyle || '';
-                    });
+                    const gapPx = (lhVal === '' || lhVal == null) ? 20 : (isNaN(parseFloat(lhVal)) ? 20 : Math.max(0, parseFloat(lhVal)));
+                    if (FSC._cachedTemplateData) FSC._cachedTemplateData.lineHeight = gapPx;
+                    // Rebuild SVG so text row Y positions are recomputed with new gap
+                    try {
+                        if (FSC._cachedTemplateData && FSC._cachedProductData) {
+                            FSC.renderTemplate(FSC._cachedTemplateData, FSC._cachedProductData);
+                        }
+                    } catch (e) { /* noop */ }
                 });
                 $container.append($lineHeightRow);
                 textEls.forEach(function(el, idx){
@@ -3084,9 +3097,9 @@ jQuery(document).ready(function($) {
                     }
                 }
             });
-            // One global line height for all custom text
+            // Line height = gap between custom text rows (px)
             const globalLhVal = $('#fsc-line-height-global').val();
-            templateData.lineHeight = (globalLhVal !== undefined && globalLhVal !== '') ? (isNaN(parseFloat(globalLhVal)) ? globalLhVal : parseFloat(globalLhVal)) : 1.2;
+            templateData.lineHeight = (globalLhVal !== undefined && globalLhVal !== '') ? (isNaN(parseFloat(globalLhVal)) ? 20 : Math.max(0, parseFloat(globalLhVal))) : 20;
 
             $('[data-element-id]').each(function() {
                 const $el = $(this);

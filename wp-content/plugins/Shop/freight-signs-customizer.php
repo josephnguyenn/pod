@@ -227,7 +227,9 @@ if (!class_exists('AdvancedProductDesigner')) {
         if ($customizer_id) {
             error_log('APD Template Redirect: Customizer detected with ID: ' . $customizer_id);
             
-            get_header();
+            // Use same header/footer as other APD pages for consistent look
+            APD_Header_Footer::page_wrapper_start();
+            APD_Header_Footer::output_site_header();
             
             // Render customizer - delegate to meta_boxes if it has the method
             if (method_exists($this->meta_boxes, 'render_customizer')) {
@@ -237,7 +239,8 @@ if (!class_exists('AdvancedProductDesigner')) {
                 include APD_PLUGIN_PATH . 'templates/customizer.php';
             }
             
-            get_footer();
+            APD_Header_Footer::output_site_footer();
+            APD_Header_Footer::page_wrapper_end();
             exit;
         }
 
