@@ -289,27 +289,8 @@ class APD_Order_Admin_Handler
             $svg_download_url = $image_to_display;
         }
         
-        // Add download SVG button for admin
-        if (current_user_can('manage_options') && !empty($svg_download_url)) {
-            echo '<div class="order-svg-download-section" style="margin: 20px 0; padding: 15px; background: #f0f6fc; border: 1px solid #0073aa; border-radius: 4px;">';
-            echo '<h3 style="margin: 0 0 10px 0; font-size: 14px; color: #0073aa;">Production Files</h3>';
-            echo '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
-            echo '<button type="button" class="button button-primary" onclick="downloadOrderSVG(' . $order_id . ')">';
-            echo '<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Download Original SVG';
-            echo '</button>';
-            echo '<button type="button" class="button button-secondary" onclick="processCutReadySVG(' . $order_id . ')" style="background: #2271b1; color: white; border-color: #2271b1;">';
-            echo '<span class="dashicons dashicons-media-code" style="margin-top: 3px;"></span> Export Cut-Ready SVG';
-            echo '</button>';
-            echo '<button type="button" class="button button-secondary" onclick="exportVectorPDF(' . $order_id . ')" style="background: #d63638; color: white; border-color: #d63638;">';
-            echo '<span class="dashicons dashicons-media-document" style="margin-top: 3px;"></span> Export Vector PDF';
-            echo '</button>';
-            echo '<button type="button" class="button" onclick="testInkscape()" style="margin-left: 5px;">';
-            echo '<span class="dashicons dashicons-yes-alt" style="margin-top: 3px;"></span> Test Inkscape';
-            echo '</button>';
-            echo '</div>';
-            echo '<p class="description" style="margin: 10px 0 0 0;">Original SVG includes textures and effects. Cut-Ready SVG is optimized for CorelDRAW/cutting machines (removes textures, flattens layers). Vector PDF preserves all styles and material patterns - open in CorelDRAW to convert to editable vectors.</p>';
-            echo '</div>';
-        }
+        // Production Files block (partial with CDR note)
+        APD_Order_Admin_Production_Files::render($order_id, $svg_download_url);
 
         // Debug output for admin
         if (current_user_can('manage_options')) {
@@ -513,38 +494,6 @@ class APD_Order_Admin_Handler
         <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-        <script>
-        window.exportVectorPDF = function(){ console.warn('PDF export loading...'); };
-        
-        // Test Inkscape availability
-        window.testInkscape = function() {
-            jQuery.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'apd_test_inkscape',
-                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        alert('✅ Inkscape Status: WORKING!\n\n' + 
-                              'Path: ' + response.data.inkscape_path + '\n' +
-                              'Version: ' + response.data.version + '\n\n' +
-                              '✅ PDF export will use server-side Inkscape processing.\n' +
-                              '✅ Material outlines will be preserved for CorelDRAW.');
-                    } else {
-                        alert('❌ Inkscape Not Available\n\n' + 
-                              response.data.message + '\n\n' +
-                              'Shell_exec: ' + response.data.shell_exec + '\n\n' +
-                              'Recommendation:\n' + response.data.recommendation);
-                    }
-                },
-                error: function() {
-                    alert('Error checking Inkscape status');
-                }
-            });
-        };
-        </script>
         <script>
         (function(){
             const orderId = <?php echo (int) $order_id; ?>;
@@ -799,104 +748,7 @@ class APD_Order_Admin_Handler
             });
         })();
 
-        // Download validated SVG from order
-        function downloadOrderSVG(orderId) {
-            const button = event.target.closest('button');
-            const originalText = button.innerHTML;
-            button.disabled = true;
-            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
-
-            // Add spinner animation
-            const style = document.createElement('style');
-            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-
-            jQuery.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'download_order_svg',
-                    order_id: orderId
-                },
-                success: function(response) {
-                    if (response.success) {
-                        // Create download link for SVG file
-                        const blob = new Blob([response.data.svg_content], { type: 'image/svg+xml' });
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = response.data.filename;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-
-                        // Show success message
-                        const successDiv = document.createElement('div');
-                        successDiv.className = 'notice notice-success is-dismissible';
-                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p>';
-                        button.closest('.order-svg-download-section').appendChild(successDiv);
-                        
-                        setTimeout(() => successDiv.remove(), 5000);
-                    } else {
-                        alert('Error: ' + (response.data.message || 'Failed to download SVG'));
-                    }
-                },
-                error: function() {
-                    alert('Network error occurred while downloading SVG');
-                },
-                complete: function() {
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                }
-            });
-        }
-
-        // Process Cut-Ready SVG
-        function processCutReadySVG(orderId) {
-            const button = event.target.closest('button');
-            const originalText = button.innerHTML;
-            button.disabled = true;
-            button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Processing...';
-
-            jQuery.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'apd_process_cut_ready_svg',
-                    order_id: orderId,
-                    _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        // Download the processed SVG file
-                        const a = document.createElement('a');
-                        a.href = response.data.file_url;
-                        a.download = response.data.filename;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-
-                        // Show success message
-                        const successDiv = document.createElement('div');
-                        successDiv.className = 'notice notice-success is-dismissible';
-                        successDiv.innerHTML = '<p><strong>✅ Success!</strong> ' + response.data.message + '</p><p style="margin: 5px 0 0 0;"><small>File saved: ' + response.data.filename + '</small></p>';
-                        button.closest('.order-svg-download-section').appendChild(successDiv);
-                        
-                        setTimeout(() => successDiv.remove(), 8000);
-                    } else {
-                        alert('Error: ' + (response.data || 'Failed to process SVG'));
-                    }
-                },
-                error: function(xhr, status, error) {
-                    alert('Network error occurred while processing SVG: ' + error);
-                },
-                complete: function() {
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                }
-            });
-        }
+        // downloadOrderSVG and processCutReadySVG are in order-admin-export.js
 
         // Client-side PDF generation - creates PDF with embedded SVG for CorelDRAW
         // Now includes text-to-curves conversion using opentype.js

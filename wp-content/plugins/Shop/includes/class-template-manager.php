@@ -446,22 +446,12 @@ class APD_Template_Manager
             return;
         }
 
-        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
-        
-        if (empty($svg_content)) {
-            $cart_items = get_post_meta($order_id, 'cart_items', true);
-            if (is_string($cart_items)) {
-                $cart_items = json_decode($cart_items, true);
-            }
-            if (!empty($cart_items[0]['preview_image_svg'])) {
-                $svg_content = $cart_items[0]['preview_image_svg'];
-            }
-        }
-
-        if (empty($svg_content)) {
+        $result = APD_Order_SVG_Resolver::get_svg_for_order($order_id);
+        if (!$result || empty($result['content'])) {
             wp_send_json_error(array('message' => 'No SVG found for this order'));
             return;
         }
+        $svg_content = $result['content'];
 
         // CRITICAL: Ensure material outline for logo is preserved in SVG
         // Check if logoMaterialPattern exists but logo paths don't have stroke with it

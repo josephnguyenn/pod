@@ -73,12 +73,16 @@ class APD_Autoloader
             'admin-pages',
             'material-manager',
             'template-manager',
+            'order-svg-resolver',
+            'svg-utils',
+            'svg-cut-ready',
             'rest-api',
             'activation',
             'ajax-handlers',
             'frontend-shortcodes',
             'svg-processor',
             'order-admin-handler',
+            'order-admin-production-files',
             'email-tester',
             'meta-boxes'
         );

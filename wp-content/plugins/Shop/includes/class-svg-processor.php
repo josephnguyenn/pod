@@ -21,13 +21,20 @@ class APD_SVG_Processor
     private $plugin;
 
     /**
+     * Cut-ready SVG processor
+     * @var APD_SVG_Cut_Ready
+     */
+    private $cut_ready;
+
+    /**
      * Constructor
-     * 
+     *
      * @param AdvancedProductDesigner $plugin Main plugin instance
      */
     public function __construct($plugin)
     {
         $this->plugin = $plugin;
+        $this->cut_ready = new APD_SVG_Cut_Ready();
     }
 
     /**
@@ -53,7 +60,7 @@ class APD_SVG_Processor
             return;
         }
         
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
         
         if (!$inkscape_path) {
             wp_send_json_error(array(
@@ -88,7 +95,7 @@ class APD_SVG_Processor
             return;
         }
 
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
 
         // Minimal SVG with text and a rectangle to exercise text-to-curves and shapes
         $test_svg = '<?xml version="1.0" encoding="UTF-8"?>'
@@ -173,123 +180,8 @@ class APD_SVG_Processor
 
         error_log("APD Get Order SVG - Order #$order_id: Fetching SVG content for rasterization");
 
-        // Get SVG content - use same logic as cut-ready SVG
-        $svg_content = '';
-        $source = '';
-        
-        // Debug: Check all meta fields
-        $preview_svg_meta = get_post_meta($order_id, 'preview_image_svg', true);
-        $cart_items_raw = get_post_meta($order_id, 'cart_items', true);
-        
-        error_log("APD Get Order SVG - Order #$order_id: DEBUG - preview_image_svg meta value: " . substr($preview_svg_meta, 0, 200));
-        error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items type: " . gettype($cart_items_raw));
-        
-        // Try 1: Direct meta field
-        $svg_content = $preview_svg_meta;
-        if (!empty($svg_content)) {
-            $source = 'preview_image_svg meta';
-        }
-        
-        // Try 2: PNG meta (might be base64 SVG)
-        if (empty($svg_content)) {
-            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
-            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
-                $svg_content = $preview_png;
-                $source = 'preview_image_png meta (contains SVG)';
-            }
-        }
-        
-        // Try 3: URL meta
-        if (empty($svg_content)) {
-            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
-            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
-                $svg_content = $preview_url;
-                $source = 'preview_image_url meta (contains SVG)';
-            }
-        }
-        
-        // Try 4: Cart items - check customization_data thoroughly
-        if (empty($svg_content)) {
-            $cart_items = get_post_meta($order_id, 'cart_items', true);
-            if (is_string($cart_items)) {
-                $cart_items = json_decode($cart_items, true);
-            }
-            if (!empty($cart_items) && is_array($cart_items)) {
-                $first_item = $cart_items[0];
-                
-                // Debug: Log cart item structure
-                error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items[0] keys: " . implode(', ', array_keys($first_item)));
-                
-                // Try customization_data first (most likely location)
-                if (!empty($first_item['customization_data'])) {
-                    $cd = is_array($first_item['customization_data']) ? $first_item['customization_data'] : json_decode($first_item['customization_data'], true);
-                    
-                    if (is_array($cd)) {
-                        error_log("APD Get Order SVG - Order #$order_id: DEBUG - customization_data keys: " . implode(', ', array_keys($cd)));
-                        
-                        // Try preview_image_svg
-                        if (!empty($cd['preview_image_svg'])) {
-                            $svg_val = $cd['preview_image_svg'];
-                            error_log("APD Get Order SVG - Order #$order_id: DEBUG - customization_data.preview_image_svg length: " . strlen($svg_val));
-                            error_log("APD Get Order SVG - Order #$order_id: DEBUG - First 100 chars: " . substr($svg_val, 0, 100));
-                            
-                            $svg_content = $svg_val;
-                            $source = 'cart_items[0].customization_data.preview_image_svg';
-                        }
-                        // Try svgContent
-                        elseif (!empty($cd['svgContent'])) {
-                            $svg_content = $cd['svgContent'];
-                            $source = 'cart_items[0].customization_data.svgContent';
-                        }
-                        // Try svg_content
-                        elseif (!empty($cd['svg_content'])) {
-                            $svg_content = $cd['svg_content'];
-                            $source = 'cart_items[0].customization_data.svg_content';
-                        }
-                    }
-                }
-                
-                // Fallback to item level
-                if (empty($svg_content) && !empty($first_item['preview_image_svg'])) {
-                    $svg_val = $first_item['preview_image_svg'];
-                    error_log("APD Get Order SVG - Order #$order_id: DEBUG - cart_items[0].preview_image_svg length: " . strlen($svg_val));
-                    error_log("APD Get Order SVG - Order #$order_id: DEBUG - First 100 chars: " . substr($svg_val, 0, 100));
-                    
-                    $svg_content = $svg_val;
-                    $source = 'cart_items[0].preview_image_svg';
-                }
-            }
-        }
-        
-        // Try 5: Fetch from URL if it's a file URL (e.g., PNG file that might contain SVG)
-        if (empty($svg_content) || (strlen($svg_content) < 200 && filter_var($svg_content, FILTER_VALIDATE_URL))) {
-            $url_to_fetch = $svg_content;
-            
-            // If $svg_content is empty, try getting URL from meta
-            if (empty($url_to_fetch)) {
-                $url_to_fetch = get_post_meta($order_id, 'preview_image_svg', true);
-            }
-            
-            if (!empty($url_to_fetch) && filter_var($url_to_fetch, FILTER_VALIDATE_URL)) {
-                error_log("APD Get Order SVG - Order #$order_id: Attempting to fetch from URL: $url_to_fetch");
-                
-                $response = wp_remote_get($url_to_fetch);
-                if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                    $fetched_content = wp_remote_retrieve_body($response);
-                    
-                    // Check if it's actually SVG content
-                    if (strpos($fetched_content, '<svg') !== false) {
-                        $svg_content = $fetched_content;
-                        $source = 'Fetched from URL: ' . $url_to_fetch;
-                        error_log("APD Get Order SVG - Order #$order_id: ✅ Fetched SVG from URL");
-                    } else {
-                        error_log("APD Get Order SVG - Order #$order_id: ⚠️ URL content is not SVG (might be PNG)");
-                    }
-                }
-            }
-        }
-
-        if (empty($svg_content)) {
+        $result = APD_Order_SVG_Resolver::get_svg_for_order($order_id);
+        if (!$result || empty($result['content'])) {
             error_log("APD Get Order SVG - Order #$order_id: ❌ No SVG content found");
             wp_send_json_error(array(
                 'message' => 'No SVG content found for this order',
@@ -297,20 +189,12 @@ class APD_SVG_Processor
             ));
             return;
         }
-
-        // Decode if it's a data URL
-        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
-            if (strpos($svg_content, 'base64,') !== false) {
-                $svg_content = base64_decode(substr($svg_content, strpos($svg_content, 'base64,') + 7));
-            } else {
-                $svg_content = urldecode(substr($svg_content, strpos($svg_content, ',') + 1));
-            }
-            $source .= ' (decoded from data URL)';
-        }
+        $svg_content = $result['content'];
+        $source = $result['source'];
 
         error_log("APD Get Order SVG - Order #$order_id: ✅ SVG content found from: $source");
         error_log("APD Get Order SVG - Order #$order_id: SVG size: " . strlen($svg_content) . " bytes");
-        
+
         // CRITICAL: Ensure logo material outline is preserved before rasterization
         // This ensures material outline is present in SVG before client-side rasterization
         $svg_content = $this->ensure_logo_material_outline_for_rasterization($svg_content, $order_id);
@@ -336,72 +220,15 @@ class APD_SVG_Processor
             return;
         }
 
-        // Get the original SVG - try multiple sources
-        $svg_content = '';
-        $source = '';
-        
-        // Try 1: Direct meta field
-        $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
-        if (!empty($svg_content)) {
-            $source = 'preview_image_svg meta';
-        }
-        
-        // Try 2: PNG meta (might be base64 SVG)
-        if (empty($svg_content)) {
-            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
-            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
-                $svg_content = $preview_png;
-                $source = 'preview_image_png meta (contains SVG)';
-            }
-        }
-        
-        // Try 3: URL meta
-        if (empty($svg_content)) {
-            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
-            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
-                $svg_content = $preview_url;
-                $source = 'preview_image_url meta (contains SVG)';
-            }
-        }
-        
-        // Try 4: Cart items
-        if (empty($svg_content)) {
-            $cart_items = get_post_meta($order_id, 'cart_items', true);
-            if (is_string($cart_items)) {
-                $cart_items = json_decode($cart_items, true);
-            }
-            if (!empty($cart_items) && is_array($cart_items)) {
-                $first_item = is_array($cart_items) && !empty($cart_items[0]) ? $cart_items[0] : null;
-                if ($first_item) {
-                    // Check multiple fields in cart item
-                    $svg_content = isset($first_item['preview_image_svg']) ? $first_item['preview_image_svg'] : '';
-                    if (!empty($svg_content)) {
-                        $source = 'cart_items[0].preview_image_svg';
-                    }
-                    
-                    if (empty($svg_content)) {
-                        $svg_content = isset($first_item['preview_image_png']) ? $first_item['preview_image_png'] : '';
-                        if (!empty($svg_content) && strpos($svg_content, 'data:image/svg') !== false) {
-                            $source = 'cart_items[0].preview_image_png (contains SVG)';
-                        } else {
-                            $svg_content = '';
-                        }
-                    }
-                    
-                    if (empty($svg_content) && !empty($first_item['customization_data'])) {
-                        $cd = is_string($first_item['customization_data']) ? json_decode($first_item['customization_data'], true) : $first_item['customization_data'];
-                        if (is_array($cd)) {
-                            $svg_content = isset($cd['preview_image_svg']) ? $cd['preview_image_svg'] : (isset($cd['preview_image_png']) ? $cd['preview_image_png'] : '');
-                            if (!empty($svg_content)) {
-                                $source = 'cart_items[0].customization_data.preview_image_svg/png';
-                            }
-                        }
-                    }
-                }
-            }
+        $result = APD_Order_SVG_Resolver::get_svg_for_order($order_id);
+        if (!$result || empty($result['content'])) {
+            $svg_content = '';
+            $source = '';
+        } else {
+            $svg_content = $result['content'];
+            $source = $result['source'];
         }
 
-        // Log what we found for debugging
         error_log(sprintf(
             'APD Cut-Ready SVG - Order #%d: Source=%s, Content Length=%d, First 100 chars=%s',
             $order_id,
@@ -409,22 +236,6 @@ class APD_SVG_Processor
             strlen($svg_content),
             substr($svg_content, 0, 100)
         ));
-
-        // Check if svg_content is a URL instead of actual SVG content
-        if (!empty($svg_content) && (strpos($svg_content, 'http://') === 0 || strpos($svg_content, 'https://') === 0)) {
-            error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Content is a URL, fetching: ' . $svg_content);
-            $response = wp_remote_get($svg_content);
-            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                $svg_content = wp_remote_retrieve_body($response);
-                $source .= ' (fetched from URL)';
-                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Fetched content length: ' . strlen($svg_content));
-            } else {
-                $error_msg = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
-                error_log('APD Cut-Ready SVG - Order #' . $order_id . ': Failed to fetch URL: ' . $error_msg);
-                wp_send_json_error('Failed to fetch SVG from URL: ' . $error_msg);
-                return;
-            }
-        }
 
         if (empty($svg_content)) {
             // Return detailed error with all meta keys for debugging
@@ -469,7 +280,7 @@ class APD_SVG_Processor
         }
 
         // Process the SVG to make it cut-ready (MINIMAL CLEANUP - Keeps 100% content)
-        $clean_svg = $this->make_coreldraw_compatible($svg_content, $order_id);
+        $clean_svg = $this->cut_ready->make_coreldraw_compatible($svg_content, $order_id);
 
         if (is_wp_error($clean_svg)) {
             wp_send_json_error($clean_svg->get_error_message());
@@ -638,17 +449,9 @@ class APD_SVG_Processor
         
         error_log("APD PDF Export - Order #$order_id: ===== STARTING PDF EXPORT =====");
 
-        // Get the original SVG - check for client-side rasterized override first
-        $svg_content = '';
-        $source = '';
-        
-        // NEW: Check for rasterized SVG override from client
-        if (!empty($_POST['svg_override'])) {
-            $svg_content = wp_unslash($_POST['svg_override']);
-            $source = 'client-side rasterized SVG';
-            
-            // Detect if it's rasterized
-            $is_rasterized = preg_match('/<image[^>]*href=["\']data:image\/png/', $svg_content);
+        $override = isset($_POST['svg_override']) ? $_POST['svg_override'] : null;
+        if (!empty($override)) {
+            $is_rasterized = preg_match('/<image[^>]*href=["\']data:image\/png/', $override);
             if ($is_rasterized) {
                 error_log("APD PDF Export - Order #$order_id: ✅ RASTERIZED SVG received from client (Option A)");
                 error_log("APD PDF Export - Order #$order_id: Material outline is BAKED IN - perfect for CorelDraw");
@@ -656,78 +459,16 @@ class APD_SVG_Processor
                 error_log("APD PDF Export - Order #$order_id: Vector SVG received from client");
             }
         }
-        
-        // Try 1: Direct meta field (if no override)
-        if (empty($svg_content)) {
-            $svg_content = get_post_meta($order_id, 'preview_image_svg', true);
-            if (!empty($svg_content)) {
-                $source = 'preview_image_svg meta';
-            }
-        }
-        
-        // Try 2: PNG meta (might be base64 SVG)
-        if (empty($svg_content)) {
-            $preview_png = get_post_meta($order_id, 'preview_image_png', true);
-            if (!empty($preview_png) && strpos($preview_png, 'data:image/svg') !== false) {
-                $svg_content = $preview_png;
-                $source = 'preview_image_png meta (contains SVG)';
-            }
-        }
-        
-        // Try 3: URL meta
-        if (empty($svg_content)) {
-            $preview_url = get_post_meta($order_id, 'preview_image_url', true);
-            if (!empty($preview_url) && strpos($preview_url, 'data:image/svg') !== false) {
-                $svg_content = $preview_url;
-                $source = 'preview_image_url meta (contains SVG)';
-            }
-        }
-        
-        // Try 4: Cart items
-        if (empty($svg_content)) {
-            $cart_items = get_post_meta($order_id, 'cart_items', true);
-            if (is_string($cart_items)) {
-                $cart_items = json_decode($cart_items, true);
-            }
-            if (!empty($cart_items) && is_array($cart_items)) {
-                $first_item = is_array($cart_items) && !empty($cart_items[0]) ? $cart_items[0] : null;
-                if ($first_item) {
-                    $svg_content = isset($first_item['preview_image_svg']) ? $first_item['preview_image_svg'] : '';
-                    if (!empty($svg_content)) {
-                        $source = 'cart_items[0].preview_image_svg';
-                    }
-                    
-                    if (empty($svg_content)) {
-                        $svg_content = isset($first_item['preview_image_png']) ? $first_item['preview_image_png'] : '';
-                        if (!empty($svg_content) && strpos($svg_content, 'data:image/svg') !== false) {
-                            $source = 'cart_items[0].preview_image_png (contains SVG)';
-                        } else {
-                            $svg_content = '';
-                        }
-                    }
-                }
-            }
-        }
 
-        // Check if svg_content is a URL instead of actual SVG content
-        if (!empty($svg_content) && (strpos($svg_content, 'http://') === 0 || strpos($svg_content, 'https://') === 0)) {
-            $response = wp_remote_get($svg_content);
-            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                $svg_content = wp_remote_retrieve_body($response);
-                $source .= ' (fetched from URL)';
-            } else {
-                $error_msg = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
-                wp_send_json_error('Failed to fetch SVG from URL: ' . $error_msg);
-                return;
-            }
-        }
-
-        if (empty($svg_content)) {
+        $result = APD_Order_SVG_Resolver::get_svg_for_order($order_id, $override);
+        if (!$result || empty($result['content'])) {
             error_log("APD PDF Export - Order #$order_id: ERROR - No SVG found");
             wp_send_json_error('No SVG found for this order');
             return;
         }
-        
+        $svg_content = $result['content'];
+        $source = $result['source'];
+
         error_log("APD PDF Export - Order #$order_id: SVG found from source: $source");
         error_log("APD PDF Export - Order #$order_id: SVG content length: " . strlen($svg_content) . " bytes");
         
@@ -836,369 +577,6 @@ class APD_SVG_Processor
             'pattern_count' => $pattern_count_final,
             'pattern_fills' => $pattern_fills_final
         ));
-    }
-
-    /**
-     * Make SVG compatible with CorelDRAW while keeping 100% of content and styles
-     * Only fixes encoding and attribute issues that prevent CorelDRAW from opening
-     * 
-     * @param string $svg_content Source SVG content
-     * @param int $order_id Order ID for logging
-     * @return string|WP_Error Clean SVG content or error
-     */
-    private function make_coreldraw_compatible($svg_content, $order_id = 0)
-    {
-        error_log("APD CorelDRAW Compatible - Order #$order_id: Starting minimal cleanup (keeps 100% content)");
-        
-        // STEP 1: Decode if it's a data URL
-        if (strpos($svg_content, 'data:image/svg+xml') === 0) {
-            if (strpos($svg_content, 'base64,') !== false) {
-                $svg_content = base64_decode(substr($svg_content, strpos($svg_content, 'base64,') + 7));
-            } else {
-                $svg_content = urldecode(substr($svg_content, strpos($svg_content, ',') + 1));
-            }
-        }
-        
-        // STEP 2: Convert encoding to UTF-8 (CorelDRAW requirement)
-        $detected_encoding = mb_detect_encoding($svg_content, ['UTF-8', 'UTF-16LE', 'UTF-16BE', 'ISO-8859-1'], true);
-        if ($detected_encoding && $detected_encoding !== 'UTF-8') {
-            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', $detected_encoding);
-            error_log("APD CorelDRAW Compatible - Order #$order_id: Converted from $detected_encoding to UTF-8");
-        }
-        
-        // CRITICAL: Store original content length for verification
-        $original_length = strlen($svg_content);
-        error_log("APD CorelDRAW Compatible - Order #$order_id: Original content length: $original_length bytes");
-        
-        // STEP 3: CAREFULLY fix only truly malformed attributes
-        // DO NOT remove valid color/style attributes
-        // Only fix the specific ="="" pattern that breaks XML parsing
-        
-        // Fix ONLY empty double-equals patterns (="="") - these are truly malformed
-        $svg_content = preg_replace('/(\w+(-\w+)*)="=""/', '', $svg_content);
-        
-        // Fix split attributes: stroke-linejoin="" round="" -> stroke-linejoin="round"
-        $svg_content = preg_replace('/stroke-linejoin=""\s+round=""/', 'stroke-linejoin="round"', $svg_content);
-        $svg_content = preg_replace('/stroke-linejoin=""\s+miter=""/', 'stroke-linejoin="miter"', $svg_content);
-        $svg_content = preg_replace('/stroke-linejoin=""\s+bevel=""/', 'stroke-linejoin="bevel"', $svg_content);
-        
-        $svg_content = preg_replace('/stroke-linecap=""\s+round=""/', 'stroke-linecap="round"', $svg_content);
-        $svg_content = preg_replace('/stroke-linecap=""\s+square=""/', 'stroke-linecap="square"', $svg_content);
-        $svg_content = preg_replace('/stroke-linecap=""\s+butt=""/', 'stroke-linecap="butt"', $svg_content);
-        
-        $svg_content = preg_replace('/vector-effect=""\s+non-scaling-stroke=""/', 'vector-effect="non-scaling-stroke"', $svg_content);
-        
-        // Remove orphaned standalone attribute values (with empty quotes)
-        $svg_content = preg_replace('/\s+round=""(?!\s*\w+)/', '', $svg_content);
-        $svg_content = preg_replace('/\s+miter=""/', '', $svg_content);
-        $svg_content = preg_replace('/\s+bevel=""/', '', $svg_content);
-        $svg_content = preg_replace('/\s+square=""/', '', $svg_content);
-        $svg_content = preg_replace('/\s+butt=""/', '', $svg_content);
-        $svg_content = preg_replace('/\s+non-scaling-stroke=""/', '', $svg_content);
-        
-        // IMPORTANT: DO NOT remove empty fill="" or stroke="" as they might be intentional "none" values
-        // Only remove if they have the malformed ="="" pattern (already handled above)
-        
-        // STEP 3.5: Duplicate styles as attributes for CorelDRAW compatibility
-        // KEEP original style="" with !important for modern tools
-        // ADD direct attributes for CorelDRAW compatibility (if not already present)
-        $svg_content = preg_replace_callback(
-            '/(<[^>]*)\sstyle="([^"]*)"([^>]*>)/i',
-            function($matches) {
-                $before = $matches[1];
-                $original_style = $matches[2];  // KEEP ORIGINAL!
-                $after = $matches[3];
-                
-                $full_element = $before . $after;  // Element without style attribute
-                $attributes = array();
-                
-                // Extract fill color and ADD as attribute (ONLY if not already present!)
-                if (!preg_match('/\sfill=/i', $full_element)) {
-                    if (preg_match('/fill:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
-                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
-                        $attributes[] = 'fill="' . $hex . '"';
-                    } elseif (preg_match('/fill:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
-                        // CRITICAL: Material pattern fill for CorelDRAW
-                        $pattern_id = trim($m[1]);
-                        // Clean up any HTML entities
-                        $pattern_id = str_replace('&quot;', '', $pattern_id);
-                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
-                        $attributes[] = 'fill="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
-                    } elseif (preg_match('/fill:\s*([#\w]+)/i', $original_style, $m)) {
-                        $fill_value = trim($m[1]);
-                        if ($fill_value !== 'none' && $fill_value !== '') {
-                            $attributes[] = 'fill="' . htmlspecialchars($fill_value, ENT_QUOTES) . '"';
-                        }
-                    }
-                }
-                
-                // Extract stroke color and ADD as attribute (ONLY if not already present!)
-                if (!preg_match('/\sstroke=/i', $full_element)) {
-                    if (preg_match('/stroke:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)/i', $original_style, $m)) {
-                        $hex = sprintf('#%02x%02x%02x', $m[1], $m[2], $m[3]);
-                        $attributes[] = 'stroke="' . $hex . '"';
-                    } elseif (preg_match('/stroke:\s*url\([\'"]?([^)\'"]+)[\'"]?\)/i', $original_style, $m)) {
-                        // CRITICAL: Material OUTLINE pattern for CorelDRAW
-                        $pattern_id = trim($m[1]);
-                        // Clean up any HTML entities
-                        $pattern_id = str_replace('&quot;', '', $pattern_id);
-                        $pattern_id = str_replace('&amp;', '&', $pattern_id);
-                        $attributes[] = 'stroke="url(' . htmlspecialchars($pattern_id, ENT_QUOTES) . ')"';
-                    } elseif (preg_match('/stroke:\s*([#\w]+)/i', $original_style, $m)) {
-                        $stroke_value = trim($m[1]);
-                        if ($stroke_value !== 'none' && $stroke_value !== '') {
-                            $attributes[] = 'stroke="' . htmlspecialchars($stroke_value, ENT_QUOTES) . '"';
-                        }
-                    }
-                }
-                
-                // Extract stroke-width and ADD as attribute (ONLY if not already present!)
-                if (!preg_match('/\sstroke-width=/i', $full_element)) {
-                    if (preg_match('/stroke-width:\s*([^;]+)/i', $original_style, $m)) {
-                        $attributes[] = 'stroke-width="' . htmlspecialchars(trim($m[1]), ENT_QUOTES) . '"';
-                    }
-                }
-                
-                // Extract opacity values and ADD as attributes (ONLY if not already present!)
-                if (!preg_match('/\sfill-opacity=/i', $full_element)) {
-                    if (preg_match('/fill-opacity:\s*([^;]+)/i', $original_style, $m)) {
-                        $attributes[] = 'fill-opacity="' . htmlspecialchars(trim($m[1]), ENT_QUOTES) . '"';
-                    }
-                }
-                if (!preg_match('/\sstroke-opacity=/i', $full_element)) {
-                    if (preg_match('/stroke-opacity:\s*([^;]+)/i', $original_style, $m)) {
-                        $attributes[] = 'stroke-opacity="' . htmlspecialchars(trim($m[1]), ENT_QUOTES) . '"';
-                    }
-                }
-                
-                // Build final element - KEEP ORIGINAL STYLE + ADD ATTRIBUTES (only if not duplicates)
-                $result = $before;
-                if (!empty($attributes)) {
-                    $result .= ' ' . implode(' ', $attributes);
-                }
-                // IMPORTANT: Keep original style with !important
-                $result .= ' style="' . $original_style . '"';
-                $result .= $after;
-                
-                return $result;
-            },
-            $svg_content
-        );
-        
-        // STEP 4: Remove base64 font data for universal CorelDRAW compatibility (all versions)
-        // Keep font-family declarations so text styling is preserved
-        // CorelDRAW will use system fonts with same family name if available
-        $svg_content = preg_replace_callback(
-            '/@font-face\s*\{[^}]*\}/s',
-            function($matches) {
-                $fontface = $matches[0];
-                // Extract font-family name and other properties
-                $properties = array();
-                
-                if (preg_match('/font-family:\s*["\']?([^;"\']+)["\']?/i', $fontface, $m)) {
-                    $properties[] = "font-family: '" . trim($m[1]) . "'";
-                }
-                if (preg_match('/font-weight:\s*([^;]+)/i', $fontface, $m)) {
-                    $properties[] = "font-weight: " . trim($m[1]);
-                }
-                if (preg_match('/font-style:\s*([^;]+)/i', $fontface, $m)) {
-                    $properties[] = "font-style: " . trim($m[1]);
-                }
-                
-                // Return simplified font-face without base64 data
-                if (!empty($properties)) {
-                    return "@font-face { " . implode("; ", $properties) . "; }";
-                }
-                return '';
-            },
-            $svg_content
-        );
-        
-        // STEP 4.5: Ensure pattern fills work in CorelDRAW
-        // CorelDRAW needs pattern references as direct attributes, not just in style
-        // Convert style pattern references to attribute format
-        $svg_content = preg_replace_callback(
-            '/(stroke|fill):\s*url\(([\'"]?)([^)]+)\2\)\s*!?important;?/i',
-            function($matches) {
-                $attr_name = $matches[1];  // stroke or fill
-                $pattern_id = $matches[3];  // #logoGoldPattern or &quot;#logoGoldPattern&quot;
-                
-                // Clean up the pattern ID
-                $pattern_id = str_replace('&quot;', '', $pattern_id);
-                $pattern_id = str_replace('"', '', $pattern_id);
-                $pattern_id = str_replace("'", '', $pattern_id);
-                $pattern_id = trim($pattern_id);
-                
-                // Return both style AND attribute format for maximum compatibility
-                return $attr_name . ': url(' . $pattern_id . ')';
-            },
-            $svg_content
-        );
-        
-        // STEP 5: Ensure proper XML declaration with UTF-8
-        // Remove any existing XML declaration first
-        $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
-        
-        // Add clean UTF-8 XML declaration
-        $svg_content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . "\n" . $svg_content;
-        
-        // STEP 6: Add metadata about processing
-        if (preg_match('/<svg[^>]*>/i', $svg_content, $svg_match)) {
-            $svg_tag = $svg_match[0];
-            $metadata = "\n  <metadata>Cut-ready SVG from Order #$order_id on " . date('Y-m-d H:i:s') . ". " .
-                       "CorelDRAW compatible. All content preserved: colors, patterns (PNG/JPG materials), text, styles. " .
-                       "Pattern fills converted to attributes for CorelDRAW. Base64 fonts removed (use system fonts). " .
-                       "Open in CorelDRAW to see material textures on text and shapes.</metadata>\n";
-            $svg_content = str_replace($svg_tag, $svg_tag . $metadata, $svg_content);
-        }
-        
-        // Log pattern information for debugging
-        $pattern_count = preg_match_all('/<pattern/i', $svg_content, $matches);
-        $pattern_refs = preg_match_all('/url\(#[^)]+\)/i', $svg_content, $matches);
-        $text_with_pattern = preg_match_all('/<text[^>]*\s+stroke=["\']url\([^)]+\)["\']/i', $svg_content);
-        error_log("APD PDF Compatible - Order #$order_id: Found $pattern_count pattern definitions, $pattern_refs pattern references, $text_with_pattern text elements with material outline patterns");
-        
-        // STEP 6.5: Process patterns with data:image for CorelDRAW compatibility
-        $svg_content = $this->process_patterns_for_coreldraw($svg_content, $order_id);
-        
-        // STEP 7: Validate UTF-8
-        if (!mb_check_encoding($svg_content, 'UTF-8')) {
-            error_log("APD CorelDRAW Compatible - Order #$order_id: Output is not valid UTF-8, attempting to clean");
-            $svg_content = mb_convert_encoding($svg_content, 'UTF-8', 'UTF-8');
-        }
-        
-        // STEP 8: Verify content wasn't significantly reduced (would indicate data loss)
-        $final_length = strlen($svg_content);
-        $size_reduction = $original_length - $final_length;
-        $reduction_percent = ($original_length > 0) ? ($size_reduction / $original_length * 100) : 0;
-        
-        error_log(sprintf(
-            "APD CorelDRAW Compatible - Order #$order_id: Processed successfully. Original: %d bytes, Final: %d bytes, Reduction: %d bytes (%.1f%% - expected from font removal)",
-            $original_length,
-            $final_length,
-            $size_reduction,
-            $reduction_percent
-        ));
-        
-        // Warning if content was reduced by more than 40% (too much removed!)
-        if ($reduction_percent > 40) {
-            error_log("APD CorelDRAW Compatible - Order #$order_id: WARNING - Large content reduction detected! May have lost styles/colors.");
-        }
-        
-        return $svg_content;
-    }
-
-    /**
-     * STRONG HELPER: Process SVG patterns with data:image for CorelDRAW compatibility
-     * Extracts embedded images to external files for CorelDRAW to access
-     * 
-     * @param string $svg_content SVG content
-     * @param int $order_id Order ID for logging
-     * @return string Processed SVG content with external image references
-     */
-    private function process_patterns_for_coreldraw($svg_content, $order_id = 0)
-    {
-        $upload_dir = wp_upload_dir();
-        $extracted_images = array();
-        
-        // Find all pattern definitions and extract images
-        $svg_content = preg_replace_callback(
-            '/<pattern([^>]*)>(.*?)<\/pattern>/is',
-            function($matches) use ($order_id, $upload_dir, &$extracted_images) {
-                $pattern_attrs = $matches[1];
-                $pattern_content = $matches[2];
-                
-                // Extract pattern ID
-                $pattern_id = 'pattern';
-                if (preg_match('/id=["\']([^"\']+)["\']/', $pattern_attrs, $m)) {
-                    $pattern_id = $m[1];
-                }
-                
-                // Process image tags with data URIs
-                $pattern_content = preg_replace_callback(
-                    '/<image([^>]*)>/i',
-                    function($img_matches) use ($pattern_id, $order_id, $upload_dir, &$extracted_images) {
-                        $img_attrs = $img_matches[1];
-                        
-                        // Find data:image URI
-                        if (preg_match('/(href|xlink:href)=["\']data:image\/([^;]+);base64,([^"\']+)["\']/', $img_attrs, $data_match)) {
-                            $mime_type = strtolower($data_match[2]);
-                            $base64_data = $data_match[3];
-                            
-                            // Validate and decode
-                            $decoded = base64_decode($base64_data, true);
-                            if ($decoded === false) {
-                                error_log("APD Pattern STRONG - Order #$order_id: Invalid base64 in $pattern_id");
-                                return $img_matches[0];
-                            }
-                            
-                            // Normalize extension
-                            $ext = ($mime_type === 'jpg') ? 'jpeg' : $mime_type;
-                            $ext = preg_replace('/[^a-z]/', '', $ext); // Clean extension
-                            if ($ext === 'jpeg') $ext = 'jpg';
-                            
-                            // EXTRACT TO EXTERNAL FILE for CorelDRAW
-                            $filename = 'order-' . $order_id . '-pattern-' . sanitize_file_name($pattern_id) . '.' . $ext;
-                            $filepath = $upload_dir['path'] . '/' . $filename;
-                            $file_url = $upload_dir['url'] . '/' . $filename;
-                            
-                            // Save image file
-                            $saved = file_put_contents($filepath, $decoded, LOCK_EX);
-                            
-                            if ($saved !== false) {
-                                $extracted_images[] = array(
-                                    'pattern_id' => $pattern_id,
-                                    'filename' => $filename,
-                                    'url' => $file_url,
-                                    'size' => strlen($decoded)
-                                );
-                                
-                                error_log("APD Pattern STRONG - Order #$order_id: Extracted $pattern_id image to $filename (" . strlen($decoded) . " bytes)");
-                                
-                                // CRITICAL: Use EXTERNAL URL for CorelDRAW
-                                // Keep data URI as fallback
-                                $external_href = $file_url;
-                                $data_uri = 'data:image/' . $mime_type . ';base64,' . base64_encode($decoded);
-                                
-                                // Rebuild with DUAL references:
-                                // 1. External URL (CorelDRAW will use this!)
-                                // 2. Data URI (browser fallback)
-                                $new_attrs = $img_attrs;
-                                
-                                // Remove old href attributes
-                                $new_attrs = preg_replace('/(href|xlink:href)=["\'][^"\']*["\']/', '', $new_attrs);
-                                
-                                // Add EXTERNAL href first (priority for CorelDRAW)
-                                $new_attrs = ' href="' . esc_url($external_href) . '"' . 
-                                           ' xlink:href="' . esc_url($external_href) . '"' .
-                                           ' data-original="' . substr($data_uri, 0, 100) . '..."' .
-                                           $new_attrs;
-                                
-                                return '<image' . $new_attrs . '>';
-                            } else {
-                                error_log("APD Pattern STRONG - Order #$order_id: Failed to save $pattern_id image file");
-                            }
-                        }
-                        
-                        return $img_matches[0];
-                    },
-                    $pattern_content
-                );
-                
-                return '<pattern' . $pattern_attrs . '>' . $pattern_content . '</pattern>';
-            },
-            $svg_content
-        );
-        
-        // Log extraction summary
-        if (!empty($extracted_images)) {
-            error_log("APD Pattern STRONG - Order #$order_id: Extracted " . count($extracted_images) . " pattern images:");
-            foreach ($extracted_images as $img) {
-                error_log("  - {$img['pattern_id']}: {$img['filename']} ({$img['size']} bytes) -> {$img['url']}");
-            }
-        }
-        
-        return $svg_content;
     }
 
     /**
@@ -2409,7 +1787,7 @@ class APD_SVG_Processor
     {
         // For CorelDRAW compatibility, we'll use Inkscape if available, or create a PDF that embeds SVG
         // Check if Inkscape is available (best option for vector preservation)
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
         
         if ($inkscape_path) {
             return $this->convert_svg_to_pdf_with_inkscape_new($svg_content, $width, $height, $order_id, $inkscape_path);
@@ -3301,7 +2679,7 @@ class APD_SVG_Processor
         error_log("APD Convert All to Curves NEW - Order #$order_id: Found $text_count_before text elements, $image_count_before image elements, $shapes_count_before shape elements (circles: $circle_count_before, rects: $rect_count_before, ellipses: $ellipse_count_before, polygons: $polygon_count_before, polylines: $polyline_count_before, lines: $line_count_before)");
         
         // Check if Inkscape is available
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
         if (!$inkscape_path) {
             error_log("APD Convert All to Curves NEW - Order #$order_id: ⚠️ Inkscape not available, using fallback conversion");
             // Fallback: Try to convert images to paths manually (SVG only)
@@ -3667,7 +3045,7 @@ class APD_SVG_Processor
         }
         
         // Check if Inkscape is available
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
         if (!$inkscape_path) {
             error_log("APD Apply Material Outline NEW - Order #$order_id: ⚠️ Inkscape not available, using manual conversion");
             // Fallback: Try manual conversion (limited but better than nothing)
@@ -4344,7 +3722,7 @@ class APD_SVG_Processor
         }
         
         // Check if Inkscape is available
-        $inkscape_path = $this->find_inkscape();
+        $inkscape_path = APD_SVG_Utils::find_inkscape();
         if ($inkscape_path) {
             try {
                 return $this->convert_svg_to_pdf_with_inkscape_new($svg_content, $width, $height, $order_id, $inkscape_path);

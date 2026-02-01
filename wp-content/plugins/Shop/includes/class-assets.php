@@ -109,6 +109,21 @@ class APD_Assets
             wp_enqueue_script('apd-product-admin', APD_PLUGIN_URL . 'assets/js/product-admin.js', array('jquery'), APD_VERSION, true);
         }
 
+        // Order detail page: Production Files export script
+        if ($screen && strpos($screen->id, 'apd_order_detail') !== false) {
+            wp_enqueue_script(
+                'apd-order-admin-export',
+                APD_PLUGIN_URL . 'assets/js/order-admin-export.js',
+                array('jquery'),
+                APD_VERSION,
+                true
+            );
+            wp_localize_script('apd-order-admin-export', 'apdOrderExport', array(
+                'nonce' => wp_create_nonce('apd_ajax_nonce'),
+                'ajaxurl' => admin_url('admin-ajax.php')
+            ));
+        }
+
         // Enqueue designer scripts only on designer page
         if ($screen && strpos($screen->id, 'apd-designer') !== false) {
             wp_enqueue_script('apd-designer', APD_PLUGIN_URL . 'assets/js/designer.js', array('jquery'), APD_VERSION, true);
