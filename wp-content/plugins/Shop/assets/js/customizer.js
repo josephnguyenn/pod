@@ -1849,6 +1849,26 @@ jQuery(document).ready(function($) {
                     const lhVal = $(this).val();
                     const gapPx = (lhVal === '' || lhVal == null) ? 20 : (isNaN(parseFloat(lhVal)) ? 20 : Math.max(0, parseFloat(lhVal)));
                     if (FSC._cachedTemplateData) FSC._cachedTemplateData.lineHeight = gapPx;
+                    // Sync current text input values into cached template so content is not lost on re-render
+                    try {
+                        const elements = FSC._cachedTemplateData && FSC._cachedTemplateData.elements;
+                        if (Array.isArray(elements)) {
+                            const textElsList = elements.filter(function(e) { return e && e.type === 'text'; });
+                            elements.forEach(function(el) {
+                                if (el && el.type === 'text') {
+                                    const idx = textElsList.indexOf(el);
+                                    const inputId = 'fsc-text-' + (el.id || (idx >= 0 ? idx : 0));
+                                    const $input = $('#' + inputId);
+                                    if ($input.length) {
+                                        const val = ($input.val() || '').toString();
+                                        if (!el.properties) el.properties = {};
+                                        el.properties.value = val;
+                                        el.properties.text = val;
+                                    }
+                                }
+                            });
+                        }
+                    } catch (e) { /* noop */ }
                     // Rebuild SVG so text row Y positions are recomputed with new gap
                     try {
                         if (FSC._cachedTemplateData && FSC._cachedProductData) {
