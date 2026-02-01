@@ -1179,6 +1179,33 @@ jQuery(document).ready(function($) {
              });
         },
 
+        mergeSavedTemplateDataIntoCache: function(productData) {
+            try {
+                const payloadStr = localStorage.getItem('apd_checkout_payload');
+                if (!payloadStr) return;
+                const payload = JSON.parse(payloadStr);
+                const saved = payload.template_data;
+                if (!saved || typeof saved !== 'object') return;
+                const currentProductId = String(FSC.productId || productData?.product_id || productData?.id || '');
+                const payloadProductId = String(payload.product_id || '');
+                if (!currentProductId || currentProductId !== payloadProductId) return;
+                const elements = FSC._cachedTemplateData && FSC._cachedTemplateData.elements;
+                if (!Array.isArray(elements)) return;
+                Object.keys(saved).forEach(function(key) {
+                    if (key.indexOf('fsc-text-') !== 0) return;
+                    const suffix = key.replace(/^fsc-text-/, '');
+                    const entry = saved[key];
+                    if (!entry || typeof entry !== 'object') return;
+                    const el = elements.find(function(e) { return e && e.type === 'text' && (String(e.id) === suffix || e.id === suffix); });
+                    if (!el) return;
+                    if (!el.properties) el.properties = {};
+                    if (entry.value !== undefined) el.properties.value = entry.value;
+                    if (entry.lineHeight !== undefined) el.properties.lineHeight = entry.lineHeight;
+                    if (entry.letterSpacing !== undefined) el.properties.letterSpacing = entry.letterSpacing;
+                });
+            } catch (e) { /* noop */ }
+        },
+
         renderTemplate: function(templateData, productData) {
             const $root = $('.fsc-preview-content');
             if ($root.length === 0) return;
@@ -1186,6 +1213,8 @@ jQuery(document).ready(function($) {
             // Cache template data for resize events
             FSC._cachedTemplateData = templateData;
             FSC._cachedProductData = productData;
+            // Merge saved template_data (e.g. from localStorage) into elements[].properties so lineHeight/letterSpacing restore
+            FSC.mergeSavedTemplateDataIntoCache(productData);
             
             // Log template data for debugging fillLogoWithColor
             console.log('🎨 Template data cached:', {
@@ -1619,6 +1648,18 @@ jQuery(document).ready(function($) {
                     textEl.setAttribute('font-size', String(sizePx));
                     textEl.setAttribute('font-family', family);
                     textEl.setAttribute('font-weight', weight);
+                    // Line height: number = unitless, string = as-is (e.g. "24px", "1.5em")
+                    const lineHeightRaw = (el.properties && el.properties.lineHeight !== undefined) ? el.properties.lineHeight : null;
+                    if (lineHeightRaw != null && lineHeightRaw !== '') {
+                        const lh = typeof lineHeightRaw === 'number' ? String(lineHeightRaw) : String(lineHeightRaw).trim();
+                        if (lh) textEl.style.lineHeight = lh;
+                    }
+                    // Letter spacing: number = px, string = as-is (e.g. "0.5px", "0.05em")
+                    const letterSpacingRaw = (el.properties && el.properties.letterSpacing !== undefined) ? el.properties.letterSpacing : null;
+                    if (letterSpacingRaw != null && letterSpacingRaw !== '') {
+                        const ls = typeof letterSpacingRaw === 'number' ? (letterSpacingRaw + 'px') : String(letterSpacingRaw).trim();
+                        if (ls) textEl.style.letterSpacing = ls;
+                    }
                     textSvgEl.appendChild(textDefsEl);
                     textSvgEl.appendChild(textEl);
                     
@@ -1833,7 +1874,51 @@ jQuery(document).ready(function($) {
                         }
                     });
                     $row.append($input);
+                    // Per-element line height and letter spacing
+                    const lineHeightId = 'fsc-line-height-' + (el.id || idx);
+                    const letterSpacingId = 'fsc-letter-spacing-' + (el.id || idx);
+                    const initialLineHeight = (el.properties && el.properties.lineHeight !== undefined) ? el.properties.lineHeight : 1.2;
+                    const initialLetterSpacing = (el.properties && el.properties.letterSpacing !== undefined) ? el.properties.letterSpacing : 0;
+                    const $lineHeightRow = $('<div class="fsc-input-group fsc-line-height-group" />');
+                    $lineHeightRow.append('<label for="' + lineHeightId + '">Line height</label>');
+                    const $lineHeightInput = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', lineHeightId).attr('data-element-id', el.id || String(idx)).val(String(initialLineHeight)).attr('placeholder', '1.2');
+                    $lineHeightRow.append($lineHeightInput);
+                    const $letterSpacingRow = $('<div class="fsc-input-group fsc-letter-spacing-group" />');
+                    $letterSpacingRow.append('<label for="' + letterSpacingId + '">Letter spacing</label>');
+                    const $letterSpacingInput = $('<input type="text" class="fsc-form-input fsc-letter-spacing-input" />').attr('id', letterSpacingId).attr('data-element-id', el.id || String(idx)).val(String(initialLetterSpacing)).attr('placeholder', '0');
+                    $letterSpacingRow.append($letterSpacingInput);
+                    function applyTextStyleToPreview(elementId, lineHeightVal, letterSpacingVal) {
+                        const $target = elementId ? $('.apd-template-canvas-full .apd-text-el[data-el-id="' + elementId + '"]') : $('.apd-template-canvas-full .apd-text-el').eq(idx);
+                        if ($target.length) {
+                            const $svgText = $target.find('svg text').first();
+                            if ($svgText.length) {
+                                if (lineHeightVal !== undefined && lineHeightVal !== '') {
+                                    const lh = typeof lineHeightVal === 'number' ? String(lineHeightVal) : String(lineHeightVal).trim();
+                                    $svgText[0].style.lineHeight = lh || '';
+                                }
+                                if (letterSpacingVal !== undefined && letterSpacingVal !== '') {
+                                    const ls = typeof letterSpacingVal === 'number' ? (letterSpacingVal + 'px') : String(letterSpacingVal).trim();
+                                    $svgText[0].style.letterSpacing = ls || '';
+                                }
+                            }
+                        }
+                    }
+                    function updateElementPropertiesAndPreview() {
+                        const lhVal = $lineHeightInput.val();
+                        const lsVal = $letterSpacingInput.val();
+                        if (!el.properties) el.properties = {};
+                        el.properties.lineHeight = (lhVal === '' || lhVal == null) ? 1.2 : (isNaN(parseFloat(lhVal)) ? lhVal : parseFloat(lhVal));
+                        el.properties.letterSpacing = (lsVal === '' || lsVal == null) ? 0 : (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal));
+                        const lhForStyle = (lhVal === '' || lhVal == null) ? '1.2' : (isNaN(parseFloat(lhVal)) ? lhVal : String(lhVal));
+                        const lsStr = (lsVal === '' || lsVal == null) ? '0' : String(lsVal).trim();
+                        const lsForStyle = (lsStr === '' || /px|em|rem|%/.test(lsStr)) ? (lsStr === '' ? '0' : lsStr) : (parseFloat(lsStr) + 'px');
+                        applyTextStyleToPreview(el.id, lhForStyle, lsForStyle);
+                    }
+                    $lineHeightInput.on('input change', updateElementPropertiesAndPreview);
+                    $letterSpacingInput.on('input change', updateElementPropertiesAndPreview);
                     $container.append($row);
+                    $container.append($lineHeightRow);
+                    $container.append($letterSpacingRow);
                 });
                 $group.find('.fsc-input-group').remove();
                 $group.append($container);
@@ -2990,6 +3075,14 @@ jQuery(document).ready(function($) {
                         value: value.trim(),
                         label: labelText
                     };
+                    // Include per-element line height and letter spacing from form controls
+                    const textFieldSuffix = elementId.replace(/^fsc-text-/, '');
+                    if (textFieldSuffix !== elementId) {
+                        const lhVal = $('#fsc-line-height-' + textFieldSuffix).val();
+                        const lsVal = $('#fsc-letter-spacing-' + textFieldSuffix).val();
+                        templateData[elementId].lineHeight = (lhVal !== undefined && lhVal !== '') ? (isNaN(parseFloat(lhVal)) ? lhVal : parseFloat(lhVal)) : 1.2;
+                        templateData[elementId].letterSpacing = (lsVal !== undefined && lsVal !== '') ? (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal)) : 0;
+                    }
                 }
             });
 

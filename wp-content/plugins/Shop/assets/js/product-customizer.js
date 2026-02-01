@@ -201,6 +201,14 @@
                 if (element.properties.fontWeight) {
                     $element.css('font-weight', element.properties.fontWeight);
                 }
+                if (element.properties.lineHeight !== undefined && element.properties.lineHeight !== '') {
+                    const lh = typeof element.properties.lineHeight === 'number' ? String(element.properties.lineHeight) : String(element.properties.lineHeight);
+                    $element.css('line-height', lh);
+                }
+                if (element.properties.letterSpacing !== undefined && element.properties.letterSpacing !== '') {
+                    const ls = typeof element.properties.letterSpacing === 'number' ? (element.properties.letterSpacing + 'px') : String(element.properties.letterSpacing);
+                    $element.css('letter-spacing', ls);
+                }
             }
         } else if (element.type === 'logo') {
             $element.html(`<div class="apd-logo-content">${element.label}</div>`);
@@ -259,6 +267,14 @@
                                 <option value="2px solid #fff">Thick White</option>
                             </select>
                         </div>
+                        <div class="apd-line-height-option">
+                            <label>Line height:</label>
+                            <input type="text" class="apd-line-height-input" data-element-id="${element.id}" data-property="lineHeight" value="${element.properties?.lineHeight !== undefined ? element.properties.lineHeight : '1.2'}" placeholder="1.2">
+                        </div>
+                        <div class="apd-letter-spacing-option">
+                            <label>Letter spacing:</label>
+                            <input type="text" class="apd-letter-spacing-input" data-element-id="${element.id}" data-property="letterSpacing" value="${element.properties?.letterSpacing !== undefined ? element.properties.letterSpacing : '0'}" placeholder="0">
+                        </div>
                     </div>
                 </div>
             `;
@@ -315,6 +331,22 @@
             const elementId = $(this).data('element-id');
             const outline = $(this).val();
             updateElementOutline(elementId, outline);
+        });
+        
+        // Line height and letter spacing
+        $customizer.on('input change', '.apd-line-height-input, .apd-letter-spacing-input', function() {
+            const elementId = $(this).data('element-id');
+            const property = $(this).data('property');
+            let value = $(this).val();
+            if (property === 'lineHeight') value = (value === '' || value == null) ? 1.2 : (isNaN(parseFloat(value)) ? value : parseFloat(value));
+            else if (property === 'letterSpacing') value = (value === '' || value == null) ? 0 : (isNaN(parseFloat(value)) ? value : parseFloat(value));
+            const el = (templateData.elements || []).find(e => e.id === elementId);
+            if (el) {
+                if (!el.properties) el.properties = {};
+                el.properties[property] = value;
+            }
+            const cssVal = property === 'lineHeight' ? (typeof value === 'number' ? String(value) : value) : (typeof value === 'number' ? value + 'px' : value);
+            updateElementProperty(elementId, property === 'lineHeight' ? 'lineHeight' : 'letterSpacing', cssVal);
         });
         
         // Color palette clicks

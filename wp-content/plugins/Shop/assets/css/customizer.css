@@ -745,6 +745,21 @@ input.error:focus {
     font-style: italic;
 }
 
+/* Per-element line height and letter spacing (Custom Text group) */
+.fsc-inputs-dynamic .fsc-line-height-group,
+.fsc-inputs-dynamic .fsc-letter-spacing-group {
+    margin-top: 4px;
+}
+.fsc-inputs-dynamic .fsc-line-height-group label,
+.fsc-inputs-dynamic .fsc-letter-spacing-group label {
+    font-size: 0.7rem;
+    text-transform: none;
+}
+.fsc-inputs-dynamic .fsc-line-height-group input,
+.fsc-inputs-dynamic .fsc-letter-spacing-group input {
+    max-width: 120px;
+}
+
 /* Action Buttons Section */
 .fsc-actions {
     padding: 20px 24px;
