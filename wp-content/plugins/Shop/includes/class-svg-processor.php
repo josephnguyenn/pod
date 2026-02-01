@@ -43,7 +43,6 @@ class APD_SVG_Processor
     public function init()
     {
         add_action('wp_ajax_apd_process_cut_ready_svg', array($this, 'apd_process_cut_ready_svg'));
-        add_action('wp_ajax_apd_export_cdr_vector', array($this, 'apd_export_cdr_vector'));
         add_action('wp_ajax_apd_export_pdf', array($this, 'apd_export_pdf'));
         add_action('wp_ajax_apd_export_pdf_from_svg', array($this, 'apd_export_pdf_from_svg'));
         add_action('wp_ajax_apd_test_vector_pdf', array($this, 'apd_test_vector_pdf'));
@@ -320,79 +319,6 @@ class APD_SVG_Processor
             'file_url' => $file_url,
             'filename' => $filename,
             'message' => 'Cut-ready SVG generated successfully'
-        ));
-    }
-
-    /**
-     * Export CDR Vector File: vector SVG (curves, color, material outline) for CorelDRAW.
-     * Same vector pipeline as PDF export but outputs SVG file for open-in-CorelDRAW / Save As .cdr.
-     */
-    public function apd_export_cdr_vector()
-    {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'Unauthorized'));
-            return;
-        }
-
-        $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
-        if (!$order_id) {
-            wp_send_json_error(array('message' => 'Invalid order ID'));
-            return;
-        }
-
-        $result = APD_Order_SVG_Resolver::get_svg_for_order($order_id);
-        if (!$result || empty($result['content'])) {
-            wp_send_json_error(array('message' => 'No SVG found for this order'));
-            return;
-        }
-
-        $svg_content = $result['content'];
-        $source = $result['source'];
-
-        error_log(sprintf(
-            'APD CDR Vector Export - Order #%d: Source=%s, Content length=%d',
-            $order_id,
-            $source ?: 'NONE',
-            strlen($svg_content)
-        ));
-
-        // Ensure logo material outline is present (same as PDF path)
-        $svg_content = $this->ensure_logo_material_outline_for_rasterization($svg_content, $order_id);
-
-        // Same vector pipeline as PDF export (text-to-curves, embedded patterns) but output SVG
-        $processed_svg = $this->make_pdf_compatible_new($svg_content, $order_id);
-        if (is_wp_error($processed_svg)) {
-            wp_send_json_error(array('message' => $processed_svg->get_error_message()));
-            return;
-        }
-
-        // Strip Inkscape/sodipodi markup so CorelDRAW can open the file (avoids import failures)
-        $processed_svg = $this->strip_inkscape_markup_for_coreldraw($processed_svg, $order_id);
-
-        $upload_dir = wp_upload_dir();
-        $filename = 'order-' . $order_id . '-design-vector-for-coreldraw-' . time() . '.svg';
-        $filepath = $upload_dir['path'] . '/' . $filename;
-
-        // Write UTF-8 without BOM (CorelDRAW expects standard UTF-8)
-        $bytes_written = file_put_contents($filepath, $processed_svg, LOCK_EX);
-        if ($bytes_written === false) {
-            wp_send_json_error(array('message' => 'Failed to save vector SVG file'));
-            return;
-        }
-
-        error_log(sprintf(
-            'APD CDR Vector Export - Order #%d: Saved %d bytes to %s',
-            $order_id,
-            $bytes_written,
-            $filename
-        ));
-
-        $file_url = $upload_dir['url'] . '/' . $filename;
-
-        wp_send_json_success(array(
-            'file_url' => $file_url,
-            'filename' => $filename,
-            'message' => 'Vector SVG for CorelDRAW generated. Open in CorelDRAW and use Save As .cdr for native editing.'
         ));
     }
 
@@ -4744,41 +4670,6 @@ class APD_SVG_Processor
             error_log("APD Apply Pattern Mask - Order #$order_id: ✅ Pattern definitions and PNG/JPEG images fully preserved (ready for CorelDraw)");
         }
         
-        return $svg_content;
-    }
-
-    /**
-     * Strip Inkscape/sodipodi markup so CorelDRAW can open the SVG.
-     * CorelDRAW often fails or mis-renders SVG that contains Inkscape-specific namespaces.
-     *
-     * @param string $svg_content SVG content (e.g. from make_pdf_compatible_new / Inkscape)
-     * @param int    $order_id   Order ID for logging
-     * @return string Clean SVG for CorelDRAW
-     */
-    private function strip_inkscape_markup_for_coreldraw($svg_content, $order_id = 0)
-    {
-        // Remove Inkscape/sodipodi namespace declarations from root and any element
-        $svg_content = preg_replace('/\s+xmlns:sodipodi=["\'][^"\']*["\']/i', '', $svg_content);
-        $svg_content = preg_replace('/\s+xmlns:inkscape=["\'][^"\']*["\']/i', '', $svg_content);
-        // Remove any attribute whose name starts with sodipodi: or inkscape:
-        $svg_content = preg_replace('/\s+(sodipodi:[a-zA-Z0-9_-]+)=["\'][^"\']*["\']/i', '', $svg_content);
-        $svg_content = preg_replace('/\s+(inkscape:[a-zA-Z0-9_-]+)=["\'][^"\']*["\']/i', '', $svg_content);
-        // Ensure root <svg> has standard xmlns so CorelDRAW recognizes it
-        if (!preg_match('/<svg\s+[^>]*xmlns=["\']http:\/\/www\.w3\.org\/2000\/svg["\']/i', $svg_content)
-            && preg_match('/<svg(\s+[^>]*)>/i', $svg_content, $m)) {
-            $svg_content = preg_replace(
-                '/<svg(\s+[^>]*)>/i',
-                '<svg$1 xmlns="http://www.w3.org/2000/svg">',
-                $svg_content,
-                1
-            );
-        }
-        // Normalize XML declaration: UTF-8, no BOM
-        $svg_content = preg_replace('/<\?xml[^?]*\?>\s*/i', '', $svg_content);
-        $svg_content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . "\n" . ltrim($svg_content);
-        if ($order_id) {
-            error_log("APD Strip Inkscape for CorelDRAW - Order #$order_id: Removed sodipodi/inkscape markup");
-        }
         return $svg_content;
     }
 

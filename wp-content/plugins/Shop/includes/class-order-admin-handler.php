@@ -2069,15 +2069,56 @@ class APD_Order_Admin_Handler
                 
                 console.log('📄 ✅ SVG parsed successfully');
 
-                // Always send vector SVG so server produces true vector PDF (text-to-curves, embedded patterns)
-                const svgDataToSend = new XMLSerializer().serializeToString(svgElement);
-                console.log('📄 Using vector SVG for PDF export (no rasterization)');
+                // Step 3: Check if SVG has material outline patterns
+                const hasMaterialOutline = svgElement.querySelector('[stroke*="MaterialPattern"]') !== null ||
+                                          svgElement.querySelector('[fill*="MaterialPattern"]') !== null;
+                
+                console.log('📄 Material outline detected:', hasMaterialOutline);
+
+                let svgDataToSend = null;
+
+                // Step 4: Rasterize if material outline exists (Option A)
+                if (hasMaterialOutline) {
+                    console.log('🎨 Material outline detected - applying OPTION A: Full Rasterization');
+                    console.log('🎨 This ensures 100% CorelDraw compatibility');
+                    
+                    button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Pre-processing material outlines...';
+                    
+                    try {
+                        // CRITICAL: Pre-process logo material outlines BEFORE rasterization
+                        // This creates masks in SVG DOM structure (like custom text) so browser canvas can render them
+                        await convertLogoToPathsWithMaterialOutline(svgDoc, svgElement);
+                        
+                        button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Rasterizing with material outline...';
+                        
+                        // Rasterize the design (with pre-processed masks)
+                        const rasterData = await rasterizeDesignWithMaterial(svgElement);
+                        
+                        // Create SVG with embedded raster
+                        const rasterizedSVG = createRasterizedSVG(rasterData);
+                        
+                        svgDataToSend = rasterizedSVG;
+                        
+                        console.log('✅ Rasterization complete - using rasterized SVG for PDF export');
+                        console.log('   - Material outline is now BAKED IN (hardcoded)');
+                        console.log('   - CorelDraw will display perfectly');
+                    } catch (error) {
+                        console.error('❌ Rasterization failed:', error);
+                        console.log('⚠️ Falling back to original SVG (material outline may not display in CorelDraw)');
+                        // Fallback to original SVG
+                        svgDataToSend = new XMLSerializer().serializeToString(svgElement);
+                    }
+                } else {
+                    console.log('ℹ️ No material outline - using original vector SVG');
+                    svgDataToSend = new XMLSerializer().serializeToString(svgElement);
+                }
 
                 button.innerHTML = '<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: spin 1s linear infinite;"></span> Generating PDF...';
 
                 console.log('📄 Sending request to server for PDF generation...');
                 console.log('📄 Action: apd_export_pdf');
                 console.log('📄 URL:', ajaxurl);
+                console.log('📄 Using:', hasMaterialOutline ? 'RASTERIZED SVG' : 'VECTOR SVG');
 
                 // Step 5: Send to server for PDF generation
                 jQuery.ajax({
@@ -2086,7 +2127,7 @@ class APD_Order_Admin_Handler
                     data: {
                         action: 'apd_export_pdf',
                         order_id: orderId,
-                        svg_override: svgDataToSend, // Always vector SVG for true vector PDF
+                        svg_override: svgDataToSend, // Send rasterized or original SVG
                         _wpnonce: '<?php echo wp_create_nonce('apd_ajax_nonce'); ?>'
                     },
                     success: function(response) {
