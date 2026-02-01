@@ -1,0 +1,2 @@
+# Ensure shell scripts use LF (fixes "env: bash\r: No such file or directory" on macOS)
+*.sh text eol=lf

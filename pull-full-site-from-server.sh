@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# 1. Tải toàn bộ site từ server (tgndigital-pod@cloud) về máy local
+# 1. Tải toàn bộ site từ server về máy local
 # 2. Commit vào branch full-site và push lên Git
 # Run from repo root: ./pull-full-site-from-server.sh
-# Requires: SSH access to tgndigital-pod@cloud
+# SSH: ssh -p 24700 tgndigital-pod@103.216.117.213
 
 set -e
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-SERVER="tgndigital-pod@cloud"
+SERVER="tgndigital-pod@103.216.117.213"
+SSH_PORT="24700"
 REMOTE_PATH="~/htdocs/pod.tgndigital.vn/"
 
 cd "${REPO_ROOT}"
 echo "Switching to branch full-site..."
 git checkout full-site
 
-echo "Downloading full site from ${SERVER}:${REMOTE_PATH} into ${REPO_ROOT}"
-rsync -avz --exclude '.git' --exclude 'pull-full-site-from-server.sh' --exclude 'pull-site-on-server.sh' \
+echo "Downloading full site from ${SERVER}:${REMOTE_PATH} (port ${SSH_PORT}) into ${REPO_ROOT}"
+rsync -avz -e "ssh -p ${SSH_PORT}" --exclude '.git' --exclude 'pull-full-site-from-server.sh' --exclude 'pull-site-on-server.sh' \
   "${SERVER}:${REMOTE_PATH}" "${REPO_ROOT}/"
 
 echo "Adding and committing..."
