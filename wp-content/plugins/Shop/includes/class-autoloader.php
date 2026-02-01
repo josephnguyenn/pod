@@ -62,6 +62,7 @@ class APD_Autoloader
     {
         $services = array(
             'config',
+            'header-footer',
             'cart-service',
             'order-service',
             'email-service',

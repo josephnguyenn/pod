@@ -2,9 +2,8 @@
 /**
  * Template for product detail page
  * This page shows product details with options to Add to Cart, Customize, or Checkout
+ * When included from page-product-detail.php, header/footer are provided by the wrapper.
  */
-
-get_header();
 
 // Inject @font-face rules for uploaded fonts
 $uploaded_fonts = get_option('apd_uploaded_fonts', array());
@@ -37,8 +36,7 @@ if ($product_id <= 0) {
         <h2>Product Not Found</h2>
         <p>No product ID provided. Please select a product from our <a href="' . home_url('/products/') . '">product list</a>.</p>
     </div>';
-    get_footer();
-    exit;
+    return;
 }
 
 // Get product data
@@ -48,8 +46,7 @@ if (!$product || $product->post_type !== 'apd_product') {
         <h2>Product Not Found</h2>
         <p>The requested product does not exist. Please browse our <a href="' . home_url('/products/') . '">product catalog</a>.</p>
     </div>';
-    get_footer();
-    exit;
+    return;
 }
 
 // Get product meta
@@ -1484,5 +1481,3 @@ jQuery(document).ready(function($) {
     <?php endif; ?>
 });
 </script>
-
-<?php get_footer(); ?>

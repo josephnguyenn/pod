@@ -1,42 +1,22 @@
 <?php
 /**
  * Template for displaying Company (apd_company) taxonomy archives
- * With Elementor Header and Footer
+ * With Elementor Header and Footer (uses APD_Header_Footer helper)
  */
 
 // Get the current company term
 $current_term = get_queried_object();
 $company_name = $current_term->name;
 $company_description = $current_term->description;
-?>
-<!DOCTYPE html>
-<html <?php language_attributes(); ?>>
-<head>
-    <meta charset="<?php bloginfo('charset'); ?>">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <?php wp_head(); ?>
-</head>
-<body <?php body_class(); ?>>
-<?php wp_body_open(); ?>
 
-<?php
-// Load Elementor Header (ID: 2849)
-if (did_action('elementor/loaded')) {
-    echo \Elementor\Plugin::$instance->frontend->get_builder_content_for_display(2849);
-} elseif (function_exists('elementor_theme_do_location')) {
-    elementor_theme_do_location('header');
-} else {
-    // Fallback to regular header
-    get_header();
-}
+APD_Header_Footer::page_wrapper_start();
+APD_Header_Footer::output_site_header();
 ?>
 
 <div class="apd-company-archive-wrapper">
     <div class="apd-company-products">
         <?php
-        // Use the shortcode to display products
         echo do_shortcode('[apd_products_by_company company="' . esc_attr($current_term->slug) . '" hide_header="false"]');
-        ?>
         ?>
     </div>
 </div>
@@ -79,17 +59,5 @@ if (did_action('elementor/loaded')) {
 </style>
 
 <?php
-// Load Elementor Footer (ID: 4674)
-if (did_action('elementor/loaded')) {
-    echo \Elementor\Plugin::$instance->frontend->get_builder_content_for_display(4674);
-} elseif (function_exists('elementor_theme_do_location')) {
-    elementor_theme_do_location('footer');
-} else {
-    // Fallback to regular footer
-    get_footer();
-}
-?>
-
-<?php wp_footer(); ?>
-</body>
-</html>
+APD_Header_Footer::output_site_footer();
+APD_Header_Footer::page_wrapper_end();
