@@ -104,6 +104,7 @@ if (!class_exists('AdvancedProductDesigner')) {
         }
         
         add_action('init', array($this, 'init'));
+        APD_Header_Footer::init_global_injector();
         add_action('wp_enqueue_scripts', array('APD_Assets', 'enqueue_scripts'));
         add_action('wp_enqueue_scripts', array('APD_Assets', 'enqueue_frontend_scripts'));
         add_action('admin_enqueue_scripts', array('APD_Assets', 'admin_enqueue_scripts'));
