@@ -50,6 +50,12 @@ jQuery(document).ready(function($) {
         updateCanvasSize();
     });
     
+    $('#canvas-line-height').on('change blur', function() {
+        const val = $(this).val();
+        templateData.lineHeight = (val === '' || val == null) ? 0 : (isNaN(parseFloat(val)) ? 0 : parseFloat(val));
+        saveState();
+    });
+    
     // Add input validation for canvas size inputs
     $('#canvas-width, #canvas-height').on('input', function() {
         const value = parseInt($(this).val());
@@ -165,6 +171,8 @@ jQuery(document).ready(function($) {
         // Update input fields
         $('#canvas-width').val(templateData.canvas.width);
         $('#canvas-height').val(templateData.canvas.height);
+        const lineHeightVal = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 0;
+        $('#canvas-line-height').val(String(lineHeightVal));
         
         // Load background settings
         if (templateData.canvas.background) {
@@ -344,6 +352,9 @@ jQuery(document).ready(function($) {
                 loadBackgroundSettings(templateData.canvas.background);
             }
         }
+        
+        const lineHeightVal = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 0;
+        $('#canvas-line-height').val(String(lineHeightVal));
         
         // Restore elements and update element counter
         if (templateData.elements) {
@@ -740,6 +751,11 @@ jQuery(document).ready(function($) {
                 if (elementData.properties.textDecoration) {
                     label.css('text-decoration', elementData.properties.textDecoration);
                 }
+                if (elementData.properties.letterSpacing !== undefined && elementData.properties.letterSpacing !== '') {
+                    const ls = elementData.properties.letterSpacing;
+                    const cssVal = typeof ls === 'number' ? (ls + 'px') : String(ls).trim();
+                    label.css('letter-spacing', cssVal || 'normal');
+                }
                 if (elementData.properties.textStrokeWidth != null) {
                     const strokeWidth = elementData.properties.textStrokeWidth;
                     if (strokeWidth > 0) {
@@ -948,6 +964,9 @@ jQuery(document).ready(function($) {
             html += '</select></div>';
             // Font size
             html += '<div class="apd-property"><label>Font Size (px)</label><input type="number" id="prop-font-size" value="' + currentSize + '"></div>';
+            // Letter spacing (px or unit)
+            const currentLetterSpacing = (p.letterSpacing !== undefined && p.letterSpacing !== '') ? p.letterSpacing : 0;
+            html += '<div class="apd-property"><label>Letter spacing</label><input type="text" id="prop-letter-spacing" value="' + currentLetterSpacing + '" placeholder="0"></div>';
             // Decorations
             html += '<div class="apd-property"><label>Decoration</label>'
                  +  '<div style="display:flex;gap:6px;align-items:center">'
@@ -1108,7 +1127,7 @@ jQuery(document).ready(function($) {
             
             // Remove any existing handlers to prevent duplicates
             $('#element-properties').off('click.apd-align click.apd-deco');
-            $('#prop-font-family, #prop-font-size, #prop-font-weight').off('change.apd blur.apd input.apd');
+            $('#prop-font-family, #prop-font-size, #prop-font-weight, #prop-letter-spacing').off('change.apd blur.apd input.apd');
             
             // Align
             $('#element-properties').on('click.apd-align', '.apd-align', function(){
@@ -1135,6 +1154,16 @@ jQuery(document).ready(function($) {
                 const label = selectedElement.element.find('.element-label');
                 label.css('font-size', fs + 'px');
                 elementData.properties.fontSize = fs;
+                saveState();
+            });
+            // Letter spacing
+            $('#prop-letter-spacing').on('change.apd input.apd blur.apd', function(){
+                const lsVal = $(this).val();
+                const ls = (lsVal === '' || lsVal == null) ? 0 : (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal));
+                const label = selectedElement.element.find('.element-label');
+                const cssVal = typeof ls === 'number' ? (ls + 'px') : String(ls).trim();
+                label.css('letter-spacing', cssVal || 'normal');
+                elementData.properties.letterSpacing = ls;
                 saveState();
             });
             // Decorations

@@ -1849,45 +1849,7 @@ jQuery(document).ready(function($) {
             const $group = $('.fsc-form-group:has(h4:contains("Custom Text"))');
             if ($group.length) {
                 const $container = $('<div class="fsc-inputs-dynamic" />');
-                // Line height = khoảng cách giữa các row Custom Text (px). 0 = original spacing; negative allowed
-                const globalLineHeight = (templateData.lineHeight !== undefined && templateData.lineHeight !== '') ? templateData.lineHeight : 0;
-                const $lineHeightRow = $('<div class="fsc-input-group fsc-line-height-group" />');
-                $lineHeightRow.append('<label for="fsc-line-height-global">Line height (row spacing)</label>');
-                const $lineHeightGlobal = $('<input type="text" class="fsc-form-input fsc-line-height-input" />').attr('id', 'fsc-line-height-global').val(String(globalLineHeight)).attr('placeholder', '0 = original');
-                $lineHeightRow.append($lineHeightGlobal);
-                $lineHeightGlobal.on('input change', function() {
-                    const lhVal = $(this).val();
-                    // 0 = original row spacing; negative allowed
-                    const gapPx = (lhVal === '' || lhVal == null) ? 0 : (isNaN(parseFloat(lhVal)) ? 0 : parseFloat(lhVal));
-                    if (FSC._cachedTemplateData) FSC._cachedTemplateData.lineHeight = gapPx;
-                    // Sync current text input values into cached template so content is not lost on re-render
-                    try {
-                        const elements = FSC._cachedTemplateData && FSC._cachedTemplateData.elements;
-                        if (Array.isArray(elements)) {
-                            const textElsList = elements.filter(function(e) { return e && e.type === 'text'; });
-                            elements.forEach(function(el) {
-                                if (el && el.type === 'text') {
-                                    const idx = textElsList.indexOf(el);
-                                    const inputId = 'fsc-text-' + (el.id || (idx >= 0 ? idx : 0));
-                                    const $input = $('#' + inputId);
-                                    if ($input.length) {
-                                        const val = ($input.val() || '').toString();
-                                        if (!el.properties) el.properties = {};
-                                        el.properties.value = val;
-                                        el.properties.text = val;
-                                    }
-                                }
-                            });
-                        }
-                    } catch (e) { /* noop */ }
-                    // Rebuild SVG so text row Y positions are recomputed with new gap
-                    try {
-                        if (FSC._cachedTemplateData && FSC._cachedProductData) {
-                            FSC.renderTemplate(FSC._cachedTemplateData, FSC._cachedProductData);
-                        }
-                    } catch (e) { /* noop */ }
-                });
-                $container.append($lineHeightRow);
+                // Line height and letter spacing are set in Template Designer; customizer only applies them from template data
                 textEls.forEach(function(el, idx){
                     const label = el.label || ('Text ' + (idx+1));
                     const initialValue = (el.properties && (el.properties.value || el.properties.text)) || '';
@@ -1936,34 +1898,7 @@ jQuery(document).ready(function($) {
                         }
                     });
                     $row.append($input);
-                    // Per-element Line spacing only (each custom text row has its own)
-                    const letterSpacingId = 'fsc-letter-spacing-' + (el.id || idx);
-                    const initialLetterSpacing = (el.properties && el.properties.letterSpacing !== undefined) ? el.properties.letterSpacing : 0;
-                    const $letterSpacingRow = $('<div class="fsc-input-group fsc-letter-spacing-group" />');
-                    $letterSpacingRow.append('<label for="' + letterSpacingId + '">Line spacing</label>');
-                    const $letterSpacingInput = $('<input type="text" class="fsc-form-input fsc-letter-spacing-input" />').attr('id', letterSpacingId).attr('data-element-id', el.id || String(idx)).val(String(initialLetterSpacing)).attr('placeholder', '0');
-                    $letterSpacingRow.append($letterSpacingInput);
-                    function applyLetterSpacingToPreview(elementId, letterSpacingVal) {
-                        const $target = elementId ? $('.apd-template-canvas-full .apd-text-el[data-el-id="' + elementId + '"]') : $('.apd-template-canvas-full .apd-text-el').eq(idx);
-                        if ($target.length) {
-                            const $svgText = $target.find('svg text').first();
-                            if ($svgText.length && letterSpacingVal !== undefined && letterSpacingVal !== '') {
-                                const ls = typeof letterSpacingVal === 'number' ? (letterSpacingVal + 'px') : String(letterSpacingVal).trim();
-                                $svgText[0].style.letterSpacing = ls || '';
-                            }
-                        }
-                    }
-                    function updateLetterSpacingAndPreview() {
-                        const lsVal = $letterSpacingInput.val();
-                        if (!el.properties) el.properties = {};
-                        el.properties.letterSpacing = (lsVal === '' || lsVal == null) ? 0 : (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal));
-                        const lsStr = (lsVal === '' || lsVal == null) ? '0' : String(lsVal).trim();
-                        const lsForStyle = (lsStr === '' || /px|em|rem|%/.test(lsStr)) ? (lsStr === '' ? '0' : lsStr) : (parseFloat(lsStr) + 'px');
-                        applyLetterSpacingToPreview(el.id, lsForStyle);
-                    }
-                    $letterSpacingInput.on('input change', updateLetterSpacingAndPreview);
                     $container.append($row);
-                    $container.append($letterSpacingRow);
                 });
                 $group.find('.fsc-input-group').remove();
                 $group.append($container);
@@ -3120,17 +3055,21 @@ jQuery(document).ready(function($) {
                         value: value.trim(),
                         label: labelText
                     };
-                    // Per-element line spacing only (line height is global)
-                    const textFieldSuffix = elementId.replace(/^fsc-text-/, '');
-                    if (textFieldSuffix !== elementId) {
-                        const lsVal = $('#fsc-letter-spacing-' + textFieldSuffix).val();
-                        templateData[elementId].letterSpacing = (lsVal !== undefined && lsVal !== '') ? (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal)) : 0;
+                    // Letter spacing comes from template design (cached); not editable in customizer
+                    const suffix = elementId.replace(/^fsc-text-/, '');
+                    const cachedTextEls = FSC._cachedTemplateData && Array.isArray(FSC._cachedTemplateData.elements) ?
+                        FSC._cachedTemplateData.elements.filter(function(e) { return e && e.type === 'text'; }) : [];
+                    const cachedEl = cachedTextEls.find(function(e) { return String(e.id || '') === suffix; }) ||
+                        (/^\d+$/.test(suffix) ? cachedTextEls[parseInt(suffix, 10)] : null);
+                    if (cachedEl && cachedEl.properties && cachedEl.properties.letterSpacing !== undefined) {
+                        templateData[elementId].letterSpacing = cachedEl.properties.letterSpacing;
                     }
                 }
             });
-            // Line height = gap between custom text rows (px); 0 = original, negative allowed
-            const globalLhVal = $('#fsc-line-height-global').val();
-            templateData.lineHeight = (globalLhVal !== undefined && globalLhVal !== '') ? (isNaN(parseFloat(globalLhVal)) ? 0 : parseFloat(globalLhVal)) : 0;
+            // Line height comes from template design (cached); not editable in customizer
+            templateData.lineHeight = (FSC._cachedTemplateData && FSC._cachedTemplateData.lineHeight !== undefined && FSC._cachedTemplateData.lineHeight !== '') ?
+                (typeof FSC._cachedTemplateData.lineHeight === 'number' ? FSC._cachedTemplateData.lineHeight : parseFloat(FSC._cachedTemplateData.lineHeight)) : 0;
+            if (isNaN(templateData.lineHeight)) templateData.lineHeight = 0;
 
             $('[data-element-id]').each(function() {
                 const $el = $(this);

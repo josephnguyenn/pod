@@ -63,6 +63,12 @@ if (!isset($materials)) {
                 </div>
 
                 <div class="apd-form-group">
+                    <label>Line height (row spacing):</label>
+                    <input type="text" id="canvas-line-height" placeholder="0 = original" style="width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <p style="margin: 4px 0 0 0; font-size: 11px; color: #666;">Gap between custom text rows (px). 0 = original spacing.</p>
+                </div>
+
+                <div class="apd-form-group">
                     <label>Background Type:</label>
                     <select id="background-type">
                         <option value="color" <?php selected($bg_type, 'color'); ?>>Solid Color</option>
