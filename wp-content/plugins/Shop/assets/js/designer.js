@@ -756,6 +756,10 @@ jQuery(document).ready(function($) {
                     const cssVal = typeof ls === 'number' ? (ls + 'px') : String(ls).trim();
                     label.css('letter-spacing', cssVal || 'normal');
                 }
+                if (elementData.properties.lineHeight !== undefined && elementData.properties.lineHeight !== '') {
+                    const lh = elementData.properties.lineHeight;
+                    label.css('line-height', typeof lh === 'number' ? String(lh) : String(lh).trim());
+                }
                 if (elementData.properties.textStrokeWidth != null) {
                     const strokeWidth = elementData.properties.textStrokeWidth;
                     if (strokeWidth > 0) {
@@ -964,9 +968,6 @@ jQuery(document).ready(function($) {
             html += '</select></div>';
             // Font size
             html += '<div class="apd-property"><label>Font Size (px)</label><input type="number" id="prop-font-size" value="' + currentSize + '"></div>';
-            // Letter spacing (px or unit)
-            const currentLetterSpacing = (p.letterSpacing !== undefined && p.letterSpacing !== '') ? p.letterSpacing : 0;
-            html += '<div class="apd-property"><label>Letter spacing</label><input type="text" id="prop-letter-spacing" value="' + currentLetterSpacing + '" placeholder="0"></div>';
             // Decorations
             html += '<div class="apd-property"><label>Decoration</label>'
                  +  '<div style="display:flex;gap:6px;align-items:center">'
@@ -986,8 +987,14 @@ jQuery(document).ready(function($) {
                  +    '<option value="900">900</option>'
                  +  '</select>'
                  + '</div>';
+            // Line height & Letter spacing (text spacing) in Typography
+            const currentLineHeight = (p.lineHeight !== undefined && p.lineHeight !== '') ? p.lineHeight : '';
+            const currentLetterSpacing = (p.letterSpacing !== undefined && p.letterSpacing !== '') ? p.letterSpacing : 0;
+            html += '<div class="apd-property"><label>Line height</label><input type="text" id="prop-line-height" value="' + currentLineHeight + '" placeholder="e.g. 1.2 or 24px"></div>';
+            html += '<div class="apd-property"><label>Letter spacing (text spacing)</label><input type="text" id="prop-letter-spacing" value="' + currentLetterSpacing + '" placeholder="0"></div>';
+            html += '</div>';
             
-            // Stroke Width Controls
+            // Text Stroke
             html += '<div class="apd-property-group">';
             html += '<h4>Text Stroke</h4>';
             html += '<div class="apd-property"><label>Stroke Width (px)</label><input type="number" id="prop-stroke-width" value="' + strokeWidth + '" min="0" max="20" step="0.5"></div>';
@@ -1127,7 +1134,7 @@ jQuery(document).ready(function($) {
             
             // Remove any existing handlers to prevent duplicates
             $('#element-properties').off('click.apd-align click.apd-deco');
-            $('#prop-font-family, #prop-font-size, #prop-font-weight, #prop-letter-spacing').off('change.apd blur.apd input.apd');
+            $('#prop-font-family, #prop-font-size, #prop-font-weight, #prop-letter-spacing, #prop-line-height').off('change.apd blur.apd input.apd');
             
             // Align
             $('#element-properties').on('click.apd-align', '.apd-align', function(){
@@ -1156,7 +1163,7 @@ jQuery(document).ready(function($) {
                 elementData.properties.fontSize = fs;
                 saveState();
             });
-            // Letter spacing
+            // Letter spacing (under Text Stroke)
             $('#prop-letter-spacing').on('change.apd input.apd blur.apd', function(){
                 const lsVal = $(this).val();
                 const ls = (lsVal === '' || lsVal == null) ? 0 : (isNaN(parseFloat(lsVal)) ? lsVal : parseFloat(lsVal));
@@ -1164,6 +1171,20 @@ jQuery(document).ready(function($) {
                 const cssVal = typeof ls === 'number' ? (ls + 'px') : String(ls).trim();
                 label.css('letter-spacing', cssVal || 'normal');
                 elementData.properties.letterSpacing = ls;
+                saveState();
+            });
+            // Line height (under Text Stroke)
+            $('#prop-line-height').on('change.apd input.apd blur.apd', function(){
+                const lhVal = $(this).val();
+                const label = selectedElement.element.find('.element-label');
+                if (lhVal === '' || lhVal == null) {
+                    label.css('line-height', '');
+                    elementData.properties.lineHeight = '';
+                } else {
+                    const lh = lhVal.trim();
+                    label.css('line-height', lh);
+                    elementData.properties.lineHeight = /^\d+(\.\d+)?$/.test(lh) ? parseFloat(lh) : lh;
+                }
                 saveState();
             });
             // Decorations
